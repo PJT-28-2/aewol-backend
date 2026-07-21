@@ -1,7 +1,5 @@
 plugins {
     java
-    id("org.springframework.boot") version "3.3.2"
-    id("io.spring.dependency-management") version "1.1.6"
 }
 
 group = "com.aewol"
@@ -22,44 +20,100 @@ repositories {
     mavenCentral()
 }
 
+val springVersion      = "5.3.39"
+val springSecVersion   = "5.8.16"
+val springBatchVersion = "4.3.10"
+val tomcatVersion      = "9.0.98"
+
 dependencies {
-    // Spring Boot Starters
-    implementation("org.springframework.boot:spring-boot-starter-web")
-    implementation("org.springframework.boot:spring-boot-starter-security")
-    implementation("org.springframework.boot:spring-boot-starter-validation")
-    implementation("org.springframework.boot:spring-boot-starter-data-redis")
-    implementation("org.springframework.boot:spring-boot-starter-websocket")
-    implementation("org.springframework.boot:spring-boot-starter-mail")
-    implementation("org.springframework.boot:spring-boot-starter-batch")
+    // ── Spring Core ────────────────────────────────────────────────
+    implementation("org.springframework:spring-webmvc:$springVersion")
+    implementation("org.springframework:spring-context-support:$springVersion")
+    implementation("org.springframework:spring-websocket:$springVersion")
+    implementation("org.springframework:spring-messaging:$springVersion")
+    implementation("org.springframework:spring-jdbc:$springVersion")
+    implementation("org.springframework:spring-tx:$springVersion")
 
-    // MyBatis
-    implementation("org.mybatis.spring.boot:mybatis-spring-boot-starter:3.0.3")
+    // ── Spring Security 5.8.x ─────────────────────────────────────
+    implementation("org.springframework.security:spring-security-web:$springSecVersion")
+    implementation("org.springframework.security:spring-security-config:$springSecVersion")
+    implementation("org.springframework.security:spring-security-messaging:$springSecVersion")
 
-    // MySQL
-    runtimeOnly("com.mysql:mysql-connector-j")
+    // ── Spring Batch 4.3.x (Spring 5.x 전용) ──────────────────────
+    implementation("org.springframework.batch:spring-batch-core:$springBatchVersion")
+    implementation("org.springframework.batch:spring-batch-infrastructure:$springBatchVersion")
 
-    // JWT
+    // ── Spring Data Redis 2.7.x ───────────────────────────────────
+    implementation("org.springframework.data:spring-data-redis:2.7.18")
+    implementation("io.lettuce:lettuce-core:6.3.2.RELEASE")
+
+    // ── Embedded Tomcat 9 (javax.servlet 기반) ────────────────────
+    implementation("org.apache.tomcat.embed:tomcat-embed-core:$tomcatVersion")
+    implementation("org.apache.tomcat.embed:tomcat-embed-websocket:$tomcatVersion")
+    implementation("org.apache.tomcat.embed:tomcat-embed-jasper:$tomcatVersion")
+
+    // ── Jackson ───────────────────────────────────────────────────
+    implementation("com.fasterxml.jackson.core:jackson-databind:2.18.3")
+    implementation("com.fasterxml.jackson.datatype:jackson-datatype-jsr310:2.18.3")
+
+    // ── Bean Validation (javax.* 네임스페이스) ─────────────────────
+    implementation("javax.validation:validation-api:2.0.1.Final")
+    implementation("org.hibernate.validator:hibernate-validator:6.2.5.Final")
+
+    // ── MyBatis ───────────────────────────────────────────────────
+    implementation("org.mybatis:mybatis:3.5.19")
+    implementation("org.mybatis:mybatis-spring:2.1.2")
+
+    // ── MySQL ──────────────────────────────────────────────────────
+    runtimeOnly("com.mysql:mysql-connector-j:8.4.0")
+
+    // ── Connection Pool ───────────────────────────────────────────
+    implementation("com.zaxxer:HikariCP:5.1.0")
+
+    // ── JWT ───────────────────────────────────────────────────────
     implementation("io.jsonwebtoken:jjwt-api:0.12.6")
     runtimeOnly("io.jsonwebtoken:jjwt-impl:0.12.6")
     runtimeOnly("io.jsonwebtoken:jjwt-jackson:0.12.6")
 
-    // Swagger (springdoc-openapi)
-    implementation("org.springdoc:springdoc-openapi-starter-webmvc-ui:2.6.0")
+    // ── Swagger (OpenAPI 3.0 모델만 사용, UI는 별도 구성) ─────────
+    implementation("io.swagger.core.v3:swagger-models:2.2.25")
+    implementation("io.swagger.core.v3:swagger-annotations:2.2.25")
 
-    // JSON
+    // ── YAML 프로퍼티 로딩 (SnakeYAML) ────────────────────────────
+    implementation("org.yaml:snakeyaml:2.3")
+
+    // ── Mail ──────────────────────────────────────────────────────
+    implementation("com.sun.mail:jakarta.mail:1.6.7")
+
+    // ── JSON 유틸 ─────────────────────────────────────────────────
     implementation("com.google.code.gson:gson:2.11.0")
 
-    // Lombok
-    compileOnly("org.projectlombok:lombok")
-    annotationProcessor("org.projectlombok:lombok")
+    // ── HTTP 클라이언트 (RestTemplate) ────────────────────────────
+    implementation("org.apache.httpcomponents:httpclient:4.5.14")
 
-    // Test
-    testImplementation("org.springframework.boot:spring-boot-starter-test")
-    testImplementation("org.springframework.security:spring-security-test")
-    testImplementation("org.mybatis.spring.boot:mybatis-spring-boot-starter-test:3.0.3")
+    // ── Lombok ────────────────────────────────────────────────────
+    compileOnly("org.projectlombok:lombok:1.18.36")
+    annotationProcessor("org.projectlombok:lombok:1.18.36")
+
+    // ── Test ──────────────────────────────────────────────────────
+    testImplementation("org.springframework:spring-test:$springVersion")
+    testImplementation("org.springframework.security:spring-security-test:$springSecVersion")
+    testImplementation("org.junit.jupiter:junit-jupiter:5.10.3")
+    testImplementation("com.h2database:h2:2.3.232")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }
 
 tasks.withType<Test> {
     useJUnitPlatform()
+}
+
+// 실행 가능한 Fat JAR 생성
+tasks.register<Jar>("fatJar") {
+    archiveClassifier.set("all")
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    manifest {
+        attributes["Main-Class"] = "com.aewol.AewolApplication"
+    }
+    from(configurations.runtimeClasspath.get().map { if (it.isDirectory) it else zipTree(it) })
+    with(tasks.jar.get())
 }
