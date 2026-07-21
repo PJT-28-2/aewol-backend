@@ -1,0 +1,26 @@
+language: "ko"
+reviews:
+  profile: "chill"
+  request_changes_workflow: false
+  high_level_summary: true
+  poem: false
+  review_status: true
+  collapse_walkthrough: false
+  auto_review:
+    enabled: true
+    drafts: false
+  path_instructions:
+    - path: "src/main/java/com/aewol/config/**"
+      instructions: "이 디렉토리는 Spring Boot 설정 파일입니다. SecurityConfig, RedisConfig 등 보안 관련 설정 변경 시 특히 주의해서 리뷰해주세요."
+    - path: "src/main/java/com/aewol/common/**"
+      instructions: "공통 모듈입니다. JWT, 예외 처리, 응답 래퍼 등 변경 시 전체 API에 영향을 줄 수 있으므로 신중하게 리뷰해주세요."
+    - path: "src/main/java/com/aewol/domain/**/controller/**"
+      instructions: "REST API 컨트롤러입니다. API 명세서와 일치하는지, 입력 검증이 적절한지 확인해주세요."
+    - path: "src/main/java/com/aewol/domain/**/service/**"
+      instructions: "비즈니스 로직입니다. 트랜잭션 처리, 예외 처리, 데이터 정합성을 중점적으로 리뷰해주세요."
+    - path: "src/main/resources/mapper/**"
+      instructions: "MyBatis XML 매퍼입니다. SQL 인젝션 방지(#{} 사용), 쿼리 성능을 확인해주세요."
+    - path: "src/main/java/com/aewol/external/**"
+      instructions: "외부 API 클라이언트입니다. 에러 처리, 타임아웃, 재시도 로직을 확인해주세요."
+chat:
+  auto_reply: true
