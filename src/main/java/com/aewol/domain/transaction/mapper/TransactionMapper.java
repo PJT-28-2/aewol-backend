@@ -1,0 +1,15 @@
+package com.aewol.domain.transaction.mapper;
+
+import org.apache.ibatis.annotations.Mapper;
+import org.apache.ibatis.annotations.Param;
+import java.util.List;
+import java.util.Map;
+
+@Mapper
+public interface TransactionMapper {
+    Map<String, Object> findById(@Param("txnId") String txnId);
+    List<Map<String, Object>> findByWalletId(@Param("walletId") String walletId,
+                                              @Param("category") String category,
+                                              @Param("petId") String petId);
+    void insert(Map<String, Object> transaction);
+}

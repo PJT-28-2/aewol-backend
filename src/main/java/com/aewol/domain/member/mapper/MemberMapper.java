@@ -1,0 +1,13 @@
+package com.aewol.domain.member.mapper;
+
+import org.apache.ibatis.annotations.Mapper;
+import org.apache.ibatis.annotations.Param;
+import java.util.Map;
+
+@Mapper
+public interface MemberMapper {
+    Map<String, Object> findById(@Param("memberId") String memberId);
+    Map<String, Object> findByEmail(@Param("email") String email);
+    void insert(Map<String, Object> member);
+    void update(Map<String, Object> member);
+}

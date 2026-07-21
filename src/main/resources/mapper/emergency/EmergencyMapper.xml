@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.aewol.domain.emergency.mapper.EmergencyMapper">
+
+    <select id="findNearby" resultType="map">
+        SELECT *,
+               (6371 * ACOS(
+                   COS(RADIANS(#{lat})) * COS(RADIANS(latitude))
+                   * COS(RADIANS(longitude) - RADIANS(#{lng}))
+                   + SIN(RADIANS(#{lat})) * SIN(RADIANS(latitude))
+               )) AS distance_km
+        FROM emergency_hospital
+        HAVING distance_km &lt;= #{radiusKm}
+        ORDER BY distance_km
+    </select>
+
+    <select id="find24hHospitals" resultType="map">
+        SELECT * FROM emergency_hospital WHERE is_24h = 1
+    </select>
+
+</mapper>

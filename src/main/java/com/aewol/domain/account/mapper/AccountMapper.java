@@ -1,0 +1,13 @@
+package com.aewol.domain.account.mapper;
+
+import org.apache.ibatis.annotations.Mapper;
+import org.apache.ibatis.annotations.Param;
+import java.util.List;
+import java.util.Map;
+
+@Mapper
+public interface AccountMapper {
+    void insert(Map<String, Object> account);
+    List<Map<String, Object>> findByMemberId(@Param("memberId") String memberId);
+    void updateStatus(@Param("accountId") String accountId, @Param("status") String status);
+}

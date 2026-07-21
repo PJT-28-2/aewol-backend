@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.aewol.domain.insurance.mapper.InsuranceMapper">
+
+    <insert id="insertSimulation" parameterType="map">
+        INSERT INTO insurance_simulation (sim_id, pet_id, breed, age, medical_history,
+                                          estimated_annual_cost, premium, deductible, break_even_year, recommendation)
+        VALUES (#{simId}, #{petId}, #{breed}, #{age}, #{medicalHistory},
+                #{estimatedAnnualCost}, #{premium}, #{deductible}, #{breakEvenYear}, #{recommendation})
+    </insert>
+
+    <insert id="insertClaim" parameterType="map">
+        INSERT INTO insurance_claim (claim_id, pet_id, member_id, receipt_image_url, extracted_data,
+                                     hospital_name, treatment_date, total_amount, claim_status)
+        VALUES (#{claimId}, #{petId}, #{memberId}, #{receiptImageUrl}, #{extractedData},
+                #{hospitalName}, #{treatmentDate}, #{totalAmount}, #{claimStatus})
+    </insert>
+
+    <update id="updateClaim" parameterType="map">
+        UPDATE insurance_claim
+        SET hospital_name = #{hospitalName}, treatment_date = #{treatmentDate},
+            total_amount = #{totalAmount}, claim_status = #{claimStatus},
+            claim_document_url = #{claimDocumentUrl}, extracted_data = #{extractedData},
+            updated_at = NOW()
+        WHERE claim_id = #{claimId}
+    </update>
+
+    <select id="findClaimById" resultType="map">
+        SELECT * FROM insurance_claim WHERE claim_id = #{claimId}
+    </select>
+
+    <select id="findClaimsByMemberId" resultType="map">
+        SELECT * FROM insurance_claim WHERE member_id = #{memberId} ORDER BY created_at DESC
+    </select>
+
+</mapper>

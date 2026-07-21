@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.aewol.domain.support.mapper.SupportMapper">
+
+    <select id="findByRegion" resultType="map">
+        SELECT * FROM local_support_program
+        WHERE region = #{region}
+          AND (end_date IS NULL OR end_date >= CURDATE())
+        ORDER BY start_date DESC
+    </select>
+
+    <select id="findAll" resultType="map">
+        SELECT * FROM local_support_program
+        WHERE end_date IS NULL OR end_date >= CURDATE()
+        ORDER BY start_date DESC
+    </select>
+
+</mapper>

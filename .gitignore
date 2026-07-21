@@ -36,6 +36,9 @@ out/
 .DS_Store
 Thumbs.db
 
+# --- File Uploads ---
+uploads/
+
 # --- Environment ---
 .env
 *.env.local
