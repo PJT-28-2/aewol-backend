@@ -6,12 +6,12 @@ services:
     container_name: aewol-mysql
     restart: unless-stopped
     ports:
-      - "3306:3306"
+      - "${DB_PORT:-3307}:3306"
     environment:
-      MYSQL_ROOT_PASSWORD: root1234
-      MYSQL_DATABASE: aewol
-      MYSQL_USER: aewol
-      MYSQL_PASSWORD: aewol1234
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-root1234}
+      MYSQL_DATABASE: ${DB_NAME:-aewol}
+      MYSQL_USER: ${DB_USERNAME:-aewol}
+      MYSQL_PASSWORD: ${DB_PASSWORD:-aewol1234}
     command:
       - --character-set-server=utf8mb4
       - --collation-server=utf8mb4_unicode_ci

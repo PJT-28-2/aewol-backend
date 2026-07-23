@@ -95,18 +95,13 @@ src/main/resources/
 - MySQL 8.0
 - Redis 7
 
-### MySQL 설정
+### MySQL / 스키마 세팅
 
-```sql
-CREATE DATABASE aewol CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
-CREATE USER 'aewol'@'localhost' IDENTIFIED BY 'aewol1234';
-GRANT ALL PRIVILEGES ON aewol.* TO 'aewol'@'localhost';
-```
-
-### 스키마 적용
+Docker Compose + Flyway로 관리한다. 자세한 명령어 순서는 [SETUP.md](./SETUP.md) 참고.
 
 ```bash
-mysql -u aewol -paewol1234 aewol < src/main/resources/sql/schema.sql
+docker-compose up -d
+./gradlew flywayMigrate
 ```
 
 ### 환경변수 설정

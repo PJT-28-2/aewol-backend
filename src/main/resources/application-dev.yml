@@ -1,7 +1,7 @@
 spring:
   # MySQL (개발 서버용 — 실제 값은 환경변수로 주입)
   datasource:
-    url: ${DB_URL:jdbc:mysql://localhost:3306/aewol?useSSL=false&serverTimezone=Asia/Seoul&characterEncoding=utf8mb4&allowPublicKeyRetrieval=true}
+    url: ${DB_URL:jdbc:mysql://localhost:3307/aewol?useSSL=false&serverTimezone=Asia/Seoul&characterEncoding=UTF-8&allowPublicKeyRetrieval=true}
     username: ${DB_USERNAME:aewol}
     password: ${DB_PASSWORD:aewol1234}
     driver-class-name: com.mysql.cj.jdbc.Driver

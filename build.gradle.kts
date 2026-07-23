@@ -1,5 +1,6 @@
 plugins {
     java
+    id("org.flywaydb.flyway") version "9.22.3"
 }
 
 group = "com.aewol"
@@ -18,6 +19,12 @@ configurations {
 
 repositories {
     mavenCentral()
+}
+
+buildscript {
+    dependencies {
+        classpath("org.flywaydb:flyway-mysql:9.22.3")
+    }
 }
 
 val springVersion      = "5.3.39"
@@ -67,6 +74,10 @@ dependencies {
     // ── MySQL ──────────────────────────────────────────────────────
     runtimeOnly("com.mysql:mysql-connector-j:8.4.0")
 
+    // ── Flyway ────────────────────────────────────────────────────
+    implementation("org.flywaydb:flyway-core:9.22.3")
+    implementation("org.flywaydb:flyway-mysql:9.22.3")
+
     // ── Connection Pool ───────────────────────────────────────────
     implementation("com.zaxxer:HikariCP:5.1.0")
 
@@ -105,6 +116,14 @@ dependencies {
 
 tasks.withType<Test> {
     useJUnitPlatform()
+}
+
+// Flyway 설정: docker-compose 로 띄운 로컬 MySQL 기준 (환경변수로 오버라이드 가능)
+flyway {
+    url = System.getenv("DB_URL") ?: "jdbc:mysql://localhost:3307/aewol?serverTimezone=Asia/Seoul&characterEncoding=UTF-8"
+    user = System.getenv("DB_USERNAME") ?: "aewol"
+    password = System.getenv("DB_PASSWORD") ?: "aewol1234"
+    locations = arrayOf("filesystem:src/main/resources/db/migration")
 }
 
 // 실행 가능한 Fat JAR 생성
