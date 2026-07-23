@@ -42,3 +42,7 @@ uploads/
 # --- Environment ---
 .env
 *.env.local
+
+# --- AGENT ---
+CLAUDE.md
+AGENT.md
