@@ -6,6 +6,7 @@ import org.springframework.core.env.PropertySource;
 import org.springframework.core.io.support.EncodedResource;
 import org.springframework.core.io.support.PropertySourceFactory;
 
+import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.util.Objects;
 import java.util.Properties;
@@ -17,6 +18,10 @@ public class YamlPropertySourceFactory implements PropertySourceFactory {
 
     @Override
     public PropertySource<?> createPropertySource(String name, EncodedResource resource) throws IOException {
+        if (!resource.getResource().exists()) {
+            throw new FileNotFoundException(
+                resource.getResource().getDescription() + " cannot be opened because it does not exist");
+        }
         YamlPropertiesFactoryBean factory = new YamlPropertiesFactoryBean();
         factory.setResources(resource.getResource());
         Properties properties = Objects.requireNonNull(factory.getObject());
