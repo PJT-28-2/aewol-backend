@@ -2,20 +2,171 @@
 <!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
 <mapper namespace="com.aewol.domain.share.mapper.ShareMapper">
 
-    <insert id="insert" parameterType="map">
-        INSERT INTO shared_access (access_id, wallet_id, member_id, invited_by, role, status)
-        VALUES (#{accessId}, #{walletId}, #{memberId}, #{invitedBy}, #{role}, #{status})
+    <select id="findAccessiblePets" resultType="map">
+        SELECT DISTINCT p.pet_id AS id,
+                        p.name AS name,
+                        LOWER(p.species) AS type,
+                        COALESCE(p.breed, p.species) AS species
+        FROM pet p
+        LEFT JOIN shared_access sa
+               ON sa.pet_id = p.pet_id
+              AND sa.member_id = #{memberId}
+              AND sa.status = 'ACCEPTED'
+        WHERE p.is_active = 1
+          AND (p.member_id = #{memberId} OR sa.access_id IS NOT NULL)
+        ORDER BY p.name
+    </select>
+
+    <select id="findMemberByPhone" resultType="map">
+        SELECT *
+        FROM member
+        WHERE REPLACE(REPLACE(phone, '-', ''), ' ', '') = #{phone}
+        LIMIT 1
+    </select>
+
+    <select id="findActiveInvite" resultType="map">
+        SELECT *
+        FROM shared_access
+        WHERE pet_id = #{petId}
+          AND status IN ('PENDING', 'ACCEPTED')
+          AND (
+            (#{memberId} IS NOT NULL AND member_id = #{memberId})
+            OR (#{recipientValue} IS NOT NULL AND recipient_value = #{recipientValue})
+          )
+        LIMIT 1
+    </select>
+
+    <select id="findByAccessId" resultType="map">
+        SELECT sa.*, p.name AS pet_name, p.member_id AS owner_id,
+               inviter.name AS inviter_name
+        FROM shared_access sa
+        JOIN pet p ON p.pet_id = sa.pet_id
+        JOIN member inviter ON inviter.member_id = sa.invited_by
+        WHERE sa.access_id = #{accessId}
+    </select>
+
+    <select id="findByInviteCode" resultType="map">
+        SELECT sa.*, p.name AS pet_name, p.member_id AS owner_id,
+               inviter.name AS inviter_name
+        FROM shared_access sa
+        JOIN pet p ON p.pet_id = sa.pet_id
+        JOIN member inviter ON inviter.member_id = sa.invited_by
+        WHERE sa.invite_code = #{inviteCode}
+    </select>
+
+    <select id="findAcceptedAccess" resultType="map">
+        SELECT *
+        FROM shared_access
+        WHERE pet_id = #{petId}
+          AND member_id = #{memberId}
+          AND status = 'ACCEPTED'
+        LIMIT 1
+    </select>
+
+    <!-- access_id는 BIGINT AUTO_INCREMENT — 생성된 키를 파라미터 맵의 accessId로 돌려받는다 -->
+    <insert id="insert" parameterType="map" useGeneratedKeys="true" keyProperty="accessId" keyColumn="access_id">
+        INSERT INTO shared_access
+            (wallet_id, pet_id, member_id, invited_by, invite_code,
+             recipient_type, recipient_value, role, status, expires_at)
+        VALUES
+            (#{walletId}, #{petId}, #{memberId}, #{invitedBy}, #{inviteCode},
+             #{recipientType}, #{recipientValue}, #{role}, 'PENDING', #{expiresAt})
     </insert>
 
-    <update id="updateStatus">
-        UPDATE shared_access SET status = #{status} WHERE access_id = #{accessId}
+    <update id="acceptInvite">
+        UPDATE shared_access
+        SET member_id = #{memberId}, status = 'ACCEPTED', accepted_at = NOW(), updated_at = NOW()
+        WHERE access_id = #{accessId} AND status = 'PENDING'
     </update>
 
-    <select id="findByWalletId" resultType="map">
-        SELECT sa.*, m.nickname, m.email
+    <update id="updateStatus">
+        UPDATE shared_access
+        SET status = #{status},
+            revoked_at = CASE WHEN #{status} = 'REVOKED' THEN NOW() ELSE revoked_at END,
+            updated_at = NOW()
+        WHERE access_id = #{accessId}
+          AND member_id = #{memberId}
+          AND status = 'PENDING'
+    </update>
+
+    <update id="markExpired">
+        UPDATE shared_access
+        SET status = 'EXPIRED', updated_at = NOW()
+        WHERE access_id = #{accessId} AND status = 'PENDING'
+    </update>
+
+    <select id="findMembersByPetId" resultType="map">
+        SELECT p.member_id AS id,
+               owner.name AS name,
+               'ADMIN' AS role,
+               'ACCEPTED' AS status,
+               0 AS sort_order
+        FROM pet p
+        JOIN member owner ON owner.member_id = p.member_id
+        WHERE p.pet_id = #{petId}
+        UNION ALL
+        SELECT sa.member_id AS id,
+               m.name AS name,
+               sa.role AS role,
+               sa.status AS status,
+               1 AS sort_order
         FROM shared_access sa
-        JOIN member m ON sa.member_id = m.member_id
-        WHERE sa.wallet_id = #{walletId}
+        JOIN member m ON m.member_id = sa.member_id
+        WHERE sa.pet_id = #{petId}
+          AND sa.status = 'ACCEPTED'
+          AND sa.member_id &lt;&gt; (SELECT member_id FROM pet WHERE pet_id = #{petId})
+        ORDER BY sort_order, name
+    </select>
+
+    <!-- transaction에는 member_id가 없다(V1) — wallet_id -> wallet.member_id로 행위자를 유도한다 -->
+    <select id="findMonthlyContributions" resultType="map">
+        SELECT w.member_id AS id,
+               m.name AS name,
+               SUM(ABS(t.price)) AS amount
+        FROM `transaction` t
+        JOIN wallet w ON w.wallet_id = t.wallet_id
+        JOIN member m ON m.member_id = w.member_id
+        JOIN pet p ON p.pet_id = t.pet_id
+        WHERE t.pet_id = #{petId}
+          AND t.txn_type IN ('PAYMENT', 'WITHDRAW')
+          AND t.txn_date &gt;= DATE_FORMAT(CURDATE(), '%Y-%m-01')
+          AND t.txn_date &lt; DATE_ADD(DATE_FORMAT(CURDATE(), '%Y-%m-01'), INTERVAL 1 MONTH)
+          AND (
+            w.member_id = p.member_id
+            OR EXISTS (
+                SELECT 1 FROM shared_access sa
+                WHERE sa.pet_id = t.pet_id
+                  AND sa.member_id = w.member_id
+                  AND sa.status = 'ACCEPTED'
+            )
+          )
+        GROUP BY w.member_id, m.name
+        ORDER BY amount DESC, name
+    </select>
+
+    <select id="findLogsByPetId" resultType="map">
+        SELECT log_id AS id, title, description, created_at AS createdAt
+        FROM activity_log
+        WHERE pet_id = #{petId}
+        ORDER BY created_at DESC
+        LIMIT 50
+    </select>
+
+    <update id="updateRole">
+        UPDATE shared_access
+        SET role = #{role}, updated_at = NOW()
+        WHERE pet_id = #{petId} AND member_id = #{memberId} AND status = 'ACCEPTED'
+    </update>
+
+    <update id="revoke">
+        UPDATE shared_access
+        SET status = 'REVOKED', revoked_at = NOW(), updated_at = NOW()
+        WHERE pet_id = #{petId} AND member_id = #{memberId} AND status = 'ACCEPTED'
+    </update>
+
+    <!-- wallet은 회원당 MAIN/DONATION 타입별 1개 — 공동육아 초대는 소유자의 MAIN 지갑에 연결한다 -->
+    <select id="findMainWalletByMemberId" resultType="map">
+        SELECT * FROM wallet WHERE member_id = #{memberId} AND wallet_type = 'MAIN'
     </select>
 
 </mapper>

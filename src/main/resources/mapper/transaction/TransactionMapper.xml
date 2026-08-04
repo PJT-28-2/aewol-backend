@@ -14,16 +14,16 @@
             AND t.category = #{category}
         </if>
         <if test="petId != null and petId != ''">
-            AND b.pet_id = #{petId}
+            AND (t.pet_id = #{petId} OR b.pet_id = #{petId})
         </if>
         ORDER BY t.txn_date DESC
     </select>
 
     <insert id="insert" parameterType="map">
-        INSERT INTO `transaction` (txn_id, wallet_id, bucket_id, member_id, txn_type,
+        INSERT INTO `transaction` (txn_id, wallet_id, bucket_id, member_id, pet_id, txn_type,
                                    amount, category, merchant_name, merchant_category_code,
                                    memo, auto_tagged, txn_date)
-        VALUES (#{txnId}, #{walletId}, #{bucketId}, #{memberId}, #{txnType},
+        VALUES (#{txnId}, #{walletId}, #{bucketId}, #{memberId}, #{petId}, #{txnType},
                 #{amount}, #{category}, #{merchantName}, #{merchantCategoryCode},
                 #{memo}, #{autoTagged}, #{txnDate})
     </insert>

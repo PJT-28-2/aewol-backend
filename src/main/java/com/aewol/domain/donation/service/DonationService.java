@@ -1,11 +1,15 @@
 package com.aewol.domain.donation.service;
 
-import java.math.BigDecimal;
+import com.aewol.domain.donation.dto.*;
 import java.util.List;
 import java.util.Map;
 
 public interface DonationService {
-    Map<String, Object> getPot(String memberId);
-    void donate(String memberId, BigDecimal amount, String recipientName);
+    DonationOverviewResponse getOverview(String memberId);
+    DonationBalanceResponse donate(String memberId, DonationRequest request);
+    DonationBalanceResponse withdraw(String memberId, DonationWithdrawRequest request);
+    DonationSettingsResponse saveSettings(String memberId, DonationSettingRequest request);
     List<Map<String, Object>> getHistory(String memberId);
+    int processDailyRoundUps();
+    int processMonthlyAutoDonations(String yearMonth);
 }

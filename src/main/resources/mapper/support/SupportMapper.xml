@@ -2,17 +2,60 @@
 <!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
 <mapper namespace="com.aewol.domain.support.mapper.SupportMapper">
 
-    <select id="findByRegion" resultType="map">
-        SELECT * FROM local_support_program
-        WHERE region = #{region}
-          AND (end_date IS NULL OR end_date >= CURDATE())
-        ORDER BY start_date DESC
+    <sql id="programColumns">
+        SELECT program_id AS id,
+               region,
+               program_name AS title,
+               COALESCE(summary, description) AS summary,
+               COALESCE(agency_name, '') AS agency,
+               COALESCE(benefit_summary, '') AS benefit,
+               period_text AS period,
+               apply_url AS applyUrl,
+               target_species AS targetSpecies,
+               start_date AS startDate,
+               end_date AS endDate
+        FROM local_support_program
+    </sql>
+
+    <select id="findActivePrograms" resultType="map">
+        <include refid="programColumns"/>
+        WHERE is_active = 1
+          AND (start_date IS NULL OR start_date &lt;= CURDATE())
+          AND (end_date IS NULL OR end_date &gt;= CURDATE())
+        ORDER BY region, program_name
     </select>
 
-    <select id="findAll" resultType="map">
-        SELECT * FROM local_support_program
-        WHERE end_date IS NULL OR end_date >= CURDATE()
-        ORDER BY start_date DESC
+    <select id="findProgramById" resultType="map">
+        <include refid="programColumns"/>
+        WHERE program_id = #{programId} AND is_active = 1
     </select>
+
+    <select id="findConditions" resultType="map">
+        SELECT program_condition_id AS id,
+               condition_type AS conditionType,
+               operator,
+               condition_value AS conditionValue,
+               title,
+               description,
+               is_required AS isRequired
+        FROM local_support_program_condition
+        WHERE program_id = #{programId}
+        ORDER BY display_order, created_at
+    </select>
+
+    <select id="findInterest" resultType="map">
+        SELECT * FROM support_program_interest
+        WHERE member_id = #{memberId} AND program_id = #{programId}
+    </select>
+
+    <!-- interest_id는 BIGINT AUTO_INCREMENT — uk_spi_member_program 기준 upsert -->
+    <insert id="upsertInterest" parameterType="map">
+        INSERT INTO support_program_interest
+            (member_id, program_id, pet_id, status)
+        VALUES
+            (#{memberId}, #{programId}, #{petId}, #{status})
+        ON DUPLICATE KEY UPDATE
+            pet_id = VALUES(pet_id), status = VALUES(status), updated_at = NOW()
+    </insert>
 
 </mapper>

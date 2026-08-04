@@ -78,6 +78,7 @@ public class TransactionServiceImpl implements TransactionService {
         txn.put("walletId", walletId);
         txn.put("bucketId", bucketId);
         txn.put("memberId", memberId);
+        txn.put("petId", request.getPetId());
         txn.put("txnType", "PAYMENT");
         txn.put("amount", request.getAmount());
         txn.put("category", category);

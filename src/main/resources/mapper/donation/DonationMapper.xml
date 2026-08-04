@@ -2,26 +2,218 @@
 <!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
 <mapper namespace="com.aewol.domain.donation.mapper.DonationMapper">
 
+    <!-- ================================================================
+         저금통(기부함) = wallet(wallet_type='DONATION') 행.
+         V1에서 donation_pot이 wallet으로 통합되어 별도 pot 테이블이 없다.
+         메서드명은 도메인 용어(pot)를 유지하되 실제 저장소는 wallet이다.
+         ================================================================ -->
+
     <select id="findPotByMemberId" resultType="map">
-        SELECT * FROM donation_pot WHERE member_id = #{memberId}
+        SELECT * FROM wallet
+        WHERE member_id = #{memberId} AND wallet_type = 'DONATION'
     </select>
 
+    <select id="findPotForUpdate" resultType="map">
+        SELECT * FROM wallet
+        WHERE member_id = #{memberId} AND wallet_type = 'DONATION'
+        FOR UPDATE
+    </select>
+
+    <!-- UNIQUE(member_id, wallet_type)로 중복 생성이 무해한 no-op이 된다 -->
     <insert id="insertPot" parameterType="map">
-        INSERT INTO donation_pot (pot_id, member_id, balance)
-        VALUES (#{potId}, #{memberId}, #{balance})
+        INSERT INTO wallet (member_id, wallet_type, balance)
+        VALUES (#{memberId}, 'DONATION', #{balance})
+        ON DUPLICATE KEY UPDATE member_id = VALUES(member_id)
     </insert>
 
-    <update id="updatePotBalance">
-        UPDATE donation_pot SET balance = #{balance}, updated_at = NOW() WHERE pot_id = #{potId}
+    <update id="decreasePotBalance">
+        UPDATE wallet
+        SET balance = balance - #{amount}, updated_at = NOW()
+        WHERE wallet_id = #{walletId} AND wallet_type = 'DONATION' AND balance &gt;= #{amount}
     </update>
 
-    <insert id="insertHistory" parameterType="map">
-        INSERT INTO donation_history (donation_id, pot_id, amount, recipient_name)
-        VALUES (#{donationId}, #{potId}, #{amount}, #{recipientName})
+    <update id="increasePotBalance">
+        UPDATE wallet
+        SET balance = balance + #{amount}, updated_at = NOW()
+        WHERE wallet_id = #{walletId} AND wallet_type = 'DONATION'
+    </update>
+
+    <!-- 출금 대상 실지갑 -->
+    <select id="findMainWalletByMemberId" resultType="map">
+        SELECT * FROM wallet
+        WHERE member_id = #{memberId} AND wallet_type = 'MAIN'
+    </select>
+
+    <update id="increaseWalletBalance">
+        UPDATE wallet
+        SET balance = balance + #{amount}, updated_at = NOW()
+        WHERE wallet_id = #{walletId}
+    </update>
+
+    <select id="findMonthlySaved" resultType="java.math.BigDecimal">
+        SELECT COALESCE(SUM(roundup_amount), 0)
+        FROM donation_roundup
+        WHERE wallet_id = #{walletId}
+          AND status = 'COMPLETED'
+          AND created_at &gt;= DATE_FORMAT(CURDATE(), '%Y-%m-01')
+          AND created_at &lt; DATE_ADD(DATE_FORMAT(CURDATE(), '%Y-%m-01'), INTERVAL 1 MONTH)
+    </select>
+
+    <select id="findActiveCampaigns" resultType="map">
+        SELECT c.campaign_id AS id,
+               o.name AS organization,
+               c.title,
+               c.category,
+               c.target_amount AS targetAmount,
+               c.raised_amount AS raised,
+               c.participant_count AS participants,
+               c.ends_at AS endsAt,
+               CASE WHEN mdp.member_id IS NULL THEN 0 ELSE 1 END AS preferred
+        FROM donation_campaign c
+        JOIN donation_organization o ON o.organization_id = c.organization_id AND o.is_active = 1
+        LEFT JOIN member_donation_preference mdp
+               ON mdp.organization_id = c.organization_id AND mdp.member_id = #{memberId}
+        WHERE c.is_active = 1
+          AND (c.starts_at IS NULL OR c.starts_at &lt;= NOW())
+          AND (c.ends_at IS NULL OR c.ends_at &gt;= NOW())
+        ORDER BY c.is_recommended DESC, preferred DESC, c.display_order, c.created_at DESC
+    </select>
+
+    <select id="findCampaignById" resultType="map">
+        SELECT c.*, o.name AS organization_name
+        FROM donation_campaign c
+        JOIN donation_organization o ON o.organization_id = c.organization_id AND o.is_active = 1
+        WHERE c.campaign_id = #{campaignId}
+          AND c.is_active = 1
+          AND (c.starts_at IS NULL OR c.starts_at &lt;= NOW())
+          AND (c.ends_at IS NULL OR c.ends_at &gt;= NOW())
+    </select>
+
+    <select id="findSettings" resultType="map">
+        SELECT member_id,
+               piggy_bank_enabled AS piggyBankEnabled,
+               saving_unit AS savingUnit,
+               auto_donate_enabled AS autoDonate,
+               auto_donate_campaign_id AS autoDonateCampaignId
+        FROM donation_setting
+        WHERE member_id = #{memberId}
+    </select>
+
+    <insert id="insertSettings">
+        INSERT INTO donation_setting (member_id) VALUES (#{memberId})
+        ON DUPLICATE KEY UPDATE member_id = VALUES(member_id)
     </insert>
 
-    <select id="findHistoryByPotId" resultType="map">
-        SELECT * FROM donation_history WHERE pot_id = #{potId} ORDER BY donated_at DESC
+    <update id="updateSettings" parameterType="map">
+        UPDATE donation_setting
+        SET piggy_bank_enabled = #{piggyBankEnabled},
+            saving_unit = #{savingUnit},
+            auto_donate_enabled = #{autoDonate},
+            auto_donate_organization_id = #{organizationId},
+            auto_donate_campaign_id = #{campaignId},
+            updated_at = NOW()
+        WHERE member_id = #{memberId}
+    </update>
+
+    <select id="findHistoryByIdempotencyKey" resultType="map">
+        SELECT dh.*
+        FROM donation_history dh
+        JOIN wallet w ON w.wallet_id = dh.wallet_id
+        WHERE w.member_id = #{memberId} AND dh.idempotency_key = #{idempotencyKey}
     </select>
+
+    <!-- donation_id는 BIGINT AUTO_INCREMENT — 생성 키를 맵의 donationId로 돌려받는다.
+         앱 내 기부는 별도 자금 이동 거래가 없어 txn_id는 NULL로 둔다. -->
+    <insert id="insertHistory" parameterType="map" useGeneratedKeys="true" keyProperty="donationId" keyColumn="donation_id">
+        INSERT INTO donation_history
+            (wallet_id, organization_id, campaign_id, channel_id, txn_id,
+             amount, status, recipient_name, receipt_url, idempotency_key, completed_at)
+        VALUES
+            (#{walletId}, #{organizationId}, #{campaignId}, #{channelId}, NULL,
+             #{amount}, 'COMPLETED', #{recipientName}, NULL, #{idempotencyKey}, NOW())
+    </insert>
+
+    <update id="increaseCampaignResult">
+        UPDATE donation_campaign
+        SET raised_amount = raised_amount + #{amount},
+            participant_count = participant_count + 1,
+            updated_at = NOW()
+        WHERE campaign_id = #{campaignId} AND is_active = 1
+    </update>
+
+    <select id="findHistoryByWalletId" resultType="map">
+        SELECT dh.*, o.name AS organization_name, c.title AS campaign_title
+        FROM donation_history dh
+        LEFT JOIN donation_organization o ON o.organization_id = dh.organization_id
+        LEFT JOIN donation_campaign c ON c.campaign_id = dh.campaign_id
+        WHERE dh.wallet_id = #{walletId}
+        ORDER BY dh.created_at DESC
+    </select>
+
+    <!-- 저금통 -> 실지갑 출금은 내부 이체(TRANSFER).
+         chk_txn_type_consistency: TRANSFER는 counter_wallet_id 필수, recurring_id NULL. -->
+    <insert id="insertWalletTransaction" parameterType="map" useGeneratedKeys="true" keyProperty="txnId" keyColumn="txn_id">
+        INSERT INTO `transaction`
+            (wallet_id, counter_wallet_id, pet_id, txn_type, price,
+             category, merchant_name, memo, auto_tagged, txn_date)
+        VALUES
+            (#{donationWalletId}, #{walletId}, NULL, 'TRANSFER', #{amount},
+             'ETC', '짜투리 저금통', '짜투리 저금통 출금', 'N', NOW())
+    </insert>
+
+    <!-- transaction에는 member_id가 없다(V1) — wallet 경유로 결제자의 적립 설정을 찾는다 -->
+    <select id="findTodayRoundUpCandidates" resultType="map">
+        SELECT t.txn_id AS txnId,
+               w.member_id AS memberId,
+               t.price AS amount,
+               ds.saving_unit AS savingUnit
+        FROM `transaction` t
+        JOIN wallet w ON w.wallet_id = t.wallet_id
+        JOIN donation_setting ds
+          ON ds.member_id = w.member_id
+         AND ds.piggy_bank_enabled = 1
+        LEFT JOIN donation_roundup dr ON dr.source_txn_id = t.txn_id
+        WHERE t.txn_type = 'PAYMENT'
+          AND t.price &gt;= 0
+          AND t.txn_date &gt;= CURDATE()
+          AND t.txn_date &lt; DATE_ADD(CURDATE(), INTERVAL 1 DAY)
+          AND dr.roundup_id IS NULL
+        ORDER BY t.txn_date, t.txn_id
+    </select>
+
+    <!-- uk_dr_source_txn 충돌 시 no-op 업데이트라 affected rows 0 -> 중복 적립 자동 스킵 -->
+    <insert id="insertRoundUp" parameterType="map" useGeneratedKeys="true" keyProperty="roundupId" keyColumn="roundup_id">
+        INSERT INTO donation_roundup
+            (source_txn_id, wallet_id, saving_unit, roundup_amount, status)
+        VALUES
+            (#{sourceTxnId}, #{walletId}, #{savingUnit}, #{roundupAmount}, #{status})
+        ON DUPLICATE KEY UPDATE source_txn_id = VALUES(source_txn_id)
+    </insert>
+
+    <update id="completeRoundUp">
+        UPDATE donation_roundup
+        SET status = 'COMPLETED', completed_at = NOW()
+        WHERE roundup_id = #{roundupId} AND status = 'PENDING'
+    </update>
+
+    <select id="findMonthlyAutoDonationCandidates" resultType="map">
+        SELECT ds.member_id AS memberId,
+               ds.auto_donate_campaign_id AS campaignId
+        FROM donation_setting ds
+        JOIN wallet w ON w.member_id = ds.member_id
+                     AND w.wallet_type = 'DONATION'
+                     AND w.balance &gt; 0
+        WHERE ds.auto_donate_enabled = 1
+          AND ds.auto_donate_campaign_id IS NOT NULL
+          AND (ds.last_auto_donated_year_month IS NULL
+               OR ds.last_auto_donated_year_month &lt;&gt; #{yearMonth})
+        ORDER BY ds.member_id
+    </select>
+
+    <update id="markAutoDonationCompleted">
+        UPDATE donation_setting
+        SET last_auto_donated_year_month = #{yearMonth}, updated_at = NOW()
+        WHERE member_id = #{memberId} AND auto_donate_enabled = 1
+    </update>
 
 </mapper>

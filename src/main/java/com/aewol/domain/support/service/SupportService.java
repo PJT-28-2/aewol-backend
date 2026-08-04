@@ -1,9 +1,8 @@
 package com.aewol.domain.support.service;
 
-import java.util.List;
-import java.util.Map;
+import com.aewol.domain.support.dto.SupportProgramsResponse;
 
 public interface SupportService {
-    List<Map<String, Object>> getPrograms(String region);
-    List<Map<String, Object>> getMatchedPrograms(String memberId);
+    SupportProgramsResponse getMatchedPrograms(String memberId, String petId);
+    void markApplyPageOpened(String memberId, String programId, String petId);
 }
