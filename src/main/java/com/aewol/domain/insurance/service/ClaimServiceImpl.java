@@ -46,9 +46,7 @@ public class ClaimServiceImpl implements ClaimService {
             String extractedJson = geminiVisionClient.extractReceiptData(
                     receipt.getBytes(), receipt.getContentType());
 
-            String claimId = UUID.randomUUID().toString();
             Map<String, Object> claim = new HashMap<>();
-            claim.put("claimId", claimId);
             claim.put("petId", petId);
             claim.put("memberId", memberId);
             claim.put("receiptImageUrl", imageUrl);
@@ -59,7 +57,7 @@ public class ClaimServiceImpl implements ClaimService {
             claim.put("claimStatus", "DRAFT");
             insuranceMapper.insertClaim(claim);
 
-            return toResponse(insuranceMapper.findClaimById(claimId));
+            return toResponse(insuranceMapper.findClaimById(String.valueOf(claim.get("claimId"))));
         } catch (IOException e) {
             throw new BusinessException("영수증 업로드에 실패했습니다.");
         }

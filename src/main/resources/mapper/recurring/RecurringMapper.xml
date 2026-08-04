@@ -1,14 +1,15 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
 <mapper namespace="com.aewol.domain.recurring.mapper.RecurringMapper">
+    <!-- V4: cycle_days(주기 일수) -> payment_day(매월 며칠, 1~28) -->
 
     <select id="findByWalletId" resultType="map">
         SELECT * FROM recurring_payment WHERE wallet_id = #{walletId} AND is_active = 1
     </select>
 
-    <insert id="insert" parameterType="map">
-        INSERT INTO recurring_payment (recurring_id, wallet_id, bucket_id, product_name, amount, cycle_days, next_payment_date)
-        VALUES (#{recurringId}, #{walletId}, #{bucketId}, #{productName}, #{amount}, #{cycleDays}, #{nextPaymentDate})
+    <insert id="insert" parameterType="map" useGeneratedKeys="true" keyProperty="recurringId" keyColumn="recurring_id">
+        INSERT INTO recurring_payment (wallet_id, pet_id, product_name, category, price, payment_day, next_payment_date)
+        VALUES (#{walletId}, #{petId}, #{productName}, #{category}, #{price}, #{paymentDay}, #{nextPaymentDate})
     </insert>
 
     <update id="deactivate">

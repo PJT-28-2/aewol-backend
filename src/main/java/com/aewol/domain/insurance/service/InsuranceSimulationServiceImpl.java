@@ -9,7 +9,6 @@ import org.springframework.stereotype.Service;
 import java.math.BigDecimal;
 import java.util.HashMap;
 import java.util.Map;
-import java.util.UUID;
 
 @Service
 @RequiredArgsConstructor
@@ -29,22 +28,18 @@ public class InsuranceSimulationServiceImpl implements InsuranceSimulationServic
         String recommendation = breakEvenYear <= 3 ? "RECOMMENDED" :
                 breakEvenYear <= 5 ? "NEUTRAL" : "NOT_RECOMMENDED";
 
-        String simId = UUID.randomUUID().toString();
+        // V2 스키마: 단일값 대신 판정(verdict)/메시지만 저장, breed/age는 pet에서 유도
+        String verdict = "RECOMMENDED".equals(recommendation) ? "FAVORABLE"
+                : "NOT_RECOMMENDED".equals(recommendation) ? "UNFAVORABLE" : "NEUTRAL";
         Map<String, Object> sim = new HashMap<>();
-        sim.put("simId", simId);
         sim.put("petId", request.getPetId());
-        sim.put("breed", request.getBreed());
-        sim.put("age", request.getAge());
-        sim.put("medicalHistory", request.getMedicalHistory());
-        sim.put("estimatedAnnualCost", estimatedCost);
-        sim.put("premium", premium);
-        sim.put("deductible", deductible);
-        sim.put("breakEvenYear", breakEvenYear);
-        sim.put("recommendation", recommendation);
-        insuranceMapper.insertSimulation(sim);
+        sim.put("medicalHistoryCodes", request.getMedicalHistory());
+        sim.put("verdict", verdict);
+        sim.put("message", "예상 손익분기 " + breakEvenYear + "년 기준 " + recommendation);
+        insuranceMapper.insertSimulation(sim); // sim_id AUTO_INCREMENT
 
         return SimulationResponse.builder()
-                .simId(simId).breed(request.getBreed()).age(request.getAge())
+                .simId(String.valueOf(sim.get("simId"))).breed(request.getBreed()).age(request.getAge())
                 .estimatedAnnualCost(estimatedCost).premium(premium)
                 .deductible(deductible).breakEvenYear(breakEvenYear)
                 .recommendation(recommendation).build();

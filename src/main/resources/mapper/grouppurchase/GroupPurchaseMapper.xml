@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
 <mapper namespace="com.aewol.domain.grouppurchase.mapper.GroupPurchaseMapper">
+    <!-- V1: 작성자 컴럼은 member_id, 참여 테이블은 group_purchase_participant(purchase_quantity) -->
 
     <select id="findAll" resultType="map">
         SELECT * FROM group_purchase WHERE status = 'OPEN' ORDER BY created_at DESC
@@ -10,18 +11,22 @@
         SELECT * FROM group_purchase WHERE gp_id = #{gpId}
     </select>
 
-    <insert id="insert" parameterType="map">
-        INSERT INTO group_purchase (gp_id, author_id, product_name, product_url, unit_price, group_price, target_quantity, deadline)
-        VALUES (#{gpId}, #{authorId}, #{productName}, #{productUrl}, #{unitPrice}, #{groupPrice}, #{targetQuantity}, #{deadline})
+    <insert id="insert" parameterType="map" useGeneratedKeys="true" keyProperty="gpId" keyColumn="gp_id">
+        INSERT INTO group_purchase
+            (member_id, product_name, category, image, unit_price, group_price,
+             delivery_method, delivery_fee, delivery_date, description, target_quantity, deadline)
+        VALUES
+            (#{memberId}, #{productName}, #{category}, #{image}, #{unitPrice}, #{groupPrice},
+             #{deliveryMethod}, #{deliveryFee}, #{deliveryDate}, #{description}, #{targetQuantity}, #{deadline})
     </insert>
 
     <update id="updateQuantity">
         UPDATE group_purchase SET current_quantity = current_quantity + #{quantity} WHERE gp_id = #{gpId}
     </update>
 
-    <insert id="insertParticipant" parameterType="map">
-        INSERT INTO gp_participant (participant_id, gp_id, member_id, quantity)
-        VALUES (#{participantId}, #{gpId}, #{memberId}, #{quantity})
+    <insert id="insertParticipant" parameterType="map" useGeneratedKeys="true" keyProperty="participantId" keyColumn="participant_id">
+        INSERT INTO group_purchase_participant (gp_id, member_id, purchase_quantity)
+        VALUES (#{gpId}, #{memberId}, #{quantity})
     </insert>
 
 </mapper>

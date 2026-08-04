@@ -10,6 +10,7 @@
                    + SIN(RADIANS(#{lat})) * SIN(RADIANS(latitude))
                )) AS distance_km
         FROM emergency_hospital
+        WHERE latitude IS NOT NULL AND longitude IS NOT NULL
         HAVING distance_km &lt;= #{radiusKm}
         ORDER BY distance_km
     </select>

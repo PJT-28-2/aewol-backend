@@ -1,18 +1,18 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
 <mapper namespace="com.aewol.domain.insurance.mapper.InsuranceMapper">
+    <!-- V2에서 insurance_simulation이 재정의됨:
+         breed/age/premium 등 단일값 컴럼 제거, medical_history_codes/verdict/message로 전환 -->
 
-    <insert id="insertSimulation" parameterType="map">
-        INSERT INTO insurance_simulation (sim_id, pet_id, breed, age, medical_history,
-                                          estimated_annual_cost, premium, deductible, break_even_year, recommendation)
-        VALUES (#{simId}, #{petId}, #{breed}, #{age}, #{medicalHistory},
-                #{estimatedAnnualCost}, #{premium}, #{deductible}, #{breakEvenYear}, #{recommendation})
+    <insert id="insertSimulation" parameterType="map" useGeneratedKeys="true" keyProperty="simId" keyColumn="sim_id">
+        INSERT INTO insurance_simulation (pet_id, medical_history_codes, verdict, message)
+        VALUES (#{petId}, #{medicalHistoryCodes}, #{verdict}, #{message})
     </insert>
 
-    <insert id="insertClaim" parameterType="map">
-        INSERT INTO insurance_claim (claim_id, pet_id, member_id, receipt_image_url, extracted_data,
+    <insert id="insertClaim" parameterType="map" useGeneratedKeys="true" keyProperty="claimId" keyColumn="claim_id">
+        INSERT INTO insurance_claim (pet_id, member_id, receipt_image_url, extracted_data,
                                      hospital_name, treatment_date, total_amount, claim_status)
-        VALUES (#{claimId}, #{petId}, #{memberId}, #{receiptImageUrl}, #{extractedData},
+        VALUES (#{petId}, #{memberId}, #{receiptImageUrl}, #{extractedData},
                 #{hospitalName}, #{treatmentDate}, #{totalAmount}, #{claimStatus})
     </insert>
 

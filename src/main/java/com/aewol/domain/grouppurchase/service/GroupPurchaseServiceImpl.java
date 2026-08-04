@@ -22,12 +22,10 @@ public class GroupPurchaseServiceImpl implements GroupPurchaseService {
     @Override
     @Transactional
     public Map<String, Object> create(String memberId, Map<String, Object> request) {
-        String gpId = UUID.randomUUID().toString();
         Map<String, Object> gp = new HashMap<>(request);
-        gp.put("gpId", gpId);
-        gp.put("authorId", memberId);
-        groupPurchaseMapper.insert(gp);
-        return groupPurchaseMapper.findById(gpId);
+        gp.put("memberId", memberId);
+        groupPurchaseMapper.insert(gp); // gp_id AUTO_INCREMENT
+        return groupPurchaseMapper.findById(String.valueOf(gp.get("gpId")));
     }
 
     @Override
@@ -41,7 +39,6 @@ public class GroupPurchaseServiceImpl implements GroupPurchaseService {
     @Transactional
     public void join(String memberId, String gpId, int quantity) {
         Map<String, Object> participant = new HashMap<>();
-        participant.put("participantId", UUID.randomUUID().toString());
         participant.put("gpId", gpId);
         participant.put("memberId", memberId);
         participant.put("quantity", quantity);
