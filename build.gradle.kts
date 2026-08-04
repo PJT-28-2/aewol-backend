@@ -114,6 +114,9 @@ dependencies {
     testImplementation("org.mockito:mockito-junit-jupiter:5.12.0")
     testImplementation("com.h2database:h2:2.3.232")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
+
+    // TODO(팀 합의 후 logback 전환): 런타임 로그 확인용 임시 백엔드
+    runtimeOnly("org.slf4j:slf4j-simple:1.7.36")
 }
 
 tasks.withType<Test> {
