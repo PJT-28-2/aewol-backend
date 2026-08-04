@@ -20,9 +20,7 @@ public class PetServiceImpl implements PetService {
     @Override
     @Transactional
     public PetResponse createPet(String memberId, PetCreateRequest request) {
-        String petId = UUID.randomUUID().toString();
         Map<String, Object> pet = new HashMap<>();
-        pet.put("petId", petId);
         pet.put("memberId", memberId);
         pet.put("name", request.getName());
         pet.put("species", request.getSpecies());
@@ -32,12 +30,10 @@ public class PetServiceImpl implements PetService {
         pet.put("weight", request.getWeight());
         pet.put("neutered", request.getNeutered());
         pet.put("regNumber", request.getRegNumber());
-        pet.put("iconType", request.getIconType());
         pet.put("medicalHistory", request.getMedicalHistory());
-        pet.put("profileImg", request.getProfileImg());
-        petMapper.insert(pet);
+        petMapper.insert(pet); // pet_id AUTO_INCREMENT
 
-        return getPet(petId);
+        return getPet(String.valueOf(pet.get("petId")));
     }
 
     @Override
@@ -72,9 +68,7 @@ public class PetServiceImpl implements PetService {
         pet.put("weight", request.getWeight());
         pet.put("neutered", request.getNeutered());
         pet.put("regNumber", request.getRegNumber());
-        pet.put("iconType", request.getIconType());
         pet.put("medicalHistory", request.getMedicalHistory());
-        pet.put("profileImg", request.getProfileImg());
         petMapper.update(pet);
     }
 
@@ -89,8 +83,8 @@ public class PetServiceImpl implements PetService {
 
     private PetResponse toResponse(Map<String, Object> pet) {
         return PetResponse.builder()
-                .petId((String) pet.get("pet_id"))
-                .memberId((String) pet.get("member_id"))
+                .petId(String.valueOf(pet.get("pet_id")))
+                .memberId(String.valueOf(pet.get("member_id")))
                 .name((String) pet.get("name"))
                 .species((String) pet.get("species"))
                 .breed((String) pet.get("breed"))
@@ -102,7 +96,14 @@ public class PetServiceImpl implements PetService {
                 .iconType((String) pet.get("icon_type"))
                 .medicalHistory((String) pet.get("medical_history"))
                 .profileImg((String) pet.get("profile_img"))
-                .isActive(pet.get("is_active") != null && ((Number) pet.get("is_active")).intValue() == 1)
+                .isActive(toBool(pet.get("is_active")))
                 .build();
+    }
+
+    /** TINYINT(1)은 커넥터 설정에 따라 Boolean 또는 Number로 반환된다 */
+    private static boolean toBool(Object value) {
+        if (value instanceof Boolean) return (Boolean) value;
+        if (value instanceof Number) return ((Number) value).intValue() == 1;
+        return false;
     }
 }

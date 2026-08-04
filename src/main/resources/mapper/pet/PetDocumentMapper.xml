@@ -1,10 +1,11 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
 <mapper namespace="com.aewol.domain.pet.mapper.PetDocumentMapper">
+    <!-- doc_type: REGISTRATION / VACCINATION / MEDICAL_CONFIRMATION (V4) -->
 
-    <insert id="insert" parameterType="map">
-        INSERT INTO pet_document (doc_id, pet_id, doc_type, file_url, issued_date)
-        VALUES (#{docId}, #{petId}, #{docType}, #{fileUrl}, #{issuedDate})
+    <insert id="insert" parameterType="map" useGeneratedKeys="true" keyProperty="docId" keyColumn="doc_id">
+        INSERT INTO pet_document (pet_id, doc_name, doc_type, file_url, issued_date)
+        VALUES (#{petId}, #{docName}, #{docType}, #{fileUrl}, #{issuedDate})
     </insert>
 
     <select id="findByPetId" resultType="map">
