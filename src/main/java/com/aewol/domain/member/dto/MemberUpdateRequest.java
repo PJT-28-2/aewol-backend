@@ -6,9 +6,10 @@ import lombok.NoArgsConstructor;
 @Getter
 @NoArgsConstructor
 public class MemberUpdateRequest {
-    private String nickname;
+    private String name;
     private String phone;
     private String profileImg;
-    private String region;
-    private String incomeLevel;
+    private String zipCode;
+    private String address;
+    private String addressDetail;
 }

@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
 <mapper namespace="com.aewol.domain.member.mapper.MemberMapper">
+    <!-- V1 member: nickname/region/income_level 없음. 주소(zip_code/address/address_detail)는 V5에서 필수화 -->
 
     <select id="findById" resultType="map">
         SELECT * FROM member WHERE member_id = #{memberId}
@@ -10,21 +11,30 @@
         SELECT * FROM member WHERE email = #{email}
     </select>
 
-    <insert id="insert" parameterType="map">
-        INSERT INTO member (member_id, email, password, nickname, name, phone,
-                           profile_img, provider, provider_id, email_verified, role, region, income_level)
-        VALUES (#{memberId}, #{email}, #{password}, #{nickname}, #{name}, #{phone},
-                #{profileImg}, #{provider}, #{providerId}, #{emailVerified}, #{role}, #{region}, #{incomeLevel})
+    <!-- member_id는 BIGINT AUTO_INCREMENT — 생성 키를 맵의 memberId로 돌려받는다 -->
+    <insert id="insert" parameterType="map" useGeneratedKeys="true" keyProperty="memberId" keyColumn="member_id">
+        INSERT INTO member (email, password, name, phone,
+                           profile_img, provider, provider_id, email_verified, role,
+                           zip_code, address, address_detail)
+        VALUES (#{email}, #{password}, #{name}, #{phone},
+                #{profileImg}, #{provider}, #{providerId}, #{emailVerified}, #{role},
+                #{zipCode}, #{address}, #{addressDetail})
     </insert>
 
     <update id="update" parameterType="map">
         UPDATE member
-        SET nickname = #{nickname},
+        SET name = #{name},
             phone = #{phone},
             profile_img = #{profileImg},
-            region = #{region},
-            income_level = #{incomeLevel},
+            zip_code = #{zipCode},
+            address = #{address},
+            address_detail = #{addressDetail},
             updated_at = NOW()
+        WHERE member_id = #{memberId}
+    </update>
+
+    <update id="markEmailVerified">
+        UPDATE member SET email_verified = 'Y', updated_at = NOW()
         WHERE member_id = #{memberId}
     </update>
 

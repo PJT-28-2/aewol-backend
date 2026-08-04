@@ -20,7 +20,6 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.util.HashMap;
 import java.util.Map;
-import java.util.UUID;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
 
@@ -45,10 +44,8 @@ public class AuthServiceImpl implements AuthService {
         }
 
         Map<String, Object> member = new HashMap<>();
-        member.put("memberId", UUID.randomUUID().toString());
         member.put("email", request.getEmail());
         member.put("password", passwordEncoder.encode(request.getPassword()));
-        member.put("nickname", request.getNickname());
         member.put("name", request.getName());
         member.put("phone", request.getPhone());
         member.put("provider", "LOCAL");
@@ -56,9 +53,10 @@ public class AuthServiceImpl implements AuthService {
         member.put("emailVerified", "N");
         member.put("role", "USER");
         member.put("profileImg", null);
-        member.put("region", null);
-        member.put("incomeLevel", null);
-        memberMapper.insert(member);
+        member.put("zipCode", request.getZipCode());
+        member.put("address", request.getAddress());
+        member.put("addressDetail", request.getAddressDetail());
+        memberMapper.insert(member); // member_id는 AUTO_INCREMENT 생성
 
         // 인증코드 생성 및 Redis 저장 (5분 TTL)
         String code = String.format("%06d", ThreadLocalRandom.current().nextInt(1000000));
@@ -88,20 +86,13 @@ public class AuthServiceImpl implements AuthService {
         String memberId = String.valueOf(member.get("member_id")); // V3에서 member_id가 BIGINT로 전환되어 Long이 반환됨
 
         // 이메일 인증 완료 처리
-        Map<String, Object> update = new HashMap<>();
-        update.put("memberId", memberId);
-        update.put("nickname", member.get("nickname"));
-        update.put("phone", member.get("phone"));
-        update.put("profileImg", member.get("profile_img"));
-        update.put("region", member.get("region"));
-        update.put("incomeLevel", member.get("income_level"));
-        memberMapper.update(update);
+        memberMapper.markEmailVerified(memberId);
 
-        // 지갑 자동 생성
+        // MAIN 지갑 자동 생성 (wallet_id는 AUTO_INCREMENT)
         Map<String, Object> wallet = new HashMap<>();
-        wallet.put("walletId", UUID.randomUUID().toString());
         wallet.put("memberId", memberId);
-        wallet.put("totalBalance", 0);
+        wallet.put("walletType", "MAIN");
+        wallet.put("balance", 0);
         walletMapper.insert(wallet);
 
         redisTemplate.delete("verify:" + request.getEmail());
@@ -147,12 +138,9 @@ public class AuthServiceImpl implements AuthService {
 
         String memberId;
         if (existingMember == null) {
-            memberId = UUID.randomUUID().toString();
             Map<String, Object> member = new HashMap<>();
-            member.put("memberId", memberId);
             member.put("email", email != null ? email : kakaoId + "@kakao.user");
             member.put("password", null);
-            member.put("nickname", nickname);
             member.put("name", nickname);
             member.put("phone", null);
             member.put("provider", "KAKAO");
@@ -160,14 +148,17 @@ public class AuthServiceImpl implements AuthService {
             member.put("emailVerified", "Y");
             member.put("role", "USER");
             member.put("profileImg", null);
-            member.put("region", null);
-            member.put("incomeLevel", null);
-            memberMapper.insert(member);
+            // 주소는 NOT NULL — 카카오 가입 시점엔 없으므로 빈 값으로 두고 프로필 수정에서 보완한다
+            member.put("zipCode", "");
+            member.put("address", "");
+            member.put("addressDetail", null);
+            memberMapper.insert(member); // member_id는 AUTO_INCREMENT 생성
+            memberId = String.valueOf(member.get("memberId"));
 
             Map<String, Object> wallet = new HashMap<>();
-            wallet.put("walletId", UUID.randomUUID().toString());
             wallet.put("memberId", memberId);
-            wallet.put("totalBalance", 0);
+            wallet.put("walletType", "MAIN");
+            wallet.put("balance", 0);
             walletMapper.insert(wallet);
         } else {
             memberId = String.valueOf(existingMember.get("member_id"));

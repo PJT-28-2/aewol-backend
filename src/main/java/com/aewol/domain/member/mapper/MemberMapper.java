@@ -10,4 +10,5 @@ public interface MemberMapper {
     Map<String, Object> findByEmail(@Param("email") String email);
     void insert(Map<String, Object> member);
     void update(Map<String, Object> member);
+    int markEmailVerified(@Param("memberId") String memberId);
 }
