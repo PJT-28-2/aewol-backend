@@ -85,7 +85,7 @@ public class AuthServiceImpl implements AuthService {
             throw BusinessException.notFound("회원 정보를 찾을 수 없습니다.");
         }
 
-        String memberId = (String) member.get("member_id");
+        String memberId = String.valueOf(member.get("member_id")); // V3에서 member_id가 BIGINT로 전환되어 Long이 반환됨
 
         // 이메일 인증 완료 처리
         Map<String, Object> update = new HashMap<>();
@@ -125,7 +125,7 @@ public class AuthServiceImpl implements AuthService {
             throw new BusinessException(HttpStatus.FORBIDDEN, "이메일 인증이 필요합니다.");
         }
 
-        String memberId = (String) member.get("member_id");
+        String memberId = String.valueOf(member.get("member_id")); // V3에서 member_id가 BIGINT로 전환되어 Long이 반환됨
         String role = (String) member.get("role");
         return generateTokens(memberId, role);
     }
@@ -170,7 +170,7 @@ public class AuthServiceImpl implements AuthService {
             wallet.put("totalBalance", 0);
             walletMapper.insert(wallet);
         } else {
-            memberId = (String) existingMember.get("member_id");
+            memberId = String.valueOf(existingMember.get("member_id"));
         }
 
         return generateTokens(memberId, "USER");
