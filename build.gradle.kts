@@ -110,12 +110,18 @@ dependencies {
     testImplementation("org.springframework:spring-test:$springVersion")
     testImplementation("org.springframework.security:spring-security-test:$springSecVersion")
     testImplementation("org.junit.jupiter:junit-jupiter:5.10.3")
+    testImplementation("org.mockito:mockito-core:5.12.0")
+    testImplementation("org.mockito:mockito-junit-jupiter:5.12.0")
     testImplementation("com.h2database:h2:2.3.232")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }
 
 tasks.withType<Test> {
     useJUnitPlatform()
+}
+
+tasks.withType<JavaCompile> {
+    options.encoding = "UTF-8"
 }
 
 // Flyway 설정: docker-compose 로 띄운 로컬 MySQL 기준 (환경변수로 오버라이드 가능)
@@ -130,9 +136,17 @@ flyway {
 tasks.register<Jar>("fatJar") {
     archiveClassifier.set("all")
     duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    exclude(
+        "META-INF/INDEX.LIST",
+        "META-INF/*.SF",
+        "META-INF/*.DSA",
+        "META-INF/*.RSA",
+        "module-info.class",
+        "META-INF/versions/**/module-info.class"
+    )
     manifest {
         attributes["Main-Class"] = "com.aewol.AewolApplication"
     }
     from(configurations.runtimeClasspath.get().map { if (it.isDirectory) it else zipTree(it) })
-    with(tasks.jar.get())
+    from(sourceSets.main.get().output)
 }
