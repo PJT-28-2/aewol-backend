@@ -8,7 +8,6 @@ import com.aewol.domain.transaction.mapper.TransactionMapper;
 import com.aewol.domain.wallet.mapper.WalletMapper;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
-import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
 import org.junit.jupiter.api.DisplayName;
@@ -36,13 +35,12 @@ class TransactionServiceImplTest {
         ReflectionTestUtils.setField(request, "amount", new BigDecimal("72000"));
         ReflectionTestUtils.setField(request, "petId", "pet-1");
         when(walletMapper.findByMemberId("member-1")).thenReturn(map(
-                "wallet_id", "wallet-1", "total_balance", new BigDecimal("100000")));
-        when(walletMapper.findBucketsByWalletId("wallet-1")).thenReturn(Collections.emptyList());
+                "wallet_id", "wallet-1", "balance", new BigDecimal("100000")));
         when(autoTaggingService.categorize("애월동물병원")).thenReturn("HOSPITAL");
-        when(transactionMapper.findById(anyString())).thenAnswer(invocation -> map(
-                "txn_id", invocation.getArgument(0), "wallet_id", "wallet-1",
-                "member_id", "member-1", "pet_id", "pet-1", "txn_type", "PAYMENT",
-                "amount", new BigDecimal("72000"), "category", "HOSPITAL",
+        when(transactionMapper.findById(any())).thenAnswer(invocation -> map(
+                "txn_id", 1L, "wallet_id", "wallet-1",
+                "pet_id", "pet-1", "txn_type", "PAYMENT",
+                "price", new BigDecimal("72000"), "category", "HOSPITAL",
                 "merchant_name", "애월동물병원", "auto_tagged", "Y",
                 "txn_date", LocalDateTime.now()));
 
