@@ -1,47 +1,26 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
 <mapper namespace="com.aewol.domain.wallet.mapper.WalletMapper">
+    <!-- V1에서 버킷이 폐기되고 지갑이 회원당 MAIN(실지갑)/DONATION(기부함) 타입별 1개로 통합됨.
+         기본 조회는 MAIN 지갑을 반환한다. -->
 
     <select id="findByMemberId" resultType="map">
-        SELECT * FROM wallet WHERE member_id = #{memberId}
+        SELECT * FROM wallet WHERE member_id = #{memberId} AND wallet_type = 'MAIN'
     </select>
 
     <select id="findById" resultType="map">
         SELECT * FROM wallet WHERE wallet_id = #{walletId}
     </select>
 
-    <insert id="insert" parameterType="map">
-        INSERT INTO wallet (wallet_id, member_id, total_balance)
-        VALUES (#{walletId}, #{memberId}, #{totalBalance})
+    <!-- wallet_id는 BIGINT AUTO_INCREMENT. wallet_type 미지정 시 MAIN -->
+    <insert id="insert" parameterType="map" useGeneratedKeys="true" keyProperty="walletId" keyColumn="wallet_id">
+        INSERT INTO wallet (member_id, wallet_type, balance)
+        VALUES (#{memberId}, COALESCE(#{walletType}, 'MAIN'), COALESCE(#{balance}, 0))
     </insert>
 
     <update id="updateBalance">
-        UPDATE wallet SET total_balance = #{totalBalance}, updated_at = NOW()
+        UPDATE wallet SET balance = #{balance}, updated_at = NOW()
         WHERE wallet_id = #{walletId}
     </update>
-
-    <select id="findBucketsByWalletId" resultType="map">
-        SELECT * FROM bucket WHERE wallet_id = #{walletId} ORDER BY created_at
-    </select>
-
-    <select id="findBucketById" resultType="map">
-        SELECT * FROM bucket WHERE bucket_id = #{bucketId}
-    </select>
-
-    <insert id="insertBucket" parameterType="map">
-        INSERT INTO bucket (bucket_id, wallet_id, pet_id, bucket_type, bucket_name, target_amount, balance, is_sos)
-        VALUES (#{bucketId}, #{walletId}, #{petId}, #{bucketType}, #{bucketName}, #{targetAmount}, #{balance}, #{isSos})
-    </insert>
-
-    <update id="updateBucket" parameterType="map">
-        UPDATE bucket
-        SET bucket_name = #{bucketName}, target_amount = #{targetAmount},
-            balance = #{balance}, updated_at = NOW()
-        WHERE bucket_id = #{bucketId}
-    </update>
-
-    <delete id="deleteBucket">
-        DELETE FROM bucket WHERE bucket_id = #{bucketId}
-    </delete>
 
 </mapper>

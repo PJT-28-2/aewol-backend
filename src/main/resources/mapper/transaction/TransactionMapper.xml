@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
 <mapper namespace="com.aewol.domain.transaction.mapper.TransactionMapper">
+    <!-- V1 transaction: 버킷/회원 컬럼 없음. 금액 컬럼은 price. 행위자는 wallet_id -> wallet.member_id -->
 
     <select id="findById" resultType="map">
         SELECT * FROM `transaction` WHERE txn_id = #{txnId}
@@ -8,23 +9,23 @@
 
     <select id="findByWalletId" resultType="map">
         SELECT t.* FROM `transaction` t
-        LEFT JOIN bucket b ON t.bucket_id = b.bucket_id
         WHERE t.wallet_id = #{walletId}
         <if test="category != null and category != ''">
             AND t.category = #{category}
         </if>
         <if test="petId != null and petId != ''">
-            AND (t.pet_id = #{petId} OR b.pet_id = #{petId})
+            AND t.pet_id = #{petId}
         </if>
         ORDER BY t.txn_date DESC
     </select>
 
-    <insert id="insert" parameterType="map">
-        INSERT INTO `transaction` (txn_id, wallet_id, bucket_id, member_id, pet_id, txn_type,
-                                   amount, category, merchant_name, merchant_category_code,
+    <!-- txn_id는 BIGINT AUTO_INCREMENT — 생성 키를 맵의 txnId로 돌려받는다 -->
+    <insert id="insert" parameterType="map" useGeneratedKeys="true" keyProperty="txnId" keyColumn="txn_id">
+        INSERT INTO `transaction` (wallet_id, pet_id, txn_type,
+                                   price, category, merchant_name, merchant_category_code,
                                    memo, auto_tagged, txn_date)
-        VALUES (#{txnId}, #{walletId}, #{bucketId}, #{memberId}, #{petId}, #{txnType},
-                #{amount}, #{category}, #{merchantName}, #{merchantCategoryCode},
+        VALUES (#{walletId}, #{petId}, #{txnType},
+                #{price}, #{category}, #{merchantName}, #{merchantCategoryCode},
                 #{memo}, #{autoTagged}, #{txnDate})
     </insert>
 

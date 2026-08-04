@@ -39,6 +39,6 @@ public class DashboardServiceImpl implements DashboardService {
     private String getWalletId(String memberId) {
         Map<String, Object> wallet = walletMapper.findByMemberId(memberId);
         if (wallet == null) throw BusinessException.notFound("지갑을 찾을 수 없습니다.");
-        return (String) wallet.get("wallet_id");
+        return String.valueOf(wallet.get("wallet_id"));
     }
 }

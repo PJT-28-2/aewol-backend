@@ -32,55 +32,25 @@ public class TransactionServiceImpl implements TransactionService {
             throw BusinessException.notFound("지갑을 찾을 수 없습니다.");
         }
 
-        String walletId = (String) wallet.get("wallet_id");
+        String walletId = String.valueOf(wallet.get("wallet_id"));
 
         // 자동 태깅
         String category = autoTaggingService.categorize(request.getMerchantName());
         log.info("자동 태깅 결과 - merchant: {}, category: {}", request.getMerchantName(), category);
 
-        // 매칭 버킷 검색
-        List<Map<String, Object>> buckets = walletMapper.findBucketsByWalletId(walletId);
-        String bucketId = null;
-
-        for (Map<String, Object> bucket : buckets) {
-            String bucketType = (String) bucket.get("bucket_type");
-            String petId = (String) bucket.get("pet_id");
-            boolean petMatch = request.getPetId() == null || request.getPetId().equals(petId);
-
-            if (bucketType.equals(category) && petMatch) {
-                BigDecimal balance = (BigDecimal) bucket.get("balance");
-                if (balance.compareTo(request.getAmount()) >= 0) {
-                    bucketId = (String) bucket.get("bucket_id");
-                    walletMapper.updateBucket(Map.of(
-                            "bucketId", bucketId,
-                            "bucketName", bucket.get("bucket_name"),
-                            "targetAmount", bucket.get("target_amount"),
-                            "balance", balance.subtract(request.getAmount())
-                    ));
-                    break;
-                }
-            }
+        // 지갑 잔액 차감 (V1에서 버킷 폐기 — 지갑 단일 잔액)
+        BigDecimal balance = (BigDecimal) wallet.get("balance");
+        if (balance.compareTo(request.getAmount()) < 0) {
+            throw new BusinessException("잔액이 부족합니다.");
         }
+        walletMapper.updateBalance(walletId, balance.subtract(request.getAmount()));
 
-        // 버킷에서 차감 못 했으면 지갑 잔액에서 차감
-        if (bucketId == null) {
-            BigDecimal totalBalance = (BigDecimal) wallet.get("total_balance");
-            if (totalBalance.compareTo(request.getAmount()) < 0) {
-                throw new BusinessException("잔액이 부족합니다.");
-            }
-            walletMapper.updateBalance(walletId, totalBalance.subtract(request.getAmount()));
-        }
-
-        // 거래 기록 생성
-        String txnId = UUID.randomUUID().toString();
+        // 거래 기록 생성 — txn_id는 AUTO_INCREMENT 생성 키
         Map<String, Object> txn = new HashMap<>();
-        txn.put("txnId", txnId);
         txn.put("walletId", walletId);
-        txn.put("bucketId", bucketId);
-        txn.put("memberId", memberId);
         txn.put("petId", request.getPetId());
         txn.put("txnType", "PAYMENT");
-        txn.put("amount", request.getAmount());
+        txn.put("price", request.getAmount());
         txn.put("category", category);
         txn.put("merchantName", request.getMerchantName());
         txn.put("merchantCategoryCode", null);
@@ -89,7 +59,7 @@ public class TransactionServiceImpl implements TransactionService {
         txn.put("txnDate", LocalDateTime.now());
         transactionMapper.insert(txn);
 
-        return getTransaction(txnId);
+        return getTransaction(String.valueOf(txn.get("txnId")));
     }
 
     @Override
@@ -98,7 +68,7 @@ public class TransactionServiceImpl implements TransactionService {
         if (wallet == null) {
             throw BusinessException.notFound("지갑을 찾을 수 없습니다.");
         }
-        String walletId = (String) wallet.get("wallet_id");
+        String walletId = String.valueOf(wallet.get("wallet_id"));
         return transactionMapper.findByWalletId(walletId, category, petId).stream()
                 .map(this::toResponse)
                 .collect(Collectors.toList());
@@ -115,11 +85,10 @@ public class TransactionServiceImpl implements TransactionService {
 
     private TransactionResponse toResponse(Map<String, Object> txn) {
         return TransactionResponse.builder()
-                .txnId((String) txn.get("txn_id"))
-                .walletId((String) txn.get("wallet_id"))
-                .bucketId((String) txn.get("bucket_id"))
+                .txnId(String.valueOf(txn.get("txn_id")))
+                .walletId(String.valueOf(txn.get("wallet_id")))
                 .txnType((String) txn.get("txn_type"))
-                .amount((BigDecimal) txn.get("amount"))
+                .amount((BigDecimal) txn.get("price"))
                 .category((String) txn.get("category"))
                 .merchantName((String) txn.get("merchant_name"))
                 .memo((String) txn.get("memo"))

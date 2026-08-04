@@ -1,9 +1,10 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
 <mapper namespace="com.aewol.domain.dashboard.mapper.DashboardMapper">
+    <!-- V1 transaction: 금액 컴럼은 price, 반려동물 태그는 t.pet_id (버킷 폐기) -->
 
     <select id="getMonthlySummary" resultType="map">
-        SELECT category, SUM(amount) as total_amount, COUNT(*) as count
+        SELECT category, SUM(price) as total_amount, COUNT(*) as count
         FROM `transaction`
         WHERE wallet_id = #{walletId}
           AND DATE_FORMAT(txn_date, '%Y-%m') = #{month}
@@ -12,13 +13,12 @@
     </select>
 
     <select id="getCategoryBreakdown" resultType="map">
-        SELECT t.category, SUM(t.amount) as total_amount, COUNT(*) as count
+        SELECT t.category, SUM(t.price) as total_amount, COUNT(*) as count
         FROM `transaction` t
-        LEFT JOIN bucket b ON t.bucket_id = b.bucket_id
         WHERE t.wallet_id = #{walletId}
           AND t.txn_type = 'PAYMENT'
         <if test="petId != null and petId != ''">
-            AND b.pet_id = #{petId}
+            AND t.pet_id = #{petId}
         </if>
         GROUP BY t.category
     </select>
