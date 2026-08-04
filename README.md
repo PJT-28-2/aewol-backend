@@ -184,10 +184,13 @@ PR은 `feature/{기능명}` → `develop` → `main` 순서로 병합합니다.
 | 보험 | POST | `/api/insurance/simulate` | 보험료 시뮬레이션 |
 | 보험 | POST | `/api/insurance/claims` | 보험 청구 (OCR) |
 | 공동양육 | POST | `/api/share/invite` | 공동양육 초대 |
+| 공동양육 | GET | `/api/share/pets` | 소유·공유 반려동물 조회 |
 | 공동양육 | GET | `/api/share/{petId}/members` | 공동양육 멤버 조회 |
 | 응급병원 | GET | `/api/emergency/hospitals` | 주변 응급 병원 검색 |
-| 지원사업 | GET | `/api/support` | 지자체 지원사업 목록 |
-| 기부 | POST | `/api/donation/round-up` | 잔돈 기부 설정 |
+| 지원사업 | GET | `/api/support/matched?petId=` | 반려동물 조건별 지원사업 매칭 |
+| 기부 | GET | `/api/donation` | 저금통·캠페인·설정 통합 조회 |
+| 기부 | POST | `/api/donation` | 저금통 잔액 기부 |
+| 기부 | PUT | `/api/donation/settings` | 잔돈 적립·월말 자동 기부 설정 |
 | 정기결제 | GET | `/api/recurring` | 정기결제 목록 조회 |
 
 ---

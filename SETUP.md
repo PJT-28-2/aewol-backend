@@ -16,7 +16,11 @@ docker-compose up -d
 - MySQL 8, Redis 7 컨테이너가 뜨고, `aewol` DB/계정이 자동 생성된다 (DB명/계정/비번: `aewol` / `aewol` / `aewol1234`).
 - 로컬에 이미 MySQL(3306)이 떠 있는 경우가 흔해 **호스트 포트는 3307로 매핑**했다 (컨테이너 내부는 3306 그대로). 값 오버라이드가 필요하면 `.env.example`을 `.env`로 복사해서 수정한다.
 - `flywayMigrate`가 `V1__init_schema.sql`부터 순서대로 적용한다.
-- 애플리케이션은 `application-dev.yml`의 기본값이 이미 위 계정/포트와 일치하므로 별도 설정 없이 바로 붙는다. IDE에서 `AewolApplication`을 실행할 때 VM 옵션에 `-Dspring.profiles.active=local`을 넣어준다.
+- **프로파일 설정 (중요):** `local` 프로파일로 실행하려면 먼저 `application-local.yml`을 만들어야 한다. `application-local.yml.example`을 복사해서 만들고 비밀값을 채운다 (git에 커밋되지 않는 파일). 이 파일 없이 `-Dspring.profiles.active=local`로 띄우면 DB/JWT 설정이 비어 로그인 등 대부분의 API가 500으로 실패한다.
+  ```bash
+  cp src/main/resources/application-local.yml.example src/main/resources/application-local.yml
+  ```
+- 개인 설정 없이 docker-compose 기본값으로 바로 띄우려면 `-Dspring.profiles.active=dev`를 사용해도 된다 (`application-dev.yml`의 기본값이 위 계정/포트와 일치).
 
 ## 2. 일상 개발
 
