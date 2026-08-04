@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.aewol.domain.pet.mapper.PetDocumentMapper">
+
+    <insert id="insert" parameterType="map">
+        INSERT INTO pet_document (doc_id, pet_id, doc_type, file_url, issued_date)
+        VALUES (#{docId}, #{petId}, #{docType}, #{fileUrl}, #{issuedDate})
+    </insert>
+
+    <select id="findByPetId" resultType="map">
+        SELECT * FROM pet_document WHERE pet_id = #{petId} ORDER BY created_at DESC
+    </select>
+
+</mapper>

@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.aewol.domain.donation.mapper.DonationMapper">
+
+    <select id="findPotByMemberId" resultType="map">
+        SELECT * FROM donation_pot WHERE member_id = #{memberId}
+    </select>
+
+    <insert id="insertPot" parameterType="map">
+        INSERT INTO donation_pot (pot_id, member_id, balance)
+        VALUES (#{potId}, #{memberId}, #{balance})
+    </insert>
+
+    <update id="updatePotBalance">
+        UPDATE donation_pot SET balance = #{balance}, updated_at = NOW() WHERE pot_id = #{potId}
+    </update>
+
+    <insert id="insertHistory" parameterType="map">
+        INSERT INTO donation_history (donation_id, pot_id, amount, recipient_name)
+        VALUES (#{donationId}, #{potId}, #{amount}, #{recipientName})
+    </insert>
+
+    <select id="findHistoryByPotId" resultType="map">
+        SELECT * FROM donation_history WHERE pot_id = #{potId} ORDER BY donated_at DESC
+    </select>
+
+</mapper>

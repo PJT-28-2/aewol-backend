@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.aewol.domain.share.mapper.ShareMapper">
+
+    <insert id="insert" parameterType="map">
+        INSERT INTO shared_access (access_id, wallet_id, member_id, invited_by, role, status)
+        VALUES (#{accessId}, #{walletId}, #{memberId}, #{invitedBy}, #{role}, #{status})
+    </insert>
+
+    <update id="updateStatus">
+        UPDATE shared_access SET status = #{status} WHERE access_id = #{accessId}
+    </update>
+
+    <select id="findByWalletId" resultType="map">
+        SELECT sa.*, m.nickname, m.email
+        FROM shared_access sa
+        JOIN member m ON sa.member_id = m.member_id
+        WHERE sa.wallet_id = #{walletId}
+    </select>
+
+</mapper>

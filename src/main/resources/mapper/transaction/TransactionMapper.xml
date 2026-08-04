@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.aewol.domain.transaction.mapper.TransactionMapper">
+
+    <select id="findById" resultType="map">
+        SELECT * FROM `transaction` WHERE txn_id = #{txnId}
+    </select>
+
+    <select id="findByWalletId" resultType="map">
+        SELECT t.* FROM `transaction` t
+        LEFT JOIN bucket b ON t.bucket_id = b.bucket_id
+        WHERE t.wallet_id = #{walletId}
+        <if test="category != null and category != ''">
+            AND t.category = #{category}
+        </if>
+        <if test="petId != null and petId != ''">
+            AND b.pet_id = #{petId}
+        </if>
+        ORDER BY t.txn_date DESC
+    </select>
+
+    <insert id="insert" parameterType="map">
+        INSERT INTO `transaction` (txn_id, wallet_id, bucket_id, member_id, txn_type,
+                                   amount, category, merchant_name, merchant_category_code,
+                                   memo, auto_tagged, txn_date)
+        VALUES (#{txnId}, #{walletId}, #{bucketId}, #{memberId}, #{txnType},
+                #{amount}, #{category}, #{merchantName}, #{merchantCategoryCode},
+                #{memo}, #{autoTagged}, #{txnDate})
+    </insert>
+
+</mapper>

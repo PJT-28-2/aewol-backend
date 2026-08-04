@@ -1,0 +1,63 @@
+spring:
+  # MySQL (개발 서버용 — 실제 값은 환경변수로 주입)
+  datasource:
+    url: ${DB_URL:jdbc:mysql://localhost:3307/aewol?useSSL=false&serverTimezone=Asia/Seoul&characterEncoding=UTF-8&allowPublicKeyRetrieval=true}
+    username: ${DB_USERNAME:aewol}
+    password: ${DB_PASSWORD:aewol1234}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+
+  # Redis
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+
+  # Mail
+  mail:
+    host: smtp.gmail.com
+    port: 587
+    username: ${MAIL_USERNAME:}
+    password: ${MAIL_PASSWORD:}
+    properties:
+      mail:
+        smtp:
+          auth: true
+          starttls:
+            enable: true
+
+  # Batch
+  batch:
+    jdbc:
+      initialize-schema: always
+    job:
+      enabled: false
+
+# JWT
+jwt:
+  secret: ${JWT_SECRET:aewol-dev-secret-key-for-jwt-token-generation-minimum-256-bits-required}
+  access-token-expiry: 1800000
+  refresh-token-expiry: 604800000
+
+# External APIs
+external:
+  kakao:
+    client-id: ${KAKAO_CLIENT_ID:}
+    client-secret: ${KAKAO_CLIENT_SECRET:}
+    redirect-uri: ${KAKAO_REDIRECT_URI:http://localhost:5173/callback/kakao}
+  gemini:
+    api-key: ${GEMINI_API_KEY:}
+  codef:
+    client-id: ${CODEF_CLIENT_ID:}
+    client-secret: ${CODEF_CLIENT_SECRET:}
+  naver:
+    client-id: ${NAVER_CLIENT_ID:}
+    client-secret: ${NAVER_CLIENT_SECRET:}
+
+# File
+file:
+  upload-dir: ${FILE_UPLOAD_DIR:./uploads}
+
+# Logging
+logging:
+  level:
+    com.aewol: DEBUG

@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.aewol.domain.pet.mapper.PetMapper">
+
+    <select id="findById" resultType="map">
+        SELECT * FROM pet WHERE pet_id = #{petId}
+    </select>
+
+    <select id="findByMemberId" resultType="map">
+        SELECT * FROM pet WHERE member_id = #{memberId} AND is_active = 1 ORDER BY created_at
+    </select>
+
+    <insert id="insert" parameterType="map">
+        INSERT INTO pet (pet_id, member_id, name, species, breed, birth_date, gender,
+                        weight, neutered, reg_number, icon_type, medical_history, profile_img)
+        VALUES (#{petId}, #{memberId}, #{name}, #{species}, #{breed}, #{birthDate}, #{gender},
+                #{weight}, #{neutered}, #{regNumber}, #{iconType}, #{medicalHistory}, #{profileImg})
+    </insert>
+
+    <update id="update" parameterType="map">
+        UPDATE pet
+        SET name = #{name}, species = #{species}, breed = #{breed},
+            birth_date = #{birthDate}, gender = #{gender}, weight = #{weight},
+            neutered = #{neutered}, reg_number = #{regNumber}, icon_type = #{iconType},
+            medical_history = #{medicalHistory}, profile_img = #{profileImg},
+            updated_at = NOW()
+        WHERE pet_id = #{petId}
+    </update>
+
+    <update id="deactivate">
+        UPDATE pet SET is_active = 0, updated_at = NOW() WHERE pet_id = #{petId}
+    </update>
+
+</mapper>

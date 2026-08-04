@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.aewol.domain.account.mapper.AccountMapper">
+
+    <insert id="insert" parameterType="map">
+        INSERT INTO linked_account (account_id, member_id, bank_code, bank_name, account_number, account_holder, connected_id, is_primary)
+        VALUES (#{accountId}, #{memberId}, #{bankCode}, #{bankName}, #{accountNumber}, #{accountHolder}, #{connectedId}, #{isPrimary})
+    </insert>
+
+    <select id="findByMemberId" resultType="map">
+        SELECT * FROM linked_account WHERE member_id = #{memberId} AND status = 'ACTIVE'
+    </select>
+
+    <update id="updateStatus">
+        UPDATE linked_account SET status = #{status}, updated_at = NOW() WHERE account_id = #{accountId}
+    </update>
+
+</mapper>
