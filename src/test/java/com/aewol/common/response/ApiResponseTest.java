@@ -1,0 +1,56 @@
+package com.aewol.common.response;
+
+import com.aewol.common.exception.BusinessException;
+import com.aewol.common.exception.GlobalExceptionHandler;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.junit.jupiter.api.Test;
+import org.springframework.http.ResponseEntity;
+
+import java.util.Collections;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+class ApiResponseTest {
+
+    private final ObjectMapper objectMapper = new ObjectMapper();
+
+    @Test
+    void successResponseUsesResultField() throws Exception {
+        JsonNode json = objectMapper.readTree(
+                objectMapper.writeValueAsString(ApiResponse.success(Collections.singletonMap("id", 1))));
+
+        assertEquals(200, json.get("status").asInt());
+        assertEquals("success", json.get("message").asText());
+        assertEquals(1, json.get("result").get("id").asInt());
+        assertFalse(json.has("data"));
+    }
+
+    @Test
+    void responseIncludesResultWhenItIsNull() throws Exception {
+        ApiResponse<Void> response = ApiResponse.success();
+        JsonNode json = objectMapper.readTree(objectMapper.writeValueAsString(response));
+
+        assertTrue(json.has("result"));
+        assertTrue(json.get("result").isNull());
+        assertNull(response.getResult());
+    }
+
+    @Test
+    void businessExceptionResponseUsesSameContract() throws Exception {
+        GlobalExceptionHandler handler = new GlobalExceptionHandler();
+        ResponseEntity<ApiResponse<Void>> entity = handler.handleBusinessException(
+                BusinessException.notFound("member not found"));
+        JsonNode json = objectMapper.readTree(objectMapper.writeValueAsString(entity.getBody()));
+
+        assertEquals(404, entity.getStatusCodeValue());
+        assertEquals(404, json.get("status").asInt());
+        assertEquals("member not found", json.get("message").asText());
+        assertTrue(json.has("result"));
+        assertTrue(json.get("result").isNull());
+        assertFalse(json.has("data"));
+    }
+}
