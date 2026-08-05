@@ -1,6 +1,7 @@
 package com.aewol.common.exception;
 
 import com.aewol.common.response.ApiResponse;
+import javax.validation.ConstraintViolationException;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -39,6 +40,18 @@ public class GlobalExceptionHandler {
                 .findFirst()
                 .map(error -> error.getField() + ": " + error.getDefaultMessage())
                 .orElse("유효하지 않은 요청입니다.");
+        return ResponseEntity
+                .badRequest()
+                .body(ApiResponse.error(400, message));
+    }
+
+    @ExceptionHandler(ConstraintViolationException.class)
+    public ResponseEntity<ApiResponse<Void>> handleConstraintViolationException(ConstraintViolationException e) {
+        String message = e.getConstraintViolations().stream()
+                .findFirst()
+                .map(violation -> violation.getPropertyPath() + ": " + violation.getMessage())
+                .orElse("유효하지 않은 요청입니다.");
+        log.warn("ConstraintViolationException: {}", message);
         return ResponseEntity
                 .badRequest()
                 .body(ApiResponse.error(400, message));
