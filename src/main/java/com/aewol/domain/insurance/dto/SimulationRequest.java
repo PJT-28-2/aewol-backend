@@ -1,8 +1,9 @@
 package com.aewol.domain.insurance.dto;
 
+import com.aewol.domain.insurance.dto.validation.AllowedMedicalHistoryCode;
 import java.util.List;
 import javax.validation.constraints.NotBlank;
-import javax.validation.constraints.NotNull;
+import javax.validation.constraints.NotEmpty;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 
@@ -11,6 +12,7 @@ import lombok.NoArgsConstructor;
 public class SimulationRequest {
     @NotBlank
     private String petId;
-    @NotNull
-    private List<String> medicalHistoryCodes;
+
+    @NotEmpty
+    private List<@NotBlank @AllowedMedicalHistoryCode String> medicalHistoryCodes;
 }
