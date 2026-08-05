@@ -146,15 +146,27 @@ public class InsuranceSimulationServiceImpl implements InsuranceSimulationServic
                     .build();
         }
 
-        long favorableCount = products.stream()
+        // 손익분기를 계산할 수 있는(breakEvenAvailable=true) 상품만 판정 대상으로 삼는다.
+        // 계산 불가 상품까지 분모에 섞으면 "비교를 한 건도 안 했는데 불리하다"는 잘못된 판정이 나온다.
+        List<RecommendedProductResponse> calculableProducts = products.stream()
                 .filter(RecommendedProductResponse::isBreakEvenAvailable)
+                .collect(Collectors.toList());
+
+        if (calculableProducts.isEmpty()) {
+            return InsuranceAdvice.builder()
+                    .verdict("NEUTRAL")
+                    .message("추천 상품의 보장비율 정보가 아직 확인되지 않아 손익분기를 비교하지 못했어요. 상품 상세를 직접 확인해보세요.")
+                    .build();
+        }
+
+        long favorableCount = calculableProducts.stream()
                 .filter(product -> product.getBreakEvenScenarios().stream()
                         .anyMatch(scenario -> scenario.getYears() == 5 && Boolean.TRUE.equals(scenario.getIsFavorable())))
                 .count();
 
         String verdict;
         String message;
-        if (favorableCount * 2 >= products.size()) {
+        if (favorableCount * 2 > calculableProducts.size()) {
             verdict = "FAVORABLE";
             message = "가입 시 보험료보다 예상 보장 혜택이 더 큰 상품이 많아요. 가입을 검토해보세요.";
         } else if (favorableCount == 0) {

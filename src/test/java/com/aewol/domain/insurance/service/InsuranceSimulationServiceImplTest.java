@@ -253,4 +253,35 @@ class InsuranceSimulationServiceImplTest {
 
         assertEquals("NEUTRAL", response.getInsuranceAdvice().getVerdict());
     }
+
+    @Test
+    @DisplayName("추천 상품 전부 손익분기 계산이 불가하면 UNFAVORABLE이 아니라 NEUTRAL로 판정한다")
+    void should_returnNeutralAdvice_whenNoRecommendedProductHasBreakEvenData() {
+        service = new InsuranceSimulationServiceImpl(insuranceMapper, petMapper);
+        when(petMapper.findByIdAndMemberId("3", MEMBER_ID)).thenReturn(pet("DOG", 3));
+        // 둘 다 reimbursementRatePct가 없어 breakEvenAvailable=false — 비교 자체를 못 한 상태
+        when(insuranceMapper.findProductsBySpecies("DOG")).thenReturn(List.of(
+                product(1L, new BigDecimal("6193"), 0, 80, null, "ASSUMED_FROM_RESEARCH"),
+                product(2L, new BigDecimal("29921"), 0, 80, null, "ASSUMED_FROM_RESEARCH")));
+
+        SimulationResponse response = service.simulate(MEMBER_ID, request("3", List.of("NONE")));
+
+        assertEquals("NEUTRAL", response.getInsuranceAdvice().getVerdict());
+    }
+
+    @Test
+    @DisplayName("손익분기 계산 가능 상품 중 정확히 절반만 유리하면 FAVORABLE이 아니라 NEUTRAL로 판정한다")
+    void should_returnNeutralAdvice_whenExactlyHalfOfCalculableProductsAreFavorable() {
+        service = new InsuranceSimulationServiceImpl(insuranceMapper, petMapper);
+        when(petMapper.findByIdAndMemberId("3", MEMBER_ID)).thenReturn(pet("CAT", 3));
+        when(insuranceMapper.findProductsBySpecies("CAT")).thenReturn(List.of(
+                // favorable
+                product(1L, new BigDecimal("100"), 0, 80, 90, "CONFIRMED_OWN_COVERAGE_NAME"),
+                // unfavorable
+                product(2L, new BigDecimal("100000"), 0, 80, 10, "CONFIRMED_OWN_COVERAGE_NAME")));
+
+        SimulationResponse response = service.simulate(MEMBER_ID, request("3", List.of("NONE")));
+
+        assertEquals("NEUTRAL", response.getInsuranceAdvice().getVerdict());
+    }
 }
