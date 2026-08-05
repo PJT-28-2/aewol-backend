@@ -3,6 +3,9 @@ package com.aewol.domain.auth.controller;
 import com.aewol.common.response.ApiResponse;
 import com.aewol.domain.auth.dto.LoginRequest;
 import com.aewol.domain.auth.dto.SignupRequest;
+import com.aewol.domain.auth.dto.SignupEmailCodeRequest;
+import com.aewol.domain.auth.dto.SignupEmailCodeResponse;
+import com.aewol.domain.auth.dto.SignupEmailVerificationRequest;
 import com.aewol.domain.auth.dto.TokenResponse;
 import com.aewol.domain.auth.dto.VerifyRequest;
 import com.aewol.domain.auth.service.AuthService;
@@ -22,6 +25,22 @@ import org.springframework.web.bind.annotation.*;
 public class AuthController {
 
     private final AuthService authService;
+
+    @Operation(summary = "회원가입 이메일 인증번호 발송")
+    @PostMapping("/signup/send-code")
+    public ResponseEntity<ApiResponse<SignupEmailCodeResponse>> sendSignupVerificationCode(
+            @Valid @RequestBody SignupEmailCodeRequest request) {
+        SignupEmailCodeResponse result = authService.sendSignupVerificationCode(request);
+        return ResponseEntity.ok(ApiResponse.success("회원가입 인증번호가 발송되었습니다.", result));
+    }
+
+    @Operation(summary = "회원가입 이메일 인증번호 검증")
+    @PostMapping("/signup/verify-code")
+    public ResponseEntity<ApiResponse<Void>> verifySignupEmailCode(
+            @Valid @RequestBody SignupEmailVerificationRequest request) {
+        authService.verifySignupEmailCode(request);
+        return ResponseEntity.ok(ApiResponse.success("이메일 인증이 완료되었습니다.", null));
+    }
 
     @Operation(summary = "회원가입")
     @PostMapping("/signup")

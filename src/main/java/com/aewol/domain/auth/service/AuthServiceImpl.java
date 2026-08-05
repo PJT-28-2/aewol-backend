@@ -4,6 +4,9 @@ import com.aewol.common.exception.BusinessException;
 import com.aewol.common.util.JwtUtil;
 import com.aewol.domain.auth.dto.LoginRequest;
 import com.aewol.domain.auth.dto.SignupRequest;
+import com.aewol.domain.auth.dto.SignupEmailCodeRequest;
+import com.aewol.domain.auth.dto.SignupEmailCodeResponse;
+import com.aewol.domain.auth.dto.SignupEmailVerificationRequest;
 import com.aewol.domain.auth.dto.TokenResponse;
 import com.aewol.domain.auth.dto.VerifyRequest;
 import com.aewol.domain.member.mapper.MemberMapper;
@@ -28,6 +31,10 @@ import java.util.concurrent.TimeUnit;
 @RequiredArgsConstructor
 public class AuthServiceImpl implements AuthService {
 
+    private static final long SIGNUP_VERIFICATION_TTL_SECONDS = 300L;
+    private static final String VERIFICATION_CODE_KEY_PREFIX = "verify:";
+    private static final String VERIFICATION_COMPLETED_KEY_PREFIX = "verify:completed:";
+
     private final MemberMapper memberMapper;
     private final WalletMapper walletMapper;
     private final JwtUtil jwtUtil;
@@ -35,6 +42,51 @@ public class AuthServiceImpl implements AuthService {
     private final RedisTemplate<String, String> redisTemplate;
     private final EmailService emailService;
     private final KakaoAuthClient kakaoAuthClient;
+
+    @Override
+    public SignupEmailCodeResponse sendSignupVerificationCode(SignupEmailCodeRequest request) {
+        String email = request.getEmail();
+        if (memberMapper.existsActiveByEmail(email)) {
+            throw BusinessException.conflict("이미 사용 중인 이메일입니다.");
+        }
+
+        String code = generateVerificationCode();
+        String verificationKey = verificationCodeKey(email);
+        redisTemplate.opsForValue().set(
+                verificationKey, code, SIGNUP_VERIFICATION_TTL_SECONDS, TimeUnit.SECONDS);
+
+        try {
+            emailService.sendVerificationEmail(email, code);
+        } catch (RuntimeException e) {
+            try {
+                redisTemplate.delete(verificationKey);
+            } catch (RuntimeException cleanupException) {
+                e.addSuppressed(cleanupException);
+            }
+            throw e;
+        }
+
+        return new SignupEmailCodeResponse(SIGNUP_VERIFICATION_TTL_SECONDS);
+    }
+
+    @Override
+    public void verifySignupEmailCode(SignupEmailVerificationRequest request) {
+        String email = request.getEmail();
+        String verificationKey = verificationCodeKey(email);
+        String storedCode = redisTemplate.opsForValue().get(verificationKey);
+
+        if (storedCode == null) {
+            throw new BusinessException(HttpStatus.BAD_REQUEST, "인증번호가 만료되었거나 발급되지 않았습니다.");
+        }
+        if (!storedCode.equals(request.getVerificationCode())) {
+            throw new BusinessException(HttpStatus.BAD_REQUEST, "인증번호가 일치하지 않습니다.");
+        }
+
+        redisTemplate.opsForValue().set(
+                verificationCompletedKey(email), "true",
+                SIGNUP_VERIFICATION_TTL_SECONDS, TimeUnit.SECONDS);
+        redisTemplate.delete(verificationKey);
+    }
 
     @Override
     @Transactional
@@ -214,5 +266,17 @@ public class AuthServiceImpl implements AuthService {
                 .accessToken(accessToken)
                 .refreshToken(refreshToken)
                 .build();
+    }
+
+    private String generateVerificationCode() {
+        return String.format("%06d", ThreadLocalRandom.current().nextInt(1000000));
+    }
+
+    private String verificationCodeKey(String email) {
+        return VERIFICATION_CODE_KEY_PREFIX + email;
+    }
+
+    private String verificationCompletedKey(String email) {
+        return VERIFICATION_COMPLETED_KEY_PREFIX + email;
     }
 }
