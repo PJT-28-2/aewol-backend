@@ -10,10 +10,11 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionOperations;
 
 @Slf4j
 @Service
@@ -40,16 +41,27 @@ public class Gov24SyncServiceImpl implements Gov24SyncService {
 
     private final Gov24Client gov24Client;
     private final Gov24SyncMapper gov24SyncMapper;
+    private final Gov24SyncLock gov24SyncLock;
+    private final TransactionOperations transactionOperations;
 
     @Override
-    @Transactional
     public int syncPetSupportPrograms() {
         if (!gov24Client.isConfigured()) {
             log.warn("정부24 service-key 미설정 — 동기화를 건너뜁니다.");
             return 0;
         }
 
-        // 1) 키워드별 조회 후 서비스ID로 중복 제거
+        return gov24SyncLock.execute(this::syncConfiguredPrograms);
+    }
+
+    private int syncConfiguredPrograms() {
+        List<Gov24ServiceSnapshot> snapshots = collectSnapshots();
+        Integer curated = transactionOperations.execute(status -> persistSnapshots(snapshots));
+        return Objects.requireNonNull(curated, "정부24 동기화 트랜잭션 결과가 없습니다.");
+    }
+
+    /** 외부 HTTP 호출은 DB 트랜잭션을 열기 전에 모두 완료한다. */
+    private List<Gov24ServiceSnapshot> collectSnapshots() {
         Map<String, Map<String, Object>> unique = new LinkedHashMap<>();
         for (String keyword : KEYWORDS) {
             for (Map<String, Object> row : gov24Client.findServicesByName(keyword)) {
@@ -61,27 +73,37 @@ public class Gov24SyncServiceImpl implements Gov24SyncService {
         }
         log.info("[Gov24] 반려동물 관련 서비스 {}건 수집", unique.size());
 
-        // 2) 기존 GOV24 사업을 일괄 비활성화한다. 이번 동기화에 포함된 건은
+        List<Gov24ServiceSnapshot> snapshots = new ArrayList<>(unique.size());
+        for (Map.Entry<String, Map<String, Object>> entry : unique.entrySet()) {
+            String serviceId = entry.getKey();
+            snapshots.add(new Gov24ServiceSnapshot(
+                    serviceId,
+                    entry.getValue(),
+                    gov24Client.findServiceDetail(serviceId),
+                    gov24Client.findSupportConditions(serviceId)));
+        }
+        return snapshots;
+    }
+
+    /** 선수집이 성공한 스냅샷만 하나의 DB 트랜잭션으로 저장한다. */
+    private int persistSnapshots(List<Gov24ServiceSnapshot> snapshots) {
+        // 기존 GOV24 사업을 일괄 비활성화한다. 이번 동기화에 포함된 건은
         //    아래 큐레이션에서 다시 is_active=1로 되살아나고, 사라진 건만 0으로 남는다.
         //    같은 트랜잭션이라 조회 측에 중간 상태가 노출되지 않는다.
         int deactivated = gov24SyncMapper.deactivateAllGov24Programs();
 
         int curated = 0;
-        for (Map.Entry<String, Map<String, Object>> entry : unique.entrySet()) {
-            try {
-                curated += syncOne(entry.getKey(), entry.getValue());
-            } catch (Exception e) {
-                // 한 건이 실패해도 나머지는 계속 진행한다
-                log.error("[Gov24] 서비스 동기화 실패 - serviceId={}, message={}",
-                        entry.getKey(), e.getMessage());
-            }
+        for (Gov24ServiceSnapshot snapshot : snapshots) {
+            curated += persistOne(snapshot);
         }
 
         log.info("[Gov24] 큐레이션 {}건 (직전 활성 {}건 초기화 후 재활성)", curated, deactivated);
         return curated;
     }
 
-    private int syncOne(String serviceId, Map<String, Object> listRow) {
+    private int persistOne(Gov24ServiceSnapshot snapshot) {
+        String serviceId = snapshot.serviceId();
+        Map<String, Object> listRow = snapshot.listRow();
         // ---- 원본 적재: 목록 ----
         Map<String, Object> service = new HashMap<>();
         service.put("serviceId", serviceId);
@@ -108,7 +130,7 @@ public class Gov24SyncServiceImpl implements Gov24SyncService {
         gov24SyncMapper.upsertService(service);
 
         // ---- 원본 적재: 상세 ----
-        Map<String, Object> detailRow = gov24Client.findServiceDetail(serviceId);
+        Map<String, Object> detailRow = snapshot.detailRow();
         if (detailRow != null) {
             Map<String, Object> detail = new HashMap<>();
             detail.put("serviceId", serviceId);
@@ -127,7 +149,7 @@ public class Gov24SyncServiceImpl implements Gov24SyncService {
         }
 
         // ---- 원본 적재: 지원조건 (JA 코드) ----
-        Map<String, Object> conditionRow = gov24Client.findSupportConditions(serviceId);
+        Map<String, Object> conditionRow = snapshot.conditionRow();
         if (conditionRow != null) {
             for (Map.Entry<String, Object> e : conditionRow.entrySet()) {
                 if (!e.getKey().startsWith("JA") || e.getValue() == null) continue;
@@ -141,6 +163,13 @@ public class Gov24SyncServiceImpl implements Gov24SyncService {
 
         // ---- 큐레이션: local_support_program ----
         return curate(serviceId, listRow, detailRow);
+    }
+
+    private record Gov24ServiceSnapshot(
+            String serviceId,
+            Map<String, Object> listRow,
+            Map<String, Object> detailRow,
+            Map<String, Object> conditionRow) {
     }
 
     private int curate(String serviceId, Map<String, Object> listRow, Map<String, Object> detailRow) {

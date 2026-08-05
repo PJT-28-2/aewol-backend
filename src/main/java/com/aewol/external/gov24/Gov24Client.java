@@ -80,18 +80,26 @@ public class Gov24Client {
             } catch (RestClientException e) {
                 log.error("정부24 조회 실패 - path={}, field={}, page={}, message={}",
                         path, field, page, e.getMessage());
-                break;
+                throw e;
             }
-            if (body == null) break;
+            if (body == null) {
+                throw new IllegalStateException("정부24 API가 빈 응답을 반환했습니다: " + path);
+            }
 
             Object rawData = body.get("data");
-            if (!(rawData instanceof List)) break;
+            if (!(rawData instanceof List)) {
+                throw new IllegalStateException("정부24 API 응답에 data 배열이 없습니다: " + path);
+            }
 
             List<Map<String, Object>> data = (List<Map<String, Object>>) rawData;
             collected.addAll(data);
 
             // totalCount는 필터를 반영하지 않으므로 신뢰하지 않는다.
-            if (data.size() < PER_PAGE) break;
+            if (data.size() < PER_PAGE) return collected;
+            if (page == MAX_PAGES) {
+                throw new IllegalStateException(
+                        "정부24 API 조회가 최대 페이지에 도달해 불완전할 수 있습니다: " + path);
+            }
         }
         return collected;
     }

@@ -9,6 +9,8 @@ import com.aewol.external.gov24.Gov24Client;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Supplier;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -18,6 +20,9 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
+import org.springframework.transaction.support.TransactionCallback;
+import org.springframework.transaction.support.TransactionOperations;
+import org.springframework.web.client.RestClientException;
 
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
@@ -25,9 +30,21 @@ class Gov24SyncServiceImplTest {
 
     @Mock Gov24Client gov24Client;
     @Mock Gov24SyncMapper gov24SyncMapper;
+    @Mock Gov24SyncLock gov24SyncLock;
+    @Mock TransactionOperations transactionOperations;
+
+    @BeforeEach
+    void setUp() {
+        lenient().doAnswer(invocation -> ((Supplier<?>) invocation.getArgument(0)).get())
+                .when(gov24SyncLock).execute(any());
+        lenient().doAnswer(invocation ->
+                        ((TransactionCallback<?>) invocation.getArgument(0)).doInTransaction(null))
+                .when(transactionOperations).execute(any());
+    }
 
     private Gov24SyncServiceImpl service() {
-        return new Gov24SyncServiceImpl(gov24Client, gov24SyncMapper);
+        return new Gov24SyncServiceImpl(
+                gov24Client, gov24SyncMapper, gov24SyncLock, transactionOperations);
     }
 
     @Test
@@ -113,8 +130,8 @@ class Gov24SyncServiceImplTest {
     }
 
     @Test
-    @DisplayName("한 건이 실패해도 나머지 서비스는 계속 동기화한다")
-    void should_continueSync_when_oneServiceFails() {
+    @DisplayName("한 건의 DB 저장이 실패하면 예외를 전파해 전체 트랜잭션을 롤백한다")
+    void should_propagateFailure_when_oneServiceFails() {
         when(gov24Client.isConfigured()).thenReturn(true);
         when(gov24Client.findServicesByName(anyString())).thenReturn(List.of());
         when(gov24Client.findServicesByName("반려동물")).thenReturn(List.of(
@@ -124,10 +141,23 @@ class Gov24SyncServiceImplTest {
                 .thenThrow(new RuntimeException("DB 오류"));
         when(gov24SyncMapper.findProgramIdBySourceServiceId("OK")).thenReturn(12L);
 
-        int curated = service().syncPetSupportPrograms();
+        assertThrows(RuntimeException.class, () -> service().syncPetSupportPrograms());
 
-        assertEquals(1, curated);
-        verify(gov24SyncMapper).upsertCuratedProgram(argThat(m -> "OK".equals(m.get("sourceServiceId"))));
+        verify(gov24SyncMapper, never())
+                .upsertCuratedProgram(argThat(m -> "OK".equals(m.get("sourceServiceId"))));
+    }
+
+    @Test
+    @DisplayName("정부24 목록 수집 실패 시 기존 사업을 비활성화하지 않는다")
+    void should_notDeactivatePrograms_when_collectionFails() {
+        when(gov24Client.isConfigured()).thenReturn(true);
+        when(gov24Client.findServicesByName(anyString()))
+                .thenThrow(new RestClientException("정부24 장애"));
+
+        assertThrows(RestClientException.class, () -> service().syncPetSupportPrograms());
+
+        verify(transactionOperations, never()).execute(any());
+        verify(gov24SyncMapper, never()).deactivateAllGov24Programs();
     }
 
     @Test
