@@ -13,6 +13,8 @@ import com.aewol.domain.insurance.dto.SimulationRequest;
 import com.aewol.domain.insurance.dto.SimulationResponse;
 import com.aewol.domain.insurance.mapper.InsuranceMapper;
 import com.aewol.domain.pet.mapper.PetMapper;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.HashMap;
@@ -21,6 +23,7 @@ import java.util.Map;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
@@ -283,5 +286,28 @@ class InsuranceSimulationServiceImplTest {
         SimulationResponse response = service.simulate(MEMBER_ID, request("3", List.of("NONE")));
 
         assertEquals("NEUTRAL", response.getInsuranceAdvice().getVerdict());
+    }
+
+    @Test
+    @DisplayName("병력 코드에 따옴표/백슬래시가 섞여도 유효한 JSON으로 이스케이프해서 저장한다")
+    void should_escapeSpecialCharacters_whenPersistingMedicalHistoryCodes() throws Exception {
+        service = new InsuranceSimulationServiceImpl(insuranceMapper, petMapper);
+        when(petMapper.findByIdAndMemberId("3", MEMBER_ID)).thenReturn(pet("CAT", 3));
+        when(insuranceMapper.findProductsBySpecies("CAT")).thenReturn(List.of());
+
+        // 요소 하나에 따옴표+콤마, 다른 하나에 백슬래시가 섞인 값 — 문자열 이어붙이기였다면
+        // 요청의 2개 요소가 저장 데이터에서는 개수/내용이 달라졌을 케이스
+        List<String> trickyHistoryCodes = List.of("NONE\",\"JOINT", "back\\slash");
+
+        service.simulate(MEMBER_ID, request("3", trickyHistoryCodes));
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Map<String, Object>> captor = ArgumentCaptor.forClass(Map.class);
+        verify(insuranceMapper).insertSimulation(captor.capture());
+        String storedJson = (String) captor.getValue().get("medicalHistoryCodes");
+
+        List<String> roundTripped = new ObjectMapper()
+                .readValue(storedJson, new TypeReference<List<String>>() {});
+        assertEquals(trickyHistoryCodes, roundTripped);
     }
 }

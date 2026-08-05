@@ -9,6 +9,8 @@ import com.aewol.domain.insurance.dto.SimulationRequest;
 import com.aewol.domain.insurance.dto.SimulationResponse;
 import com.aewol.domain.insurance.mapper.InsuranceMapper;
 import com.aewol.domain.pet.mapper.PetMapper;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.Period;
@@ -179,16 +181,22 @@ public class InsuranceSimulationServiceImpl implements InsuranceSimulationServic
         return InsuranceAdvice.builder().verdict(verdict).message(message).build();
     }
 
-    private void persistSimulation(String petId, List<String> historyCodes, InsuranceAdvice advice) {
-        String medicalHistoryCodesJson = historyCodes.stream()
-                .map(code -> "\"" + code + "\"")
-                .collect(Collectors.joining(",", "[", "]"));
+    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
+    private void persistSimulation(String petId, List<String> historyCodes, InsuranceAdvice advice) {
         Map<String, Object> simulation = new java.util.HashMap<>();
         simulation.put("petId", petId);
-        simulation.put("medicalHistoryCodes", medicalHistoryCodesJson);
+        simulation.put("medicalHistoryCodes", toJson(historyCodes));
         simulation.put("verdict", advice.getVerdict());
         simulation.put("message", advice.getMessage());
         insuranceMapper.insertSimulation(simulation);
+    }
+
+    private String toJson(List<String> historyCodes) {
+        try {
+            return OBJECT_MAPPER.writeValueAsString(historyCodes);
+        } catch (JsonProcessingException e) {
+            throw new BusinessException("병력 코드 저장 형식 변환에 실패했습니다.");
+        }
     }
 }
