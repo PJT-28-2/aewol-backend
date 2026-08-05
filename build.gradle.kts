@@ -125,6 +125,9 @@ tasks.withType<Test> {
 
 tasks.withType<JavaCompile> {
     options.encoding = "UTF-8"
+    // MethodValidationPostProcessor가 @RequestParam 제약조건 위반 메시지에 arg0/arg1 대신
+    // 실제 파라미터명(petType, age 등)을 쓰도록 바이트코드에 파라미터명을 남긴다.
+    options.compilerArgs.add("-parameters")
 }
 
 // Flyway 설정: docker-compose 로 띄운 로컬 MySQL 기준 (환경변수로 오버라이드 가능)
