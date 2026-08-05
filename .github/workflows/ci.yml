@@ -1,6 +1,8 @@
 name: Backend CI
 
 on:
+  push:
+    branches: [develop, main]
   pull_request:
     branches: [develop, main]
 
@@ -47,11 +49,8 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-gradle-
 
-      - name: Build
-        run: ./gradlew build -x test
+      - name: Clean build and test
+        run: ./gradlew clean build
 
       - name: Migrate DB schema
         run: ./gradlew flywayMigrate
-
-      - name: Test
-        run: ./gradlew test
