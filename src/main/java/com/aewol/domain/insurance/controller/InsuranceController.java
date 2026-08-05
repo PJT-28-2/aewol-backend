@@ -2,9 +2,11 @@ package com.aewol.domain.insurance.controller;
 
 import com.aewol.common.response.ApiResponse;
 import com.aewol.domain.insurance.dto.ClaimResponse;
+import com.aewol.domain.insurance.dto.ProductResponse;
 import com.aewol.domain.insurance.dto.SimulationRequest;
 import com.aewol.domain.insurance.dto.SimulationResponse;
 import com.aewol.domain.insurance.service.ClaimService;
+import com.aewol.domain.insurance.service.InsuranceProductService;
 import com.aewol.domain.insurance.service.InsuranceSimulationService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -25,12 +27,22 @@ import java.util.List;
 public class InsuranceController {
 
     private final InsuranceSimulationService simulationService;
+    private final InsuranceProductService productService;
     private final ClaimService claimService;
 
-    @Operation(summary = "보험 손익분기 시뮬레이션")
-    @PostMapping("/simulate")
+    @Operation(summary = "보험 시뮬레이터 결과 계산")
+    @PostMapping("/simulations")
     public ResponseEntity<ApiResponse<SimulationResponse>> simulate(@Valid @RequestBody SimulationRequest request) {
         return ResponseEntity.ok(ApiResponse.success(simulationService.simulate(request)));
+    }
+
+    @Operation(summary = "보험 상품 리스트 조회")
+    @GetMapping("/products")
+    public ResponseEntity<ApiResponse<List<ProductResponse>>> getProducts(
+            @RequestParam String petType,
+            @RequestParam(required = false) Integer age,
+            @RequestParam(required = false, defaultValue = "premium_asc") String sort) {
+        return ResponseEntity.ok(ApiResponse.success(productService.getProducts(petType, age, sort)));
     }
 
     @Operation(summary = "보험 청구 (영수증 OCR)")
