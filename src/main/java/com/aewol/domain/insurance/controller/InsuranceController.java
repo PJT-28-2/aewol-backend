@@ -32,8 +32,9 @@ public class InsuranceController {
 
     @Operation(summary = "보험 시뮬레이터 결과 계산")
     @PostMapping("/simulations")
-    public ResponseEntity<ApiResponse<SimulationResponse>> simulate(@Valid @RequestBody SimulationRequest request) {
-        return ResponseEntity.ok(ApiResponse.success(simulationService.simulate(request)));
+    public ResponseEntity<ApiResponse<SimulationResponse>> simulate(@AuthenticationPrincipal String memberId,
+                                                                      @Valid @RequestBody SimulationRequest request) {
+        return ResponseEntity.ok(ApiResponse.success(simulationService.simulate(memberId, request)));
     }
 
     @Operation(summary = "보험 상품 리스트 조회")

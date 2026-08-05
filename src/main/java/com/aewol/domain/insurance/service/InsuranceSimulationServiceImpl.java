@@ -39,8 +39,8 @@ public class InsuranceSimulationServiceImpl implements InsuranceSimulationServic
 
     @Override
     @Transactional
-    public SimulationResponse simulate(SimulationRequest request) {
-        Map<String, Object> pet = petMapper.findById(request.getPetId());
+    public SimulationResponse simulate(String memberId, SimulationRequest request) {
+        Map<String, Object> pet = petMapper.findByIdAndMemberId(request.getPetId(), memberId);
         if (pet == null) {
             throw BusinessException.notFound("반려동물을 찾을 수 없습니다.");
         }

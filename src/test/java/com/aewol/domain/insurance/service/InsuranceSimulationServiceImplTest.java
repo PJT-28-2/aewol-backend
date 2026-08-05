@@ -28,6 +28,8 @@ import org.springframework.test.util.ReflectionTestUtils;
 @ExtendWith(MockitoExtension.class)
 class InsuranceSimulationServiceImplTest {
 
+    private static final String MEMBER_ID = "10";
+
     @Mock InsuranceMapper insuranceMapper;
     @Mock PetMapper petMapper;
 
@@ -67,11 +69,11 @@ class InsuranceSimulationServiceImplTest {
     @DisplayName("Notion 명세 예시 수치대로 손익분기 시나리오(1/5/10년)를 계산한다")
     void should_calculateBreakEvenScenarios_matchingSpecExample() {
         service = new InsuranceSimulationServiceImpl(insuranceMapper, petMapper);
-        when(petMapper.findById("3")).thenReturn(pet("CAT", 3));
+        when(petMapper.findByIdAndMemberId("3", MEMBER_ID)).thenReturn(pet("CAT", 3));
         when(insuranceMapper.findProductsBySpecies("CAT")).thenReturn(List.of(
                 product(3L, new BigDecimal("21541"), 0, 80, 50, "CONFIRMED_OWN_COVERAGE_NAME")));
 
-        SimulationResponse response = service.simulate(request("3", List.of("NONE")));
+        SimulationResponse response = service.simulate(MEMBER_ID, request("3", List.of("NONE")));
 
         assertEquals(1, response.getRecommendedProducts().size());
         var breakEvenScenarios = response.getRecommendedProducts().get(0).getBreakEvenScenarios();
@@ -89,11 +91,11 @@ class InsuranceSimulationServiceImplTest {
     @DisplayName("가입 연령 범위 밖의 상품은 추천 목록에서 제외한다")
     void should_excludeProduct_whenPetAgeOutsideJoinAgeRange() {
         service = new InsuranceSimulationServiceImpl(insuranceMapper, petMapper);
-        when(petMapper.findById("3")).thenReturn(pet("DOG", 25));
+        when(petMapper.findByIdAndMemberId("3", MEMBER_ID)).thenReturn(pet("DOG", 25));
         when(insuranceMapper.findProductsBySpecies("DOG")).thenReturn(List.of(
                 product(1L, new BigDecimal("10000"), 1, 19, 50, "CONFIRMED_OWN_COVERAGE_NAME")));
 
-        SimulationResponse response = service.simulate(request("3", List.of("NONE")));
+        SimulationResponse response = service.simulate(MEMBER_ID, request("3", List.of("NONE")));
 
         assertTrue(response.getRecommendedProducts().isEmpty());
     }
@@ -102,11 +104,11 @@ class InsuranceSimulationServiceImplTest {
     @DisplayName("reimbursementConfidence가 UNVERIFIED인 상품은 추천 목록에서 제외한다")
     void should_excludeProduct_whenReimbursementConfidenceIsUnverified() {
         service = new InsuranceSimulationServiceImpl(insuranceMapper, petMapper);
-        when(petMapper.findById("3")).thenReturn(pet("DOG", 3));
+        when(petMapper.findByIdAndMemberId("3", MEMBER_ID)).thenReturn(pet("DOG", 3));
         when(insuranceMapper.findProductsBySpecies("DOG")).thenReturn(List.of(
                 product(1L, new BigDecimal("500"), 0, 20, null, "UNVERIFIED")));
 
-        SimulationResponse response = service.simulate(request("3", List.of("NONE")));
+        SimulationResponse response = service.simulate(MEMBER_ID, request("3", List.of("NONE")));
 
         assertTrue(response.getRecommendedProducts().isEmpty());
     }
@@ -115,11 +117,11 @@ class InsuranceSimulationServiceImplTest {
     @DisplayName("reimbursementRatePct가 없는 상품은 손익분기를 계산하지 않고 breakEvenAvailable=false로 반환한다")
     void should_markBreakEvenUnavailable_whenReimbursementRateMissing() {
         service = new InsuranceSimulationServiceImpl(insuranceMapper, petMapper);
-        when(petMapper.findById("3")).thenReturn(pet("CAT", 1));
+        when(petMapper.findByIdAndMemberId("3", MEMBER_ID)).thenReturn(pet("CAT", 1));
         when(insuranceMapper.findProductsBySpecies("CAT")).thenReturn(List.of(
                 product(5L, new BigDecimal("31815"), 1, 19, null, "ASSUMED_FROM_RESEARCH")));
 
-        SimulationResponse response = service.simulate(request("3", List.of("NONE")));
+        SimulationResponse response = service.simulate(MEMBER_ID, request("3", List.of("NONE")));
 
         var recommended = response.getRecommendedProducts().get(0);
         assertEquals(false, recommended.isBreakEvenAvailable());
@@ -130,10 +132,10 @@ class InsuranceSimulationServiceImplTest {
     @DisplayName("병력코드가 NONE 외에 포함되면 preExistingConditionWarning을 항상 포함한다")
     void should_includePreExistingConditionWarning_whenMedicalHistoryCodesNotNone() {
         service = new InsuranceSimulationServiceImpl(insuranceMapper, petMapper);
-        when(petMapper.findById("3")).thenReturn(pet("CAT", 3));
+        when(petMapper.findByIdAndMemberId("3", MEMBER_ID)).thenReturn(pet("CAT", 3));
         when(insuranceMapper.findProductsBySpecies("CAT")).thenReturn(List.of());
 
-        SimulationResponse response = service.simulate(request("3", List.of("JOINT")));
+        SimulationResponse response = service.simulate(MEMBER_ID, request("3", List.of("JOINT")));
 
         assertEquals(
                 "기존 병력이 있는 경우 일부 보장이 제한되거나 면책될 수 있습니다. 가입 전 약관을 확인하세요.",
@@ -144,10 +146,10 @@ class InsuranceSimulationServiceImplTest {
     @DisplayName("추천 상품이 0건이면 NEUTRAL 안내 문구를 반환한다")
     void should_returnNeutralAdvice_whenNoRecommendedProducts() {
         service = new InsuranceSimulationServiceImpl(insuranceMapper, petMapper);
-        when(petMapper.findById("3")).thenReturn(pet("CAT", 3));
+        when(petMapper.findByIdAndMemberId("3", MEMBER_ID)).thenReturn(pet("CAT", 3));
         when(insuranceMapper.findProductsBySpecies("CAT")).thenReturn(List.of());
 
-        SimulationResponse response = service.simulate(request("3", List.of("NONE")));
+        SimulationResponse response = service.simulate(MEMBER_ID, request("3", List.of("NONE")));
 
         assertEquals("NEUTRAL", response.getInsuranceAdvice().getVerdict());
         verify(insuranceMapper).insertSimulation(any());
@@ -157,9 +159,21 @@ class InsuranceSimulationServiceImplTest {
     @DisplayName("존재하지 않는 반려동물이면 404 예외를 던진다")
     void should_throwNotFound_whenPetDoesNotExist() {
         service = new InsuranceSimulationServiceImpl(insuranceMapper, petMapper);
-        when(petMapper.findById("999")).thenReturn(null);
+        when(petMapper.findByIdAndMemberId("999", MEMBER_ID)).thenReturn(null);
 
-        assertThrows(BusinessException.class, () -> service.simulate(request("999", List.of("NONE"))));
+        assertThrows(BusinessException.class,
+                () -> service.simulate(MEMBER_ID, request("999", List.of("NONE"))));
+    }
+
+    @Test
+    @DisplayName("다른 회원 소유의 반려동물이면 404 예외를 던진다 (IDOR 방지)")
+    void should_throwNotFound_whenPetBelongsToAnotherMember() {
+        service = new InsuranceSimulationServiceImpl(insuranceMapper, petMapper);
+        // pet_id=3은 실제로 존재하지만 다른 회원 소유라, memberId까지 일치하는 조회는 null을 반환해야 한다
+        when(petMapper.findByIdAndMemberId("3", MEMBER_ID)).thenReturn(null);
+
+        assertThrows(BusinessException.class,
+                () -> service.simulate(MEMBER_ID, request("3", List.of("NONE"))));
     }
 
     @Test
@@ -169,11 +183,11 @@ class InsuranceSimulationServiceImplTest {
         Map<String, Object> petWithStringBirthDate = new HashMap<>();
         petWithStringBirthDate.put("species", "DOG");
         petWithStringBirthDate.put("birth_date", LocalDate.now().minusYears(25).toString());
-        when(petMapper.findById("3")).thenReturn(petWithStringBirthDate);
+        when(petMapper.findByIdAndMemberId("3", MEMBER_ID)).thenReturn(petWithStringBirthDate);
         when(insuranceMapper.findProductsBySpecies("DOG")).thenReturn(List.of(
                 product(1L, new BigDecimal("10000"), 1, 19, 50, "CONFIRMED_OWN_COVERAGE_NAME")));
 
-        SimulationResponse response = service.simulate(request("3", List.of("NONE")));
+        SimulationResponse response = service.simulate(MEMBER_ID, request("3", List.of("NONE")));
 
         assertTrue(response.getRecommendedProducts().isEmpty());
     }
@@ -185,11 +199,11 @@ class InsuranceSimulationServiceImplTest {
         Map<String, Object> petWithoutBirthDate = new HashMap<>();
         petWithoutBirthDate.put("species", "DOG");
         petWithoutBirthDate.put("birth_date", null);
-        when(petMapper.findById("3")).thenReturn(petWithoutBirthDate);
+        when(petMapper.findByIdAndMemberId("3", MEMBER_ID)).thenReturn(petWithoutBirthDate);
         when(insuranceMapper.findProductsBySpecies("DOG")).thenReturn(List.of(
                 product(1L, new BigDecimal("10000"), 10, 15, 50, "CONFIRMED_OWN_COVERAGE_NAME")));
 
-        SimulationResponse response = service.simulate(request("3", List.of("NONE")));
+        SimulationResponse response = service.simulate(MEMBER_ID, request("3", List.of("NONE")));
 
         assertEquals(1, response.getRecommendedProducts().size());
     }
@@ -198,11 +212,11 @@ class InsuranceSimulationServiceImplTest {
     @DisplayName("상품의 가입연령 정보가 없으면 나이와 무관하게 후보에 포함한다")
     void should_includeProduct_whenJoinAgeRangeIsMissing() {
         service = new InsuranceSimulationServiceImpl(insuranceMapper, petMapper);
-        when(petMapper.findById("3")).thenReturn(pet("DOG", 3));
+        when(petMapper.findByIdAndMemberId("3", MEMBER_ID)).thenReturn(pet("DOG", 3));
         when(insuranceMapper.findProductsBySpecies("DOG")).thenReturn(List.of(
                 product(1L, new BigDecimal("10000"), null, null, 50, "CONFIRMED_OWN_COVERAGE_NAME")));
 
-        SimulationResponse response = service.simulate(request("3", List.of("NONE")));
+        SimulationResponse response = service.simulate(MEMBER_ID, request("3", List.of("NONE")));
 
         assertEquals(1, response.getRecommendedProducts().size());
     }
@@ -211,13 +225,13 @@ class InsuranceSimulationServiceImplTest {
     @DisplayName("추천 상품의 과반이 5년차 기준 유리하면 FAVORABLE로 판정한다")
     void should_returnFavorableAdvice_whenMajorityOfProductsAreFavorableAtYearFive() {
         service = new InsuranceSimulationServiceImpl(insuranceMapper, petMapper);
-        when(petMapper.findById("3")).thenReturn(pet("CAT", 3));
+        when(petMapper.findByIdAndMemberId("3", MEMBER_ID)).thenReturn(pet("CAT", 3));
         // 5년 누적보험료(60개월치) < 5년 예상보장금(annualExpectedVetCostKrw*rate/100*5) 이 되도록
         // 아주 저렴한 보험료의 상품을 구성해 favorable하게 만든다.
         when(insuranceMapper.findProductsBySpecies("CAT")).thenReturn(List.of(
                 product(1L, new BigDecimal("100"), 0, 80, 90, "CONFIRMED_OWN_COVERAGE_NAME")));
 
-        SimulationResponse response = service.simulate(request("3", List.of("NONE")));
+        SimulationResponse response = service.simulate(MEMBER_ID, request("3", List.of("NONE")));
 
         assertEquals("FAVORABLE", response.getInsuranceAdvice().getVerdict());
     }
@@ -226,7 +240,7 @@ class InsuranceSimulationServiceImplTest {
     @DisplayName("추천 상품 중 일부만 5년차 기준 유리하면 NEUTRAL로 판정한다")
     void should_returnNeutralAdvice_whenSomeButNotMajorityOfProductsAreFavorable() {
         service = new InsuranceSimulationServiceImpl(insuranceMapper, petMapper);
-        when(petMapper.findById("3")).thenReturn(pet("CAT", 3));
+        when(petMapper.findByIdAndMemberId("3", MEMBER_ID)).thenReturn(pet("CAT", 3));
         when(insuranceMapper.findProductsBySpecies("CAT")).thenReturn(List.of(
                 // favorable: 저렴한 보험료 + 높은 보장비율
                 product(1L, new BigDecimal("100"), 0, 80, 90, "CONFIRMED_OWN_COVERAGE_NAME"),
@@ -235,7 +249,7 @@ class InsuranceSimulationServiceImplTest {
                 // unfavorable: 비싼 보험료 + 낮은 보장비율
                 product(3L, new BigDecimal("100000"), 0, 80, 10, "CONFIRMED_OWN_COVERAGE_NAME")));
 
-        SimulationResponse response = service.simulate(request("3", List.of("NONE")));
+        SimulationResponse response = service.simulate(MEMBER_ID, request("3", List.of("NONE")));
 
         assertEquals("NEUTRAL", response.getInsuranceAdvice().getVerdict());
     }
