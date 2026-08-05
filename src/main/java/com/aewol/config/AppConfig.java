@@ -2,8 +2,8 @@ package com.aewol.config;
 
 import org.springframework.context.annotation.ComponentScan;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Profile;
 import org.springframework.context.annotation.PropertySource;
-import org.springframework.context.annotation.PropertySources;
 import org.springframework.scheduling.annotation.EnableScheduling;
 
 /**
@@ -12,22 +12,37 @@ import org.springframework.scheduling.annotation.EnableScheduling;
  */
 @Configuration
 @ComponentScan(basePackages = "com.aewol")
-@PropertySources({
-    @PropertySource(
-        value = "classpath:application.yml",
-        factory = YamlPropertySourceFactory.class
-    ),
-    @PropertySource(
-        value = "classpath:application-local.yml",
-        factory = YamlPropertySourceFactory.class,
-        ignoreResourceNotFound = true
-    ),
-    @PropertySource(
-        value = "classpath:application-dev.yml",
-        factory = YamlPropertySourceFactory.class,
-        ignoreResourceNotFound = true
-    )
-})
+@PropertySource(
+    value = "classpath:application.yml",
+    factory = YamlPropertySourceFactory.class
+)
 @EnableScheduling
 public class AppConfig {
+
+    @Configuration
+    @Profile({"local", "default"})
+    @PropertySource(
+        value = "classpath:application-local.yml",
+        factory = YamlPropertySourceFactory.class
+    )
+    static class LocalProperties {
+    }
+
+    @Configuration
+    @Profile("dev")
+    @PropertySource(
+        value = "classpath:application-dev.yml",
+        factory = YamlPropertySourceFactory.class
+    )
+    static class DevProperties {
+    }
+
+    @Configuration
+    @Profile("test")
+    @PropertySource(
+        value = "classpath:application-test.yml",
+        factory = YamlPropertySourceFactory.class
+    )
+    static class TestProperties {
+    }
 }
