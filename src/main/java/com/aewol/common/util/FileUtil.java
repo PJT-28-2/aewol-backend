@@ -32,6 +32,17 @@ public class FileUtil {
         return "/uploads/" + subDir + "/" + filename;
     }
 
+    public String upload(MultipartFile file, String subDir, String extension) throws IOException {
+        Path dir = Paths.get(uploadDir, subDir);
+        Files.createDirectories(dir);
+
+        String filename = UUID.randomUUID() + "." + extension;
+        Path filepath = dir.resolve(filename);
+        Files.write(filepath, file.getBytes());
+
+        return "/uploads/" + subDir + "/" + filename;
+    }
+
     public void delete(String filePath) throws IOException {
         Path path = Paths.get(uploadDir, filePath.replace("/uploads/", ""));
         Files.deleteIfExists(path);

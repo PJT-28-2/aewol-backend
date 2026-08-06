@@ -7,6 +7,8 @@ import static org.mockito.Mockito.*;
 import com.aewol.common.exception.BusinessException;
 import com.aewol.domain.pet.dto.PetCreateRequest;
 import com.aewol.domain.pet.mapper.PetMapper;
+import com.aewol.domain.pet.mapper.PetDocumentMapper;
+import com.aewol.common.util.FileUtil;
 import java.util.HashMap;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
@@ -19,10 +21,16 @@ import org.springframework.http.HttpStatus;
 class PetServiceImplTest {
 
     @Mock PetMapper petMapper;
+    @Mock PetDocumentMapper petDocumentMapper;
+    @Mock FileUtil fileUtil;
+
+    private PetServiceImpl service() {
+        return new PetServiceImpl(petMapper, petDocumentMapper, fileUtil);
+    }
 
     @Test
     void should_returnPet_when_memberOwnsPet() {
-        PetServiceImpl service = new PetServiceImpl(petMapper);
+        PetServiceImpl service = service();
         when(petMapper.findById("pet-1")).thenReturn(pet("member-1"));
 
         assertEquals("pet-1", service.getPet("member-1", "pet-1").getPetId());
@@ -30,7 +38,7 @@ class PetServiceImplTest {
 
     @Test
     void should_throwForbidden_when_memberCannotViewPet() {
-        PetServiceImpl service = new PetServiceImpl(petMapper);
+        PetServiceImpl service = service();
         when(petMapper.findById("pet-1")).thenReturn(pet("owner-1"));
 
         BusinessException exception = assertThrows(BusinessException.class,
@@ -41,7 +49,7 @@ class PetServiceImplTest {
 
     @Test
     void should_throwNotFound_when_petDoesNotExist() {
-        PetServiceImpl service = new PetServiceImpl(petMapper);
+        PetServiceImpl service = service();
         when(petMapper.findById("pet-404")).thenReturn(null);
 
         BusinessException exception = assertThrows(BusinessException.class,
@@ -52,7 +60,7 @@ class PetServiceImplTest {
 
     @Test
     void should_throwForbidden_when_nonOwnerUpdatesPet() {
-        PetServiceImpl service = new PetServiceImpl(petMapper);
+        PetServiceImpl service = service();
         when(petMapper.findById("pet-1")).thenReturn(pet("owner-1"));
 
         BusinessException exception = assertThrows(BusinessException.class,
@@ -64,7 +72,7 @@ class PetServiceImplTest {
 
     @Test
     void should_updatePet_when_memberOwnsPet() {
-        PetServiceImpl service = new PetServiceImpl(petMapper);
+        PetServiceImpl service = service();
         PetCreateRequest request = mock(PetCreateRequest.class);
         when(petMapper.findById("pet-1")).thenReturn(pet("member-1"));
 
@@ -75,7 +83,7 @@ class PetServiceImplTest {
 
     @Test
     void should_throwNotFound_when_updatingMissingPet() {
-        PetServiceImpl service = new PetServiceImpl(petMapper);
+        PetServiceImpl service = service();
         when(petMapper.findById("pet-404")).thenReturn(null);
 
         BusinessException exception = assertThrows(BusinessException.class,
@@ -87,7 +95,7 @@ class PetServiceImplTest {
 
     @Test
     void should_throwForbidden_when_nonOwnerDeletesPet() {
-        PetServiceImpl service = new PetServiceImpl(petMapper);
+        PetServiceImpl service = service();
         when(petMapper.findById("pet-1")).thenReturn(pet("owner-1"));
 
         BusinessException exception = assertThrows(BusinessException.class,
@@ -99,7 +107,7 @@ class PetServiceImplTest {
 
     @Test
     void should_deactivatePet_when_memberOwnsPet() {
-        PetServiceImpl service = new PetServiceImpl(petMapper);
+        PetServiceImpl service = service();
         when(petMapper.findById("pet-1")).thenReturn(pet("member-1"));
 
         service.deactivatePet("member-1", "pet-1");
@@ -109,7 +117,7 @@ class PetServiceImplTest {
 
     @Test
     void should_throwNotFound_when_deletingMissingPet() {
-        PetServiceImpl service = new PetServiceImpl(petMapper);
+        PetServiceImpl service = service();
         when(petMapper.findById("pet-404")).thenReturn(null);
 
         BusinessException exception = assertThrows(BusinessException.class,
