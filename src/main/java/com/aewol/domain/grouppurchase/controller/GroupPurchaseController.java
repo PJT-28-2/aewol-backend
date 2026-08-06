@@ -1,10 +1,13 @@
 package com.aewol.domain.grouppurchase.controller;
 
 import com.aewol.common.response.ApiResponse;
+import com.aewol.domain.grouppurchase.dto.GroupPurchaseCreateRequest;
 import com.aewol.domain.grouppurchase.dto.GroupPurchaseImageUploadResponse;
+import com.aewol.domain.grouppurchase.dto.GroupPurchaseResponse;
 import com.aewol.domain.grouppurchase.service.GroupPurchaseService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import javax.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -30,8 +33,8 @@ public class GroupPurchaseController {
 
     @Operation(summary = "공동구매 생성")
     @PostMapping
-    public ResponseEntity<ApiResponse<Map<String, Object>>> create(@AuthenticationPrincipal String memberId,
-                                                                     @RequestBody Map<String, Object> request) {
+    public ResponseEntity<ApiResponse<GroupPurchaseResponse>> create(@AuthenticationPrincipal String memberId,
+                                                                       @Valid @RequestBody GroupPurchaseCreateRequest request) {
         return ResponseEntity.status(HttpStatus.CREATED)
                 .body(ApiResponse.created(groupPurchaseService.create(memberId, request)));
     }
