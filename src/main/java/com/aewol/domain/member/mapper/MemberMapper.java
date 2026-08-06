@@ -9,7 +9,9 @@ public interface MemberMapper {
     Map<String, Object> findById(@Param("memberId") String memberId);
     Map<String, Object> findByEmail(@Param("email") String email);
     boolean existsActiveByEmail(@Param("email") String email);
+    Map<String, Object> findLatestInactiveByEmailForUpdate(@Param("email") String email);
     void insert(Map<String, Object> member);
+    int restoreLocalMember(Map<String, Object> member);
     void update(Map<String, Object> member);
     int markEmailVerified(@Param("memberId") String memberId);
 }

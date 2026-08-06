@@ -4,12 +4,14 @@ import com.aewol.common.exception.BusinessException;
 import com.aewol.common.util.JwtUtil;
 import com.aewol.domain.auth.dto.LoginRequest;
 import com.aewol.domain.auth.dto.SignupRequest;
+import com.aewol.domain.auth.dto.SignupResponse;
 import com.aewol.domain.auth.dto.SignupEmailCodeRequest;
 import com.aewol.domain.auth.dto.SignupEmailCodeResponse;
 import com.aewol.domain.auth.dto.SignupEmailVerificationRequest;
 import com.aewol.domain.auth.dto.TokenResponse;
 import com.aewol.domain.auth.dto.VerifyRequest;
 import com.aewol.domain.member.mapper.MemberMapper;
+import com.aewol.domain.notification.mapper.NotificationSettingMapper;
 import com.aewol.domain.wallet.mapper.WalletMapper;
 import com.aewol.external.kakao.KakaoAuthClient;
 import com.aewol.external.smtp.EmailService;
@@ -17,10 +19,13 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.util.HashMap;
 import java.util.List;
@@ -70,12 +75,14 @@ public class AuthServiceImpl implements AuthService {
             "    return -1\n" +
             "end\n" +
             "redis.call('DEL', KEYS[1])\n" +
-            "redis.call('SET', KEYS[2], 'true', 'EX', ARGV[2])\n" +
+            // requestId를 클라이언에 노출하지 않고도 최종 가입이 같은 인증 결과를 소비하는지 확인할 수 있게 전체 값을 유지한다.
+            "redis.call('SET', KEYS[2], stored, 'EX', ARGV[2])\n" +
             "return 1",
             Long.class);
 
     private final MemberMapper memberMapper;
     private final WalletMapper walletMapper;
+    private final NotificationSettingMapper notificationSettingMapper;
     private final JwtUtil jwtUtil;
     private final PasswordEncoder passwordEncoder;
     private final RedisTemplate<String, String> redisTemplate;
@@ -129,33 +136,33 @@ public class AuthServiceImpl implements AuthService {
 
     @Override
     @Transactional
-    public void signup(SignupRequest request) {
-        if (memberMapper.findByEmail(request.getEmail()) != null) {
+    public SignupResponse signup(SignupRequest request) {
+        String completedKey = verificationCompletedKey(request.getEmail());
+        String completedValue = redisTemplate.opsForValue().get(completedKey);
+        validateCompletedVerification(completedValue, request.getVerificationCode());
+
+        // DB 작업 전에 완료 키를 지우면 rollback 시 인증 결과도 잃으므로, commit 후 삭제할 전체 값을 보관한다.
+        String encodedPassword = passwordEncoder.encode(request.getPassword());
+
+        if (memberMapper.existsActiveByEmail(request.getEmail())) {
             throw BusinessException.conflict("이미 가입된 이메일입니다.");
         }
 
-        Map<String, Object> member = new HashMap<>();
-        member.put("email", request.getEmail());
-        member.put("password", passwordEncoder.encode(request.getPassword()));
-        member.put("name", request.getName());
-        member.put("phone", request.getPhone());
-        member.put("provider", "LOCAL");
-        member.put("providerId", null);
-        member.put("emailVerified", "N");
-        member.put("role", "USER");
-        member.put("profileImg", null);
-        member.put("zipCode", request.getZipCode());
-        member.put("address", request.getAddress());
-        member.put("addressDetail", request.getAddressDetail());
-        memberMapper.insert(member); // member_id는 AUTO_INCREMENT 생성
+        // 신규 가입과 탈퇴 회원 복구의 DB 변경을 지갑·알림 설정과 함께 하나의 트랜잭션으로 처리한다.
+        Map<String, Object> inactiveMember = memberMapper.findLatestInactiveByEmailForUpdate(request.getEmail());
+        SignupResponse response;
+        if (inactiveMember != null) {
+            response = restoreMember(request, encodedPassword, inactiveMember);
+        } else {
+            // 복구 잠금을 기다린 동안 다른 요청이 활성화했을 수 있으므로 삽입 전 한 번 더 확인한다.
+            if (memberMapper.existsActiveByEmail(request.getEmail())) {
+                throw BusinessException.conflict("이미 가입된 이메일입니다.");
+            }
+            response = createMember(request, encodedPassword);
+        }
 
-        // 인증코드 생성 및 Redis 저장 (5분 TTL)
-        String code = String.format("%06d", ThreadLocalRandom.current().nextInt(1000000));
-        redisTemplate.opsForValue().set("verify:" + request.getEmail(), code, 5, TimeUnit.MINUTES);
-
-        // 인증 이메일 발송
-        emailService.sendVerificationEmail(request.getEmail(), code);
-        log.info("회원가입 접수 완료 - email: {}", request.getEmail());
+        registerCompletedKeyCleanup(completedKey, completedValue);
+        return response;
     }
 
     @Override
@@ -289,6 +296,157 @@ public class AuthServiceImpl implements AuthService {
         // soft delete — 실제 삭제 대신 비활성화 등 처리
         log.info("회원 탈퇴 처리 - memberId: {}", memberId);
         redisTemplate.delete("refresh:" + memberId);
+    }
+
+    private void validateCompletedVerification(String completedValue, String requestedCode) {
+        if (completedValue == null) {
+            throw new BusinessException(HttpStatus.BAD_REQUEST,
+                    "이메일 인증이 완료되지 않았거나 만료되었습니다.");
+        }
+
+        String[] parts = completedValue.split("\\|", -1);
+        if (parts.length != 2 || !isUuid(parts[0]) || !parts[1].matches("\\d{6}")) {
+            throw new BusinessException(HttpStatus.BAD_REQUEST,
+                    "이메일 인증이 완료되지 않았거나 만료되었습니다.");
+        }
+        if (!parts[1].equals(requestedCode)) {
+            throw new BusinessException(HttpStatus.BAD_REQUEST, "인증번호가 일치하지 않습니다.");
+        }
+    }
+
+    private SignupResponse createMember(SignupRequest request, String encodedPassword) {
+        Map<String, Object> member = memberValues(request, encodedPassword);
+        try {
+            memberMapper.insert(member);
+        } catch (DuplicateKeyException e) {
+            // 사전 조회 후에도 동시 삽입이 가능하므로 DB unique 충돌을 일관된 409로 변환하고 전체 DB 작업을 rollback한다.
+            throw BusinessException.conflict("이미 가입된 이메일입니다.");
+        }
+
+        Long memberId = generatedMemberId(member);
+        Map<String, Object> wallet = new HashMap<>();
+        wallet.put("memberId", memberId);
+        wallet.put("walletType", "MAIN");
+        wallet.put("balance", 0);
+        walletMapper.insert(wallet);
+
+        notificationSettingMapper.insert(notificationSettingValues(memberId, request.isMarketing()));
+        return new SignupResponse(memberId, request.getEmail(), request.getName());
+    }
+
+    private SignupResponse restoreMember(
+            SignupRequest request, String encodedPassword, Map<String, Object> inactiveMember) {
+        String provider = String.valueOf(value(inactiveMember, "provider", "provider"));
+        if (!"LOCAL".equals(provider)) {
+            throw BusinessException.conflict("탈퇴한 카카오 계정은 LOCAL 회원으로 복구할 수 없습니다.");
+        }
+
+        // DB에 기록된 탈퇴 시각과 같은 DB 시계를 사용해 경계 오차를 막고, 정확히 30일인 시점까지 복구를 허용한다.
+        if (!booleanValue(inactiveMember, "recoverable_within_30_days", "recoverableWithin30Days")) {
+            // 30일을 초과한 회원은 이번 회원가입에서 삭제하거나 신규 회원으로 생성하지 않는다.
+            throw BusinessException.conflict("탈퇴 후 30일이 지난 회원은 현재 복구할 수 없습니다.");
+        }
+
+        Long memberId = numberValue(inactiveMember, "member_id", "memberId").longValue();
+        Map<String, Object> restored = memberValues(request, encodedPassword);
+        restored.put("memberId", memberId);
+        try {
+            if (memberMapper.restoreLocalMember(restored) != 1) {
+                throw BusinessException.conflict("이미 활성화된 회원입니다.");
+            }
+        } catch (DuplicateKeyException e) {
+            // 잠금 대기 중 다른 계정이 활성화된 경우에도 DB unique 충돌을 409로 일관되게 응답한다.
+            throw BusinessException.conflict("이미 가입된 이메일입니다.");
+        }
+
+        // 레거시 회원의 누락 행은 기본값으로 보완하되, 기존 행이 있으면 사용자 선택을 보존하고 마케팅 동의만 최신 요청으로 반영한다.
+        // 조회 후 update/insert로 분기하지 않고 upsert 하나로 처리해 동시 요청 사이의 간격을 제거한다.
+        notificationSettingMapper.upsertForRecovery(memberId, request.isMarketing());
+        return new SignupResponse(memberId, request.getEmail(), request.getName());
+    }
+
+    private Map<String, Object> memberValues(SignupRequest request, String encodedPassword) {
+        Map<String, Object> member = new HashMap<>();
+        member.put("email", request.getEmail());
+        member.put("password", encodedPassword);
+        member.put("name", request.getName());
+        member.put("phone", request.getPhone());
+        member.put("provider", "LOCAL");
+        member.put("providerId", null);
+        member.put("emailVerified", "Y");
+        member.put("role", "USER");
+        member.put("profileImg", null);
+        member.put("zipCode", request.getZipCode());
+        member.put("address", request.getAddress());
+        member.put("addressDetail", request.getAddressDetail());
+        return member;
+    }
+
+    private Map<String, Object> notificationSettingValues(Long memberId, boolean marketingEnabled) {
+        Map<String, Object> setting = new HashMap<>();
+        setting.put("memberId", memberId);
+        setting.put("paymentEnabled", true);
+        setting.put("recurringPaymentEnabled", true);
+        setting.put("familyShareEnabled", true);
+        setting.put("communityEnabled", true);
+        setting.put("marketingEnabled", marketingEnabled);
+        return setting;
+    }
+
+    private void registerCompletedKeyCleanup(String completedKey, String completedValue) {
+        if (!TransactionSynchronizationManager.isSynchronizationActive()) {
+            log.warn("트랜잭션 동기화가 비활성 상태여서 이메일 인증 완료 키 정리를 등록하지 못했습니다.");
+            return;
+        }
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCommit() {
+                try {
+                    // DB commit 후에만 소비하고, Lua 비교 삭제로 그사이 새로 완료된 인증 값은 보호한다.
+                    redisTemplate.execute(
+                            COMPARE_AND_DELETE_SCRIPT, List.of(completedKey), completedValue);
+                } catch (RuntimeException e) {
+                    // DB는 이미 commit되었으므로 성공 응답을 바꾸지 않고, 삭제되지 않은 키는 300초 TTL 만료에 맡긴다.
+                    log.warn("DB 커밋 후 이메일 인증 완료 키 정리에 실패했습니다. TTL 만료를 기다립니다.", e);
+                }
+            }
+        });
+    }
+
+    private Long generatedMemberId(Map<String, Object> member) {
+        Object memberId = member.get("memberId");
+        if (!(memberId instanceof Number)) {
+            throw new IllegalStateException("생성된 회원 ID를 확인할 수 없습니다.");
+        }
+        return ((Number) memberId).longValue();
+    }
+
+    private boolean isUuid(String value) {
+        try {
+            return UUID.fromString(value).toString().equalsIgnoreCase(value);
+        } catch (IllegalArgumentException e) {
+            return false;
+        }
+    }
+
+    private Object value(Map<String, Object> values, String snakeCaseKey, String camelCaseKey) {
+        return values.containsKey(snakeCaseKey) ? values.get(snakeCaseKey) : values.get(camelCaseKey);
+    }
+
+    private Number numberValue(Map<String, Object> values, String snakeCaseKey, String camelCaseKey) {
+        Object result = value(values, snakeCaseKey, camelCaseKey);
+        if (!(result instanceof Number)) {
+            throw new IllegalStateException("회원 ID를 확인할 수 없습니다.");
+        }
+        return (Number) result;
+    }
+
+    private boolean booleanValue(Map<String, Object> values, String snakeCaseKey, String camelCaseKey) {
+        Object result = value(values, snakeCaseKey, camelCaseKey);
+        if (result instanceof Boolean) {
+            return (Boolean) result;
+        }
+        return result instanceof Number && ((Number) result).intValue() == 1;
     }
 
     private TokenResponse generateTokens(String memberId, String role) {

@@ -3,6 +3,7 @@ package com.aewol.domain.auth.controller;
 import com.aewol.common.response.ApiResponse;
 import com.aewol.domain.auth.dto.LoginRequest;
 import com.aewol.domain.auth.dto.SignupRequest;
+import com.aewol.domain.auth.dto.SignupResponse;
 import com.aewol.domain.auth.dto.SignupEmailCodeRequest;
 import com.aewol.domain.auth.dto.SignupEmailCodeResponse;
 import com.aewol.domain.auth.dto.SignupEmailVerificationRequest;
@@ -44,9 +45,10 @@ public class AuthController {
 
     @Operation(summary = "회원가입")
     @PostMapping("/signup")
-    public ResponseEntity<ApiResponse<Void>> signup(@Valid @RequestBody SignupRequest request) {
-        authService.signup(request);
-        return ResponseEntity.status(HttpStatus.CREATED).body(ApiResponse.created(null));
+    public ResponseEntity<ApiResponse<SignupResponse>> signup(@Valid @RequestBody SignupRequest request) {
+        SignupResponse result = authService.signup(request);
+        return ResponseEntity.status(HttpStatus.CREATED)
+                .body(ApiResponse.created("회원가입이 완료되었습니다.", result));
     }
 
     @Operation(summary = "이메일 인증 확인")

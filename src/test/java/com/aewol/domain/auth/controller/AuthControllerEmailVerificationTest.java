@@ -4,6 +4,8 @@ import com.aewol.common.response.ApiResponse;
 import com.aewol.domain.auth.dto.SignupEmailCodeRequest;
 import com.aewol.domain.auth.dto.SignupEmailCodeResponse;
 import com.aewol.domain.auth.dto.SignupEmailVerificationRequest;
+import com.aewol.domain.auth.dto.SignupRequest;
+import com.aewol.domain.auth.dto.SignupResponse;
 import com.aewol.domain.auth.service.AuthService;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -54,5 +56,24 @@ class AuthControllerEmailVerificationTest {
         assertTrue(json.has("result"));
         assertTrue(json.get("result").isNull());
         verify(authService).verifySignupEmailCode(request);
+    }
+
+    @Test
+    void signupReturnsCreatedResponseWithoutTokens() throws Exception {
+        SignupRequest request = new SignupRequest();
+        SignupResponse response = new SignupResponse(1L, "user@example.com", "홍길동");
+        when(authService.signup(request)).thenReturn(response);
+
+        ResponseEntity<ApiResponse<SignupResponse>> entity = controller.signup(request);
+        JsonNode json = objectMapper.readTree(objectMapper.writeValueAsString(entity.getBody()));
+
+        assertEquals(201, entity.getStatusCodeValue());
+        assertEquals(201, json.get("status").asInt());
+        assertEquals("회원가입이 완료되었습니다.", json.get("message").asText());
+        assertEquals(1L, json.get("result").get("userId").asLong());
+        assertEquals("user@example.com", json.get("result").get("email").asText());
+        assertEquals("홍길동", json.get("result").get("name").asText());
+        assertTrue(!json.get("result").has("accessToken"));
+        verify(authService).signup(request);
     }
 }
