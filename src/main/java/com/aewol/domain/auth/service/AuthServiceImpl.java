@@ -395,7 +395,7 @@ public class AuthServiceImpl implements AuthService {
 
     private void registerCompletedKeyCleanup(String completedKey, String completedValue) {
         if (!TransactionSynchronizationManager.isSynchronizationActive()) {
-            log.warn("트랜잭션 동기화가 비활성 상태이므로 이메일 인증 완료 키를 삭제하지 않습니다. emailKey={}", completedKey);
+            log.warn("트랜잭션 동기화가 비활성 상태여서 이메일 인증 완료 키 정리를 등록하지 못했습니다.");
             return;
         }
         TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
@@ -407,7 +407,7 @@ public class AuthServiceImpl implements AuthService {
                             COMPARE_AND_DELETE_SCRIPT, List.of(completedKey), completedValue);
                 } catch (RuntimeException e) {
                     // DB는 이미 commit되었으므로 성공 응답을 바꾸지 않고, 삭제되지 않은 키는 300초 TTL 만료에 맡긴다.
-                    log.warn("회원가입 commit 후 이메일 인증 완료 키 삭제에 실패했습니다. key={}", completedKey, e);
+                    log.warn("DB 커밋 후 이메일 인증 완료 키 정리에 실패했습니다. TTL 만료를 기다립니다.", e);
                 }
             }
         });
