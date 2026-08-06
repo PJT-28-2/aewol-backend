@@ -7,6 +7,6 @@ import java.util.Map;
 
 @Mapper
 public interface EmergencyMapper {
-    List<Map<String, Object>> findNearby(@Param("lat") double lat, @Param("lng") double lng, @Param("radiusKm") double radiusKm);
-    List<Map<String, Object>> find24hHospitals();
+    List<Map<String, Object>> findNearby(@Param("lat") double lat, @Param("lng") double lng,
+                                          @Param("radiusKm") double radiusKm, @Param("is24h") boolean is24h);
 }

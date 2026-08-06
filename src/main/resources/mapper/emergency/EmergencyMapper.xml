@@ -11,12 +11,11 @@
                )) AS distance_km
         FROM emergency_hospital
         WHERE latitude IS NOT NULL AND longitude IS NOT NULL
+        <if test="is24h">
+            AND is_24h = 1
+        </if>
         HAVING distance_km &lt;= #{radiusKm}
         ORDER BY distance_km
-    </select>
-
-    <select id="find24hHospitals" resultType="map">
-        SELECT * FROM emergency_hospital WHERE is_24h = 1
     </select>
 
 </mapper>
