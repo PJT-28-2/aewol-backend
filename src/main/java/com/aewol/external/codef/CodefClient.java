@@ -153,6 +153,34 @@ public class CodefClient {
         }
     }
 
+    /**
+     * 토큰 응답은 계좌/이체 API 응답과 달리 일반 JSON일 수 있어서, URL 디코딩을 먼저
+     * 걸면 access_token 안의 '+'가 공백으로 바뀌거나 잘못된 '%' 시퀀스에서 디코딩
+     * 자체가 실패할 수 있다(CodeRabbit 지적, 2026-08-06). 그래서 순수 JSON 파싱을
+     * 먼저 시도하고, access_token을 못 찾았을 때만 URL 디코딩을 재시도한다.
+     */
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> parseTokenResponse(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return null;
+        }
+        try {
+            Map<String, Object> parsed = objectMapper.readValue(raw, Map.class);
+            if (parsed.get("access_token") != null) {
+                return parsed;
+            }
+        } catch (Exception e) {
+            // 순수 JSON으로 못 읽으면 아래에서 URL 디코딩 후 재시도
+        }
+        try {
+            String decoded = URLDecoder.decode(raw, StandardCharsets.UTF_8);
+            return objectMapper.readValue(decoded, Map.class);
+        } catch (Exception e) {
+            log.error("CODEF 토큰 응답 파싱 실패 - raw: {}", raw, e);
+            throw new BusinessException(HttpStatus.BAD_GATEWAY, "은행 인증 토큰 응답을 처리하지 못했어요");
+        }
+    }
+
     @SuppressWarnings("unchecked")
     private String extractDataField(Map<String, Object> response, String field) {
         Object data = response.get("data");
@@ -203,8 +231,8 @@ public class CodefClient {
 
         // CODEF AI 예제코드는 토큰 응답은 디코딩 없이 바로 파싱하지만(extractToken),
         // 공식 가이드 예제는 토큰 응답도 URL 디코딩을 거친다 — 두 예제가 서로 다르다.
-        // 일반 텍스트에 URL 디코딩을 걸어도 안전(무해)하므로 안전하게 항상 디코딩한다.
-        Map<String, Object> response = decodeJson(rawResponse);
+        // parseTokenResponse가 순수 JSON을 먼저 시도하고 실패할 때만 디코딩을 재시도한다.
+        Map<String, Object> response = parseTokenResponse(rawResponse);
         if (response == null || response.get("access_token") == null) {
             throw new BusinessException(HttpStatus.BAD_GATEWAY, "은행 인증 토큰 발급에 실패했어요");
         }
