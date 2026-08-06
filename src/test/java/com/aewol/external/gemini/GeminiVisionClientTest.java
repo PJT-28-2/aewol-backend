@@ -104,6 +104,7 @@ class GeminiVisionClientTest {
         String result = client.extractReceiptData(imageBytes, "image/jpeg");
 
         assertEquals(extractedJson, result);
+        mockServer.verify();
     }
 
     @Test
@@ -119,6 +120,7 @@ class GeminiVisionClientTest {
         String result = client.extractReceiptData(imageBytes, "image/jpeg");
 
         assertEquals("{}", result);
+        mockServer.verify();
     }
 
     @Test
@@ -132,5 +134,20 @@ class GeminiVisionClientTest {
         String result = client.extractReceiptData(imageBytes, "image/jpeg");
 
         assertEquals("{}", result);
+        mockServer.verify();
+    }
+
+    @Test
+    @DisplayName("응답 text가 JSON 객체가 아닌 배열이면 빈 JSON을 반환한다")
+    void should_returnEmptyJson_whenResponseTextIsJsonArray() throws Exception {
+        byte[] imageBytes = "dummy-image".getBytes(StandardCharsets.UTF_8);
+
+        mockServer.expect(requestToUri(ENDPOINT_PREFIX + "?key=test-key"))
+                .andRespond(withSuccess(geminiResponseWithText("[]"), MediaType.APPLICATION_JSON));
+
+        String result = client.extractReceiptData(imageBytes, "image/jpeg");
+
+        assertEquals("{}", result);
+        mockServer.verify();
     }
 }

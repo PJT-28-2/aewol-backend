@@ -96,7 +96,11 @@ public class GeminiVisionClient {
         }
 
         String extracted = stripCodeFence(textNode.asText());
-        objectMapper.readTree(extracted); // Gemini가 JSON이 아닌 텍스트로 응답한 경우 검증에서 걸러내 "{}" 처리되도록 함
+        JsonNode extractedNode = objectMapper.readTree(extracted);
+        if (!extractedNode.isObject()) {
+            // Gemini가 JSON 객체가 아닌 값(배열/문자열/null 등)으로 응답한 경우도 "{}" 처리되도록 함
+            throw new IllegalStateException("Gemini 응답이 JSON 객체가 아닙니다: " + extracted);
+        }
         return extracted;
     }
 
