@@ -1,13 +1,22 @@
 package com.aewol.domain.pet.service;
 
 import com.aewol.common.exception.BusinessException;
+import com.aewol.common.util.FileUtil;
 import com.aewol.domain.pet.dto.PetCreateRequest;
+import com.aewol.domain.pet.dto.PetDocumentResponse;
 import com.aewol.domain.pet.dto.PetResponse;
+import com.aewol.domain.pet.mapper.PetDocumentMapper;
 import com.aewol.domain.pet.mapper.PetMapper;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
+import org.springframework.web.multipart.MultipartFile;
 
+import java.io.IOException;
+import java.time.LocalDate;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -15,7 +24,17 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class PetServiceImpl implements PetService {
 
+    private static final String VACCINATION = "VACCINATION";
+    private static final String DOCUMENT_SUB_DIR = "pet-documents";
+    private static final Map<String, Set<String>> ALLOWED_FILE_TYPES = Map.of(
+            "image/jpeg", Set.of("jpg", "jpeg"),
+            "image/png", Set.of("png"),
+            "application/pdf", Set.of("pdf")
+    );
+
     private final PetMapper petMapper;
+    private final PetDocumentMapper petDocumentMapper;
+    private final FileUtil fileUtil;
 
     @Override
     @Transactional
@@ -79,6 +98,98 @@ public class PetServiceImpl implements PetService {
     public void deactivatePet(String memberId, String petId) {
         assertOwner(memberId, petId);
         petMapper.deactivate(petId);
+    }
+
+    @Override
+    @Transactional
+    public PetDocumentResponse uploadVaccinationDocument(String memberId, String petId,
+                                                          MultipartFile file, LocalDate issuedDate) {
+        assertOwner(memberId, petId);
+        String storageExtension = validateDocument(file);
+        Map<String, Object> existing = petDocumentMapper.findByPetIdAndType(petId, VACCINATION);
+        String newFileUrl;
+        try {
+            newFileUrl = fileUtil.upload(file, DOCUMENT_SUB_DIR, storageExtension);
+        } catch (IOException e) {
+            throw new BusinessException(HttpStatus.INTERNAL_SERVER_ERROR, "파일 저장에 실패했습니다.");
+        }
+
+        Map<String, Object> document = new HashMap<>();
+        document.put("petId", petId);
+        document.put("docName", "접종증명서");
+        document.put("docType", VACCINATION);
+        document.put("fileUrl", newFileUrl);
+        document.put("issuedDate", issuedDate);
+
+        try {
+            if (existing == null) {
+                petDocumentMapper.insert(document);
+            } else {
+                document.put("docId", existing.get("doc_id"));
+                petDocumentMapper.update(document);
+            }
+        } catch (RuntimeException e) {
+            deleteQuietly(newFileUrl);
+            throw e;
+        }
+
+        String oldFileUrl = existing == null ? null : (String) existing.get("file_url");
+        arrangeFileCleanup(newFileUrl, oldFileUrl);
+        return toDocumentResponse(document);
+    }
+
+    private String validateDocument(MultipartFile file) {
+        if (file == null || file.isEmpty()) {
+            throw new BusinessException("업로드할 파일이 없습니다.");
+        }
+        String contentType = file.getContentType() == null ? "" : file.getContentType().toLowerCase(Locale.ROOT);
+        Set<String> extensions = ALLOWED_FILE_TYPES.get(contentType);
+        String originalFilename = file.getOriginalFilename();
+        String extension = originalFilename != null && originalFilename.contains(".")
+                ? originalFilename.substring(originalFilename.lastIndexOf('.') + 1).toLowerCase(Locale.ROOT)
+                : "";
+        if (extensions == null || !extensions.contains(extension)) {
+            throw new BusinessException("JPEG, PNG, PDF 파일만 업로드할 수 있습니다.");
+        }
+        return "image/jpeg".equals(contentType) ? "jpg" : extension;
+    }
+
+    private void arrangeFileCleanup(String newFileUrl, String oldFileUrl) {
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    if (oldFileUrl != null) deleteQuietly(oldFileUrl);
+                }
+
+                @Override
+                public void afterCompletion(int status) {
+                    if (status != STATUS_COMMITTED) deleteQuietly(newFileUrl);
+                }
+            });
+        } else if (oldFileUrl != null) {
+            deleteQuietly(oldFileUrl);
+        }
+    }
+
+    private void deleteQuietly(String fileUrl) {
+        try {
+            fileUtil.delete(fileUrl);
+        } catch (IOException ignored) {
+            // 파일 정리 실패가 이미 반영된 DB 트랜잭션을 되돌리지는 않는다.
+        }
+    }
+
+    private PetDocumentResponse toDocumentResponse(Map<String, Object> document) {
+        Object issuedDate = document.get("issuedDate");
+        Object docId = document.get("docId");
+        return PetDocumentResponse.builder()
+                .docId(docId == null ? null : String.valueOf(docId))
+                .petId(String.valueOf(document.get("petId")))
+                .docType(String.valueOf(document.get("docType")))
+                .fileUrl((String) document.get("fileUrl"))
+                .issuedDate(issuedDate == null ? null : issuedDate.toString())
+                .build();
     }
 
     private void assertOwner(String memberId, String petId) {

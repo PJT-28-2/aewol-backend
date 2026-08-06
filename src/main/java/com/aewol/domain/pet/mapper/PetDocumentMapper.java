@@ -12,4 +12,9 @@ public interface PetDocumentMapper {
     void insert(Map<String, Object> document);
 
     List<Map<String, Object>> findByPetId(@Param("petId") String petId);
+
+    Map<String, Object> findByPetIdAndType(@Param("petId") String petId,
+                                           @Param("docType") String docType);
+
+    void update(Map<String, Object> document);
 }

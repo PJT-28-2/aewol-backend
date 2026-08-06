@@ -2,6 +2,7 @@ package com.aewol.domain.pet.controller;
 
 import com.aewol.common.response.ApiResponse;
 import com.aewol.domain.pet.dto.PetCreateRequest;
+import com.aewol.domain.pet.dto.PetDocumentResponse;
 import com.aewol.domain.pet.dto.PetResponse;
 import com.aewol.domain.pet.service.PetService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -10,9 +11,13 @@ import javax.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.format.annotation.DateTimeFormat;
+import org.springframework.http.MediaType;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
 
+import java.time.LocalDate;
 import java.util.List;
 
 @Tag(name = "Pet", description = "반려동물 API")
@@ -59,5 +64,18 @@ public class PetController {
                                                         @PathVariable String petId) {
         petService.deactivatePet(memberId, petId);
         return ResponseEntity.ok(ApiResponse.success());
+    }
+
+    @Operation(summary = "접종증명서 업로드")
+    @PostMapping(value = "/{petId}/documents", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ResponseEntity<ApiResponse<PetDocumentResponse>> uploadVaccinationDocument(
+            @AuthenticationPrincipal String memberId,
+            @PathVariable String petId,
+            @RequestParam("file") MultipartFile file,
+            @RequestParam(value = "issuedDate", required = false)
+            @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate issuedDate) {
+        return ResponseEntity.status(HttpStatus.CREATED)
+                .body(ApiResponse.created(
+                        petService.uploadVaccinationDocument(memberId, petId, file, issuedDate)));
     }
 }

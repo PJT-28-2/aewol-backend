@@ -12,4 +12,17 @@
         SELECT * FROM pet_document WHERE pet_id = #{petId} ORDER BY created_at DESC
     </select>
 
+    <select id="findByPetIdAndType" resultType="map">
+        SELECT * FROM pet_document
+        WHERE pet_id = #{petId} AND doc_type = #{docType}
+        ORDER BY created_at DESC
+        LIMIT 1
+    </select>
+
+    <update id="update" parameterType="map">
+        UPDATE pet_document
+        SET doc_name = #{docName}, file_url = #{fileUrl}, issued_date = #{issuedDate}
+        WHERE doc_id = #{docId}
+    </update>
+
 </mapper>
