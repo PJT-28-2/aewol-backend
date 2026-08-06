@@ -33,7 +33,7 @@ public class PetServiceImpl implements PetService {
         pet.put("medicalHistory", request.getMedicalHistory());
         petMapper.insert(pet); // pet_id AUTO_INCREMENT
 
-        return getPet(String.valueOf(pet.get("petId")));
+        return getPet(memberId, String.valueOf(pet.get("petId")));
     }
 
     @Override
@@ -44,20 +44,22 @@ public class PetServiceImpl implements PetService {
     }
 
     @Override
-    public PetResponse getPet(String petId) {
+    @Transactional(readOnly = true)
+    public PetResponse getPet(String memberId, String petId) {
         Map<String, Object> pet = petMapper.findById(petId);
         if (pet == null) {
             throw BusinessException.notFound("반려동물을 찾을 수 없습니다.");
+        }
+        if (!isOwner(memberId, pet)) {
+            throw BusinessException.forbidden("반려동물을 조회할 권한이 없습니다.");
         }
         return toResponse(pet);
     }
 
     @Override
     @Transactional
-    public void updatePet(String petId, PetCreateRequest request) {
-        if (petMapper.findById(petId) == null) {
-            throw BusinessException.notFound("반려동물을 찾을 수 없습니다.");
-        }
+    public void updatePet(String memberId, String petId, PetCreateRequest request) {
+        assertOwner(memberId, petId);
         Map<String, Object> pet = new HashMap<>();
         pet.put("petId", petId);
         pet.put("name", request.getName());
@@ -74,11 +76,21 @@ public class PetServiceImpl implements PetService {
 
     @Override
     @Transactional
-    public void deactivatePet(String petId) {
-        if (petMapper.findById(petId) == null) {
-            throw BusinessException.notFound("반려동물을 찾을 수 없습니다.");
-        }
+    public void deactivatePet(String memberId, String petId) {
+        assertOwner(memberId, petId);
         petMapper.deactivate(petId);
+    }
+
+    private void assertOwner(String memberId, String petId) {
+        Map<String, Object> pet = petMapper.findById(petId);
+        if (pet == null) throw BusinessException.notFound("반려동물을 찾을 수 없습니다.");
+        if (!isOwner(memberId, pet)) {
+            throw BusinessException.forbidden("대표 보호자만 이 작업을 할 수 있습니다.");
+        }
+    }
+
+    private boolean isOwner(String memberId, Map<String, Object> pet) {
+        return Objects.equals(memberId, String.valueOf(pet.get("member_id")));
     }
 
     private PetResponse toResponse(Map<String, Object> pet) {
