@@ -29,11 +29,6 @@ public class GroupPurchaseServiceImpl implements GroupPurchaseService {
 
     private static final List<String> ALLOWED_IMAGE_EXTENSIONS = List.of("jpg", "jpeg", "png", "webp");
 
-    private static final Map<String, String> STATUS_TO_KOREAN = Map.of(
-            "OPEN", "진행중",
-            "COMPLETED", "마감(성공)",
-            "CLOSED", "마감(미달)"
-    );
     private static final Map<String, String> KOREAN_TO_STATUS = Map.of(
             "진행중", "OPEN",
             "마감(성공)", "COMPLETED",
@@ -43,11 +38,22 @@ public class GroupPurchaseServiceImpl implements GroupPurchaseService {
     private final GroupPurchaseMapper groupPurchaseMapper;
     private final FileUtil fileUtil;
 
+    private static String toDbStatus(String status) {
+        if (status == null || status.isBlank()) {
+            return null;
+        }
+        String dbStatus = KOREAN_TO_STATUS.get(status);
+        if (dbStatus == null) {
+            throw new BusinessException("지원하지 않는 상태 값입니다: " + status);
+        }
+        return dbStatus;
+    }
+
     @Override
     public GroupPurchaseListResponse list(String status, String keyword, String category, int page, int size) {
         int safePage = Math.max(page, 0);
         int safeSize = size <= 0 ? 10 : size;
-        String dbStatus = status == null ? null : KOREAN_TO_STATUS.get(status);
+        String dbStatus = toDbStatus(status);
 
         List<Map<String, Object>> rows = groupPurchaseMapper.findList(
                 dbStatus, keyword, category, safeSize + 1, safePage * safeSize);
@@ -150,20 +156,32 @@ public class GroupPurchaseServiceImpl implements GroupPurchaseService {
 
     private GroupPurchaseListItemResponse toListItemResponse(Map<String, Object> gp) {
         LocalDateTime deadline = toLocalDateTime(gp.get("deadline"));
+        Integer currentQuantity = toInt(gp.get("current_quantity"));
+        Integer targetQuantity = toInt(gp.get("target_quantity"));
         return GroupPurchaseListItemResponse.builder()
                 .id(toLong(gp.get("gp_id")))
                 .memberId(toLong(gp.get("member_id")))
                 .productName((String) gp.get("product_name"))
                 .category((String) gp.get("category"))
-                .status(STATUS_TO_KOREAN.getOrDefault(gp.get("status"), (String) gp.get("status")))
-                .currentQuantity(toInt(gp.get("current_quantity")))
-                .targetQuantity(toInt(gp.get("target_quantity")))
+                .status(computeDisplayStatus(deadline, currentQuantity, targetQuantity))
+                .currentQuantity(currentQuantity)
+                .targetQuantity(targetQuantity)
                 .dDay(toDDay(deadline))
                 .badgeText(toBadgeText(toDecimal(gp.get("unit_price")), toDecimal(gp.get("group_price"))))
                 // TODO: 로그인 유저의 실제 참여 여부(group_purchase_participant 조회)는 별도 이슈에서 처리 — 지금은 스텁
                 .isParticipating(false)
                 .createdAt(toLocalDateTime(gp.get("created_at")))
                 .build();
+    }
+
+    /** 저장된 status 컬럼이 아니라 마감 시각·목표 수량 달성 여부로 화면 표시 상태를 계산한다. SQL 필터(findList)와 동일한 기준을 사용해야 한다. */
+    private static String computeDisplayStatus(LocalDateTime deadline, Integer currentQuantity, Integer targetQuantity) {
+        if (deadline == null || !deadline.isBefore(LocalDateTime.now())) {
+            return "진행중";
+        }
+        int current = currentQuantity == null ? 0 : currentQuantity;
+        int target = targetQuantity == null ? 0 : targetQuantity;
+        return current >= target ? "마감(성공)" : "마감(미달)";
     }
 
     private static String toDDay(LocalDateTime deadline) {

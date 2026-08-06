@@ -177,16 +177,73 @@ class GroupPurchaseServiceImplTest {
         assertDoesNotThrow(() -> service.list(null, null, null, 0, 10));
     }
 
+    @Test
+    @DisplayName("매핑되지 않은 상태 값이면 필터를 생략하지 않고 예외를 던진다")
+    void should_throwException_when_statusFilterIsUnsupported() {
+        GroupPurchaseServiceImpl service = service();
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.list("invalid", null, null, 0, 10));
+
+        assertEquals("지원하지 않는 상태 값입니다: invalid", exception.getMessage());
+        verifyNoInteractions(groupPurchaseMapper);
+    }
+
+    @Test
+    @DisplayName("마감 전이면 저장된 status와 무관하게 진행중으로 계산한다")
+    void should_returnInProgress_when_deadlineNotYetPassed() {
+        GroupPurchaseServiceImpl service = service();
+        LocalDateTime futureDeadline = LocalDateTime.now().plusDays(3);
+        when(groupPurchaseMapper.findList(isNull(), isNull(), isNull(), eq(11), eq(0)))
+                .thenReturn(List.of(listRow(1L, "OPEN", futureDeadline, 30000, 25000, 5, 10)));
+
+        GroupPurchaseListResponse result = service.list(null, null, null, 0, 10);
+
+        assertEquals("진행중", result.getItems().get(0).getStatus());
+    }
+
+    @Test
+    @DisplayName("마감 후 목표 수량을 채웠으면 저장된 status가 OPEN이어도 마감(성공)으로 계산한다")
+    void should_returnClosedSuccess_when_deadlinePassedAndTargetReached() {
+        GroupPurchaseServiceImpl service = service();
+        LocalDateTime pastDeadline = LocalDateTime.now().minusDays(1);
+        when(groupPurchaseMapper.findList(isNull(), isNull(), isNull(), eq(11), eq(0)))
+                .thenReturn(List.of(listRow(1L, "OPEN", pastDeadline, 30000, 25000, 10, 10)));
+
+        GroupPurchaseListResponse result = service.list(null, null, null, 0, 10);
+
+        assertEquals("마감(성공)", result.getItems().get(0).getStatus());
+    }
+
+    @Test
+    @DisplayName("마감 후 목표 수량을 못 채웠으면 저장된 status가 OPEN이어도 마감(미달)으로 계산한다")
+    void should_returnClosedFail_when_deadlinePassedAndTargetNotReached() {
+        GroupPurchaseServiceImpl service = service();
+        LocalDateTime pastDeadline = LocalDateTime.now().minusDays(1);
+        when(groupPurchaseMapper.findList(isNull(), isNull(), isNull(), eq(11), eq(0)))
+                .thenReturn(List.of(listRow(1L, "OPEN", pastDeadline, 30000, 25000, 4, 10)));
+
+        GroupPurchaseListResponse result = service.list(null, null, null, 0, 10);
+
+        assertEquals("마감(미달)", result.getItems().get(0).getStatus());
+    }
+
     private Map<String, Object> listRow(Long gpId, String status, LocalDateTime deadline,
                                           int unitPrice, int groupPrice) {
+        return listRow(gpId, status, deadline, unitPrice, groupPrice, 0, 10);
+    }
+
+    private Map<String, Object> listRow(Long gpId, String status, LocalDateTime deadline,
+                                          int unitPrice, int groupPrice,
+                                          int currentQuantity, int targetQuantity) {
         Map<String, Object> row = new HashMap<>();
         row.put("gp_id", gpId);
         row.put("member_id", 3L);
         row.put("product_name", "사료 5kg");
         row.put("category", "사료");
         row.put("status", status);
-        row.put("current_quantity", 0);
-        row.put("target_quantity", 10);
+        row.put("current_quantity", currentQuantity);
+        row.put("target_quantity", targetQuantity);
         row.put("unit_price", new BigDecimal(unitPrice));
         row.put("group_price", new BigDecimal(groupPrice));
         row.put("deadline", deadline);
