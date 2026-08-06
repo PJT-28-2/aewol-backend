@@ -1,6 +1,7 @@
 package com.aewol.domain.grouppurchase.controller;
 
 import com.aewol.common.response.ApiResponse;
+import com.aewol.domain.grouppurchase.dto.GroupPurchaseImageUploadResponse;
 import com.aewol.domain.grouppurchase.service.GroupPurchaseService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -9,6 +10,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
 import java.util.List;
 import java.util.Map;
 
@@ -47,5 +49,13 @@ public class GroupPurchaseController {
                                                    @RequestParam(defaultValue = "1") int quantity) {
         groupPurchaseService.join(memberId, gpId, quantity);
         return ResponseEntity.ok(ApiResponse.success());
+    }
+
+    @Operation(summary = "공동구매 이미지 업로드")
+    @PostMapping("/images")
+    public ResponseEntity<ApiResponse<GroupPurchaseImageUploadResponse>> uploadImage(
+            @RequestParam("image") MultipartFile image) {
+        return ResponseEntity.status(HttpStatus.CREATED)
+                .body(ApiResponse.created(groupPurchaseService.uploadImage(image)));
     }
 }
