@@ -102,6 +102,9 @@ dependencies {
     // ── HTTP 클라이언트 (RestTemplate) ────────────────────────────
     implementation("org.apache.httpcomponents:httpclient:4.5.14")
 
+    // ── 좌표계 변환 (EPSG:5174 Bessel TM -> EPSG:4326 WGS84) ───────
+    implementation("org.locationtech.proj4j:proj4j:1.3.0")
+
     // ── Lombok ────────────────────────────────────────────────────
     compileOnly("org.projectlombok:lombok:1.18.36")
     annotationProcessor("org.projectlombok:lombok:1.18.36")

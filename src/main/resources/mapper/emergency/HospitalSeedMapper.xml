@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.aewol.domain.emergency.mapper.HospitalSeedMapper">
+    <!--
+      공공데이터 시딩 전용 upsert. external_mng_no(V4 마이그레이션에서 추가된 unique key)
+      기준으로 재실행 시 갱신된다. location은 GENERATED 컬럼이라 INSERT/UPDATE 대상에서 제외한다.
+      created_at/updated_at은 컬럼 기본값(CURRENT_TIMESTAMP / ON UPDATE CURRENT_TIMESTAMP)에 맡긴다.
+    -->
+    <insert id="upsertHospital" parameterType="map">
+        INSERT INTO emergency_hospital
+            (external_mng_no, name, address, phone, latitude, longitude,
+             is_24h, is_holiday_open, avg_wait_minutes)
+        VALUES
+            (#{externalMngNo}, #{name}, #{address}, #{phone}, #{latitude}, #{longitude},
+             #{is24h}, #{isHolidayOpen}, #{avgWaitMinutes})
+        ON DUPLICATE KEY UPDATE
+            name = VALUES(name),
+            address = VALUES(address),
+            phone = VALUES(phone),
+            latitude = VALUES(latitude),
+            longitude = VALUES(longitude),
+            is_24h = VALUES(is_24h),
+            is_holiday_open = VALUES(is_holiday_open),
+            avg_wait_minutes = VALUES(avg_wait_minutes)
+    </insert>
+</mapper>
