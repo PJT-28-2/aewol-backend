@@ -11,6 +11,8 @@ import com.aewol.domain.account.mapper.AccountMapper;
 import com.aewol.domain.account.mapper.AccountVerificationMapper;
 import com.aewol.external.codef.CodefClient;
 import lombok.RequiredArgsConstructor;
+import org.springframework.core.env.Environment;
+import org.springframework.core.env.Profiles;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -28,6 +30,7 @@ public class AccountServiceImpl implements AccountService {
     private final AccountMapper accountMapper;
     private final AccountVerificationMapper accountVerificationMapper;
     private final CodefClient codefClient;
+    private final Environment environment;
 
     // 프론트(store.requestDepositAuth의 DEPOSIT_AUTH_TIMEOUT_SECONDS)와 동일한 유효시간.
     // 여기서 안 맞추면 프론트는 아직 타이머가 남았다고 보여주는데 서버는 이미
@@ -61,8 +64,15 @@ public class AccountServiceImpl implements AccountService {
         return DepositVerificationResponse.builder()
                 .transactionId(transactionId)
                 .depositorNameLength(depositorName.length())
-                .depositorNameForTest(depositorName)
+                .depositorNameForTest(isTestExposureAllowed() ? depositorName : null)
                 .build();
+    }
+
+    // 운영에서 이 값을 그대로 내려주면 사용자가 실제 입금 내역을 확인하지 않고도
+    // verify-deposit -> confirm을 통과시킬 수 있어 1원 인증의 본인 확인 효력이
+    // 무효화된다(CodeRabbit 지적, 2026-08-06). local/test 프로필에서만 값을 채운다.
+    private boolean isTestExposureAllowed() {
+        return environment.acceptsProfiles(Profiles.of("local", "test"));
     }
 
     @Override
