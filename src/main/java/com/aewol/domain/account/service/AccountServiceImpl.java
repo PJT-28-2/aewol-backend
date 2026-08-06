@@ -113,6 +113,14 @@ public class AccountServiceImpl implements AccountService {
         account.put("isPrimary", request.getIsPrimary() != null && request.getIsPrimary() ? 1 : 0);
         accountMapper.insert(account); // account_id AUTO_INCREMENT로 채워짐
 
+        // useGeneratedKeys가 정상 동작하면 account_id가 채워진다. 못 채우면 아래에서
+        // String.valueOf(null) → "null" 문자열이 되어 findByAccountId가 null을 반환하고
+        // toAccountResponse에서 NPE가 나기 전에 여기서 먼저 막는다(CodeRabbit 지적, 2026-08-06).
+        // @Transactional이라 여기서 던지면 방금 한 insert도 롤백된다.
+        if (account.get("accountId") == null) {
+            throw new BusinessException(HttpStatus.INTERNAL_SERVER_ERROR, "계좌 등록에 실패했어요. 다시 시도해주세요");
+        }
+
         // transaction_id 재사용/이중 등록 방지
         accountVerificationMapper.updateStatus(request.getTransactionId(), "USED");
 
