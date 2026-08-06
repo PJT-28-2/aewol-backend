@@ -9,5 +9,6 @@ import java.util.Map;
 public interface AccountMapper {
     void insert(Map<String, Object> account);
     List<Map<String, Object>> findByMemberId(@Param("memberId") String memberId);
+    Map<String, Object> findByAccountId(@Param("accountId") String accountId);
     void updateStatus(@Param("accountId") String accountId, @Param("status") String status);
 }
