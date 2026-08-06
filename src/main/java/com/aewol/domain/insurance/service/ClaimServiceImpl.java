@@ -31,7 +31,6 @@ public class ClaimServiceImpl implements ClaimService {
     private String uploadDir;
 
     @Override
-    @Transactional
     public ClaimResponse createClaim(String memberId, String petId, MultipartFile receipt) {
         try {
             Path dir = Paths.get(uploadDir, "receipts");
@@ -42,7 +41,7 @@ public class ClaimServiceImpl implements ClaimService {
 
             String imageUrl = "/uploads/receipts/" + filename;
 
-            // Gemini Vision OCR
+            // Gemini Vision OCR (트랜잭션 밖에서 호출 - 응답 지연이 DB 커넥션을 점유하지 않도록)
             String extractedJson = geminiVisionClient.extractReceiptData(
                     receipt.getBytes(), receipt.getContentType());
 
@@ -65,20 +64,27 @@ public class ClaimServiceImpl implements ClaimService {
 
     @Override
     @Transactional
-    public ClaimResponse confirmClaim(String claimId, ClaimResponse correctedData) {
+    public ClaimResponse confirmClaim(String memberId, String claimId, ClaimResponse correctedData) {
         Map<String, Object> existing = insuranceMapper.findClaimById(claimId);
-        if (existing == null) {
+        if (existing == null || !String.valueOf(existing.get("member_id")).equals(memberId)) {
             throw BusinessException.notFound("청구 정보를 찾을 수 없습니다.");
         }
 
         Map<String, Object> update = new HashMap<>();
         update.put("claimId", claimId);
-        update.put("hospitalName", correctedData.getHospitalName());
-        update.put("treatmentDate", correctedData.getTreatmentDate());
-        update.put("totalAmount", correctedData.getTotalAmount());
+        if (correctedData == null) {
+            update.put("hospitalName", existing.get("hospital_name"));
+            update.put("treatmentDate", existing.get("treatment_date"));
+            update.put("totalAmount", existing.get("total_amount"));
+            update.put("extractedData", existing.get("extracted_data"));
+        } else {
+            update.put("hospitalName", correctedData.getHospitalName());
+            update.put("treatmentDate", correctedData.getTreatmentDate());
+            update.put("totalAmount", correctedData.getTotalAmount());
+            update.put("extractedData", existing.get("extracted_data"));
+        }
         update.put("claimStatus", "SUBMITTED");
         update.put("claimDocumentUrl", null);
-        update.put("extractedData", existing.get("extracted_data"));
         insuranceMapper.updateClaim(update);
 
         return toResponse(insuranceMapper.findClaimById(claimId));
@@ -91,10 +97,19 @@ public class ClaimServiceImpl implements ClaimService {
                 .collect(Collectors.toList());
     }
 
+    @Override
+    public ClaimResponse getClaim(String memberId, String claimId) {
+        Map<String, Object> existing = insuranceMapper.findClaimById(claimId);
+        if (existing == null || !String.valueOf(existing.get("member_id")).equals(memberId)) {
+            throw BusinessException.notFound("청구 정보를 찾을 수 없습니다.");
+        }
+        return toResponse(existing);
+    }
+
     private ClaimResponse toResponse(Map<String, Object> claim) {
         return ClaimResponse.builder()
-                .claimId((String) claim.get("claim_id"))
-                .petId((String) claim.get("pet_id"))
+                .claimId(String.valueOf(claim.get("claim_id")))
+                .petId(String.valueOf(claim.get("pet_id")))
                 .hospitalName((String) claim.get("hospital_name"))
                 .treatmentDate(claim.get("treatment_date") != null ? claim.get("treatment_date").toString() : null)
                 .totalAmount(claim.get("total_amount") != null ? (BigDecimal) claim.get("total_amount") : null)

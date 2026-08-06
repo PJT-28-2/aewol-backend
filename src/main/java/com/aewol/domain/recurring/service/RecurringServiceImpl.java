@@ -47,7 +47,13 @@ public class RecurringServiceImpl implements RecurringService {
 
     @Override
     @Transactional
-    public void cancelRecurring(String recurringId) {
+    public void cancelRecurring(String memberId, String recurringId) {
+        Map<String, Object> recurring = recurringMapper.findById(recurringId);
+        if (recurring == null) throw BusinessException.notFound("정기결제를 찾을 수 없습니다.");
+        Map<String, Object> wallet = walletMapper.findById(String.valueOf(recurring.get("wallet_id")));
+        if (wallet == null || !Objects.equals(memberId, String.valueOf(wallet.get("member_id")))) {
+            throw BusinessException.forbidden("정기결제를 해지할 권한이 없습니다.");
+        }
         recurringMapper.deactivate(recurringId);
     }
 

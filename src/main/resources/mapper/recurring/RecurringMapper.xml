@@ -3,6 +3,10 @@
 <mapper namespace="com.aewol.domain.recurring.mapper.RecurringMapper">
     <!-- V4: cycle_days(주기 일수) -> payment_day(매월 며칠, 1~28) -->
 
+    <select id="findById" resultType="map">
+        SELECT * FROM recurring_payment WHERE recurring_id = #{recurringId}
+    </select>
+
     <select id="findByWalletId" resultType="map">
         SELECT * FROM recurring_payment WHERE wallet_id = #{walletId} AND is_active = 1
     </select>

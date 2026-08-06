@@ -6,6 +6,7 @@ import java.util.List;
 
 public interface ClaimService {
     ClaimResponse createClaim(String memberId, String petId, MultipartFile receipt);
-    ClaimResponse confirmClaim(String claimId, ClaimResponse correctedData);
+    ClaimResponse confirmClaim(String memberId, String claimId, ClaimResponse correctedData);
     List<ClaimResponse> getClaims(String memberId);
+    ClaimResponse getClaim(String memberId, String claimId);
 }

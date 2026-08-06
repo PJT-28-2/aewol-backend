@@ -2,8 +2,8 @@ package com.aewol.external.codef;
 
 import com.aewol.common.exception.BusinessException;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.http.HttpEntity;
@@ -24,14 +24,21 @@ import java.util.concurrent.TimeUnit;
 
 @Slf4j
 @Component
-@RequiredArgsConstructor
 public class CodefClient {
 
-    // 필드명을 codefRestTemplate으로 맞춰서 RestTemplateConfig의 동명 빈(타임아웃 설정됨)이
-    // 주입되게 한다 — 같은 타입의 빈이 여러 개일 때 Spring은 필드명과 빈 이름을 매칭한다.
     private final RestTemplate codefRestTemplate;
     private final RedisTemplate<String, String> redisTemplate;
     private final ObjectMapper objectMapper = new ObjectMapper();
+
+    // develop 병합으로 공용 restTemplate()에 @Primary가 붙으면서, 필드명을 빈 이름과
+    // 맞추는 방식(name-matching)만으로는 더 이상 codefRestTemplate이 주입되지 않는다
+    // (Spring은 후보가 여러 개일 때 이름 매칭보다 @Primary를 우선한다). GeminiVisionClient가
+    // 이미 쓰고 있는 것과 같은 방식으로 @Qualifier를 명시한다.
+    public CodefClient(@Qualifier("codefRestTemplate") RestTemplate codefRestTemplate,
+                        RedisTemplate<String, String> redisTemplate) {
+        this.codefRestTemplate = codefRestTemplate;
+        this.redisTemplate = redisTemplate;
+    }
 
     @Value("${external.codef.client-id:}")
     private String clientId;

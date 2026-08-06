@@ -59,7 +59,7 @@ public class TransactionServiceImpl implements TransactionService {
         txn.put("txnDate", LocalDateTime.now());
         transactionMapper.insert(txn);
 
-        return getTransaction(String.valueOf(txn.get("txnId")));
+        return getTransaction(memberId, String.valueOf(txn.get("txnId")));
     }
 
     @Override
@@ -75,10 +75,16 @@ public class TransactionServiceImpl implements TransactionService {
     }
 
     @Override
-    public TransactionResponse getTransaction(String txnId) {
+    @Transactional(readOnly = true)
+    public TransactionResponse getTransaction(String memberId, String txnId) {
         Map<String, Object> txn = transactionMapper.findById(txnId);
         if (txn == null) {
             throw BusinessException.notFound("거래를 찾을 수 없습니다.");
+        }
+        Map<String, Object> wallet = walletMapper.findById(String.valueOf(txn.get("wallet_id")));
+        boolean isOwner = wallet != null && Objects.equals(memberId, String.valueOf(wallet.get("member_id")));
+        if (!isOwner) {
+            throw BusinessException.forbidden("거래를 조회할 권한이 없습니다.");
         }
         return toResponse(txn);
     }

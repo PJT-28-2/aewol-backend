@@ -42,7 +42,8 @@ public class TransactionController {
 
     @Operation(summary = "거래 상세 조회")
     @GetMapping("/{txnId}")
-    public ResponseEntity<ApiResponse<TransactionResponse>> getTransaction(@PathVariable String txnId) {
-        return ResponseEntity.ok(ApiResponse.success(transactionService.getTransaction(txnId)));
+    public ResponseEntity<ApiResponse<TransactionResponse>> getTransaction(
+            @AuthenticationPrincipal String memberId, @PathVariable String txnId) {
+        return ResponseEntity.ok(ApiResponse.success(transactionService.getTransaction(memberId, txnId)));
     }
 }

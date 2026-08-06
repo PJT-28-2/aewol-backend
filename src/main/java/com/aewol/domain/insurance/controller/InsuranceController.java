@@ -57,7 +57,7 @@ public class InsuranceController {
     }
 
     @Operation(summary = "보험 청구 (영수증 OCR)")
-    @PostMapping("/claim")
+    @PostMapping("/claims")
     public ResponseEntity<ApiResponse<ClaimResponse>> createClaim(@AuthenticationPrincipal String memberId,
                                                                     @RequestParam String petId,
                                                                     @RequestParam("receipt") MultipartFile receipt) {
@@ -66,15 +66,23 @@ public class InsuranceController {
     }
 
     @Operation(summary = "청구 확인 및 제출")
-    @PutMapping("/claims/{claimId}/confirm")
-    public ResponseEntity<ApiResponse<ClaimResponse>> confirmClaim(@PathVariable String claimId,
-                                                                     @RequestBody ClaimResponse correctedData) {
-        return ResponseEntity.ok(ApiResponse.success(claimService.confirmClaim(claimId, correctedData)));
+    @PostMapping("/claims/{claimId}/confirm")
+    public ResponseEntity<ApiResponse<ClaimResponse>> confirmClaim(@AuthenticationPrincipal String memberId,
+                                                                     @PathVariable String claimId,
+                                                                     @RequestBody(required = false) ClaimResponse correctedData) {
+        return ResponseEntity.ok(ApiResponse.success(claimService.confirmClaim(memberId, claimId, correctedData)));
     }
 
     @Operation(summary = "청구 내역 조회")
     @GetMapping("/claims")
     public ResponseEntity<ApiResponse<List<ClaimResponse>>> getClaims(@AuthenticationPrincipal String memberId) {
         return ResponseEntity.ok(ApiResponse.success(claimService.getClaims(memberId)));
+    }
+
+    @Operation(summary = "청구 상세 조회")
+    @GetMapping("/claims/{claimId}")
+    public ResponseEntity<ApiResponse<ClaimResponse>> getClaim(@AuthenticationPrincipal String memberId,
+                                                                 @PathVariable String claimId) {
+        return ResponseEntity.ok(ApiResponse.success(claimService.getClaim(memberId, claimId)));
     }
 }
