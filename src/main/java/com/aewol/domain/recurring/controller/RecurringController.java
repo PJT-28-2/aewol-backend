@@ -34,8 +34,9 @@ public class RecurringController {
 
     @Operation(summary = "정기결제 해지")
     @DeleteMapping("/{recurringId}")
-    public ResponseEntity<ApiResponse<Void>> cancel(@PathVariable String recurringId) {
-        recurringService.cancelRecurring(recurringId);
+    public ResponseEntity<ApiResponse<Void>> cancel(@AuthenticationPrincipal String memberId,
+                                                     @PathVariable String recurringId) {
+        recurringService.cancelRecurring(memberId, recurringId);
         return ResponseEntity.ok(ApiResponse.success());
     }
 }

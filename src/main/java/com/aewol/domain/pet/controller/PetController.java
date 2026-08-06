@@ -39,22 +39,25 @@ public class PetController {
 
     @Operation(summary = "반려동물 상세")
     @GetMapping("/{petId}")
-    public ResponseEntity<ApiResponse<PetResponse>> getPet(@PathVariable String petId) {
-        return ResponseEntity.ok(ApiResponse.success(petService.getPet(petId)));
+    public ResponseEntity<ApiResponse<PetResponse>> getPet(@AuthenticationPrincipal String memberId,
+                                                            @PathVariable String petId) {
+        return ResponseEntity.ok(ApiResponse.success(petService.getPet(memberId, petId)));
     }
 
     @Operation(summary = "반려동물 정보 수정")
     @PutMapping("/{petId}")
-    public ResponseEntity<ApiResponse<Void>> updatePet(@PathVariable String petId,
+    public ResponseEntity<ApiResponse<Void>> updatePet(@AuthenticationPrincipal String memberId,
+                                                        @PathVariable String petId,
                                                         @Valid @RequestBody PetCreateRequest request) {
-        petService.updatePet(petId, request);
+        petService.updatePet(memberId, petId, request);
         return ResponseEntity.ok(ApiResponse.success());
     }
 
     @Operation(summary = "반려동물 비활성화")
     @DeleteMapping("/{petId}")
-    public ResponseEntity<ApiResponse<Void>> deletePet(@PathVariable String petId) {
-        petService.deactivatePet(petId);
+    public ResponseEntity<ApiResponse<Void>> deletePet(@AuthenticationPrincipal String memberId,
+                                                        @PathVariable String petId) {
+        petService.deactivatePet(memberId, petId);
         return ResponseEntity.ok(ApiResponse.success());
     }
 }

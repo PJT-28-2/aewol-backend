@@ -7,7 +7,7 @@ import java.util.List;
 public interface PetService {
     PetResponse createPet(String memberId, PetCreateRequest request);
     List<PetResponse> getPetsByMember(String memberId);
-    PetResponse getPet(String petId);
-    void updatePet(String petId, PetCreateRequest request);
-    void deactivatePet(String petId);
+    PetResponse getPet(String memberId, String petId);
+    void updatePet(String memberId, String petId, PetCreateRequest request);
+    void deactivatePet(String memberId, String petId);
 }

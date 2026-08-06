@@ -6,5 +6,5 @@ import java.util.Map;
 public interface RecurringService {
     List<Map<String, Object>> getRecurringPayments(String memberId);
     Map<String, Object> createRecurring(String memberId, Map<String, Object> request);
-    void cancelRecurring(String recurringId);
+    void cancelRecurring(String memberId, String recurringId);
 }
