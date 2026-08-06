@@ -17,15 +17,22 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
+import org.springframework.data.redis.core.script.RedisScript;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.util.ReflectionTestUtils;
 
+import java.util.List;
 import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.argThat;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -34,6 +41,10 @@ import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
 class AuthServiceImplEmailVerificationTest {
+
+    private static final String EMAIL = "newuser@aewol.com";
+    private static final String VERIFICATION_KEY = "signup:verify:" + EMAIL;
+    private static final String COMPLETED_KEY = "signup:verify:completed:" + EMAIL;
 
     @Mock MemberMapper memberMapper;
     @Mock WalletMapper walletMapper;
@@ -54,21 +65,24 @@ class AuthServiceImplEmailVerificationTest {
     }
 
     @Test
-    void sendsSixDigitCodeAndStoresItForThreeHundredSeconds() {
-        SignupEmailCodeRequest request = emailCodeRequest("newuser@aewol.com");
-        when(memberMapper.existsActiveByEmail(request.getEmail())).thenReturn(false);
+    void sendsUuidAndSixDigitCodeUsingNewKeyForThreeHundredSeconds() {
+        SignupEmailCodeRequest request = emailCodeRequest(EMAIL);
+        when(memberMapper.existsActiveByEmail(EMAIL)).thenReturn(false);
         when(redisTemplate.opsForValue()).thenReturn(valueOperations);
 
         SignupEmailCodeResponse response = authService.sendSignupVerificationCode(request);
 
-        ArgumentCaptor<String> codeCaptor = ArgumentCaptor.forClass(String.class);
+        ArgumentCaptor<String> valueCaptor = ArgumentCaptor.forClass(String.class);
         verify(valueOperations).set(
-                org.mockito.ArgumentMatchers.eq("verify:newuser@aewol.com"),
-                codeCaptor.capture(),
-                org.mockito.ArgumentMatchers.eq(300L),
-                org.mockito.ArgumentMatchers.eq(TimeUnit.SECONDS));
-        assertTrue(codeCaptor.getValue().matches("\\d{6}"));
-        verify(emailService).sendVerificationEmail("newuser@aewol.com", codeCaptor.getValue());
+                eq(VERIFICATION_KEY), valueCaptor.capture(), eq(300L), eq(TimeUnit.SECONDS));
+        String[] valueParts = valueCaptor.getValue().split("\\|", -1);
+        assertEquals(2, valueParts.length);
+        assertTrue(valueParts[0].matches(
+                "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"));
+        assertTrue(valueParts[1].matches("\\d{6}"));
+        verify(emailService).sendVerificationEmail(EMAIL, valueParts[1]);
+        verify(valueOperations, never()).set(
+                eq("verify:" + EMAIL), anyString(), any(Long.class), any(TimeUnit.class));
         assertEquals(300L, response.getExpiresInSeconds());
     }
 
@@ -81,13 +95,13 @@ class AuthServiceImplEmailVerificationTest {
                 () -> authService.sendSignupVerificationCode(request));
 
         assertEquals(409, exception.getStatus().value());
-        verify(valueOperations, never()).set(anyString(), anyString(),
-                org.mockito.ArgumentMatchers.anyLong(), org.mockito.ArgumentMatchers.any(TimeUnit.class));
+        verify(valueOperations, never()).set(
+                anyString(), anyString(), any(Long.class), any(TimeUnit.class));
         verify(emailService, never()).sendVerificationEmail(anyString(), anyString());
     }
 
     @Test
-    void resendingOverwritesCodeAndRefreshesTtl() {
+    void resendingOverwritesNewKeyAndRefreshesTtl() {
         SignupEmailCodeRequest request = emailCodeRequest("retry@aewol.com");
         when(memberMapper.existsActiveByEmail(request.getEmail())).thenReturn(false);
         when(redisTemplate.opsForValue()).thenReturn(valueOperations);
@@ -96,69 +110,99 @@ class AuthServiceImplEmailVerificationTest {
         authService.sendSignupVerificationCode(request);
 
         verify(valueOperations, times(2)).set(
-                org.mockito.ArgumentMatchers.eq("verify:retry@aewol.com"),
-                anyString(),
-                org.mockito.ArgumentMatchers.eq(300L),
-                org.mockito.ArgumentMatchers.eq(TimeUnit.SECONDS));
+                eq("signup:verify:retry@aewol.com"), anyString(), eq(300L), eq(TimeUnit.SECONDS));
         verify(emailService, times(2)).sendVerificationEmail(
-                org.mockito.ArgumentMatchers.eq("retry@aewol.com"), anyString());
+                eq("retry@aewol.com"), anyString());
     }
 
     @Test
-    void deletesStoredCodeWhenEmailSendingFails() {
+    void smtpFailureExecutesCompareAndDeleteWithCurrentFullValue() {
         SignupEmailCodeRequest request = emailCodeRequest("failure@aewol.com");
         when(memberMapper.existsActiveByEmail(request.getEmail())).thenReturn(false);
         when(redisTemplate.opsForValue()).thenReturn(valueOperations);
-        doThrow(new RuntimeException("smtp failure"))
-                .when(emailService).sendVerificationEmail(anyString(), anyString());
+        RuntimeException smtpException = new RuntimeException("smtp failure");
+        doThrow(smtpException).when(emailService).sendVerificationEmail(anyString(), anyString());
 
-        assertThrows(RuntimeException.class, () -> authService.sendSignupVerificationCode(request));
+        RuntimeException thrown = assertThrows(RuntimeException.class,
+                () -> authService.sendSignupVerificationCode(request));
 
-        verify(redisTemplate).delete("verify:failure@aewol.com");
+        ArgumentCaptor<String> valueCaptor = ArgumentCaptor.forClass(String.class);
+        verify(valueOperations).set(
+                eq("signup:verify:failure@aewol.com"), valueCaptor.capture(),
+                eq(300L), eq(TimeUnit.SECONDS));
+        verify(redisTemplate).execute(
+                argThat(script -> script.getScriptAsString().contains("stored == ARGV[1]")
+                        && script.getScriptAsString().contains("redis.call('DEL', KEYS[1])")),
+                eq(List.of("signup:verify:failure@aewol.com")), eq(valueCaptor.getValue()));
+        verify(redisTemplate, never()).delete(anyString());
+        assertSame(smtpException, thrown);
     }
 
     @Test
-    void verifiesCodeStoresCompletedStateAndDeletesCode() {
-        SignupEmailVerificationRequest request = verificationRequest("newuser@aewol.com", "123456");
+    void cleanupFailureIsSuppressedOnOriginalSmtpException() {
+        SignupEmailCodeRequest request = emailCodeRequest("failure@aewol.com");
+        when(memberMapper.existsActiveByEmail(request.getEmail())).thenReturn(false);
         when(redisTemplate.opsForValue()).thenReturn(valueOperations);
-        when(valueOperations.get("verify:newuser@aewol.com")).thenReturn("123456");
+        RuntimeException smtpException = new RuntimeException("smtp failure");
+        RuntimeException redisException = new RuntimeException("redis failure");
+        doThrow(smtpException).when(emailService).sendVerificationEmail(anyString(), anyString());
+        when(redisTemplate.execute(any(RedisScript.class), anyList(), anyString()))
+                .thenThrow(redisException);
+
+        RuntimeException thrown = assertThrows(RuntimeException.class,
+                () -> authService.sendSignupVerificationCode(request));
+
+        assertSame(smtpException, thrown);
+        assertEquals(1, thrown.getSuppressed().length);
+        assertSame(redisException, thrown.getSuppressed()[0]);
+    }
+
+    @Test
+    void verifyScriptSuccessReturnsNormallyWithOrderedKeysCodeAndTtl() {
+        SignupEmailVerificationRequest request = verificationRequest(EMAIL, "123456");
+        when(redisTemplate.execute(any(RedisScript.class), anyList(), anyString(), anyString()))
+                .thenReturn(1L);
 
         authService.verifySignupEmailCode(request);
 
-        verify(valueOperations).set(
-                "verify:completed:newuser@aewol.com", "true", 300L, TimeUnit.SECONDS);
-        verify(redisTemplate).delete("verify:newuser@aewol.com");
+        verify(redisTemplate).execute(
+                argThat(script -> {
+                    String text = script.getScriptAsString();
+                    return text.contains("redis.call('GET', KEYS[1])")
+                            && text.contains("string.sub(stored, delimiter + 1)")
+                            && text.contains("code ~= ARGV[1]")
+                            && text.contains("redis.call('DEL', KEYS[1])")
+                            && text.contains("redis.call('SET', KEYS[2], 'true', 'EX', ARGV[2])");
+                }),
+                eq(List.of(VERIFICATION_KEY, COMPLETED_KEY)), eq("123456"), eq("300"));
+        verify(valueOperations, never()).get(anyString());
+        verify(redisTemplate, never()).delete(anyString());
     }
 
     @Test
-    void rejectsMissingOrExpiredCode() {
-        SignupEmailVerificationRequest request = verificationRequest("newuser@aewol.com", "123456");
-        when(redisTemplate.opsForValue()).thenReturn(valueOperations);
-        when(valueOperations.get("verify:newuser@aewol.com")).thenReturn(null);
+    void verifyScriptMissingOrExpiredResultThrowsExistingException() {
+        SignupEmailVerificationRequest request = verificationRequest(EMAIL, "123456");
+        when(redisTemplate.execute(any(RedisScript.class), anyList(), anyString(), anyString()))
+                .thenReturn(0L);
 
         BusinessException exception = assertThrows(BusinessException.class,
                 () -> authService.verifySignupEmailCode(request));
 
         assertEquals(400, exception.getStatus().value());
         assertTrue(exception.getMessage().contains("만료"));
-        verify(valueOperations, never()).set(
-                org.mockito.ArgumentMatchers.eq("verify:completed:newuser@aewol.com"),
-                anyString(), org.mockito.ArgumentMatchers.anyLong(),
-                org.mockito.ArgumentMatchers.any(TimeUnit.class));
     }
 
     @Test
-    void rejectsIncorrectCode() {
-        SignupEmailVerificationRequest request = verificationRequest("newuser@aewol.com", "654321");
-        when(redisTemplate.opsForValue()).thenReturn(valueOperations);
-        when(valueOperations.get("verify:newuser@aewol.com")).thenReturn("123456");
+    void verifyScriptMismatchResultThrowsExistingException() {
+        SignupEmailVerificationRequest request = verificationRequest(EMAIL, "654321");
+        when(redisTemplate.execute(any(RedisScript.class), anyList(), anyString(), anyString()))
+                .thenReturn(-1L);
 
         BusinessException exception = assertThrows(BusinessException.class,
                 () -> authService.verifySignupEmailCode(request));
 
         assertEquals(400, exception.getStatus().value());
         assertTrue(exception.getMessage().contains("일치하지"));
-        verify(redisTemplate, never()).delete("verify:newuser@aewol.com");
     }
 
     private SignupEmailCodeRequest emailCodeRequest(String email) {

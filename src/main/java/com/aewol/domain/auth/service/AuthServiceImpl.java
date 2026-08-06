@@ -16,13 +16,16 @@ import com.aewol.external.smtp.EmailService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.core.RedisTemplate;
+import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
 
@@ -32,8 +35,44 @@ import java.util.concurrent.TimeUnit;
 public class AuthServiceImpl implements AuthService {
 
     private static final long SIGNUP_VERIFICATION_TTL_SECONDS = 300L;
-    private static final String VERIFICATION_CODE_KEY_PREFIX = "verify:";
-    private static final String VERIFICATION_COMPLETED_KEY_PREFIX = "verify:completed:";
+    private static final String SIGNUP_VERIFICATION_CODE_KEY_PREFIX = "signup:verify:";
+    private static final String SIGNUP_VERIFICATION_COMPLETED_KEY_PREFIX = "signup:verify:completed:";
+    private static final String VERIFICATION_VALUE_DELIMITER = "|";
+    private static final DefaultRedisScript<Long> COMPARE_AND_DELETE_SCRIPT = new DefaultRedisScript<>(
+            "local stored = redis.call('GET', KEYS[1])\n" +
+            "if stored == ARGV[1] then\n" +
+            "    return redis.call('DEL', KEYS[1])\n" +
+            "end\n" +
+            "return 0",
+            Long.class);
+    private static final DefaultRedisScript<Long> VERIFY_CODE_SCRIPT = new DefaultRedisScript<>(
+            "local stored = redis.call('GET', KEYS[1])\n" +
+            "if not stored then\n" +
+            "    return 0\n" +
+            "end\n" +
+            "local delimiter = string.find(stored, '|', 1, true)\n" +
+            "if not delimiter then\n" +
+            "    return -1\n" +
+            "end\n" +
+            "local requestId = string.sub(stored, 1, delimiter - 1)\n" +
+            "local code = string.sub(stored, delimiter + 1)\n" +
+            "if string.len(requestId) ~= 36\n" +
+            "        or string.sub(requestId, 9, 9) ~= '-'\n" +
+            "        or string.sub(requestId, 14, 14) ~= '-'\n" +
+            "        or string.sub(requestId, 19, 19) ~= '-'\n" +
+            "        or string.sub(requestId, 24, 24) ~= '-'\n" +
+            "        or string.find(requestId, '[^0-9a-fA-F%-]')\n" +
+            "        or string.len(code) ~= 6\n" +
+            "        or string.find(code, '%D') then\n" +
+            "    return -1\n" +
+            "end\n" +
+            "if code ~= ARGV[1] then\n" +
+            "    return -1\n" +
+            "end\n" +
+            "redis.call('DEL', KEYS[1])\n" +
+            "redis.call('SET', KEYS[2], 'true', 'EX', ARGV[2])\n" +
+            "return 1",
+            Long.class);
 
     private final MemberMapper memberMapper;
     private final WalletMapper walletMapper;
@@ -51,15 +90,17 @@ public class AuthServiceImpl implements AuthService {
         }
 
         String code = generateVerificationCode();
+        String verificationValue = UUID.randomUUID() + VERIFICATION_VALUE_DELIMITER + code;
         String verificationKey = verificationCodeKey(email);
         redisTemplate.opsForValue().set(
-                verificationKey, code, SIGNUP_VERIFICATION_TTL_SECONDS, TimeUnit.SECONDS);
+                verificationKey, verificationValue, SIGNUP_VERIFICATION_TTL_SECONDS, TimeUnit.SECONDS);
 
         try {
             emailService.sendVerificationEmail(email, code);
         } catch (RuntimeException e) {
             try {
-                redisTemplate.delete(verificationKey);
+                redisTemplate.execute(
+                        COMPARE_AND_DELETE_SCRIPT, List.of(verificationKey), verificationValue);
             } catch (RuntimeException cleanupException) {
                 e.addSuppressed(cleanupException);
             }
@@ -73,19 +114,17 @@ public class AuthServiceImpl implements AuthService {
     public void verifySignupEmailCode(SignupEmailVerificationRequest request) {
         String email = request.getEmail();
         String verificationKey = verificationCodeKey(email);
-        String storedCode = redisTemplate.opsForValue().get(verificationKey);
+        Long result = redisTemplate.execute(
+                VERIFY_CODE_SCRIPT,
+                List.of(verificationKey, verificationCompletedKey(email)),
+                request.getVerificationCode(), String.valueOf(SIGNUP_VERIFICATION_TTL_SECONDS));
 
-        if (storedCode == null) {
+        if (result == null || result == 0L) {
             throw new BusinessException(HttpStatus.BAD_REQUEST, "인증번호가 만료되었거나 발급되지 않았습니다.");
         }
-        if (!storedCode.equals(request.getVerificationCode())) {
+        if (result == -1L) {
             throw new BusinessException(HttpStatus.BAD_REQUEST, "인증번호가 일치하지 않습니다.");
         }
-
-        redisTemplate.opsForValue().set(
-                verificationCompletedKey(email), "true",
-                SIGNUP_VERIFICATION_TTL_SECONDS, TimeUnit.SECONDS);
-        redisTemplate.delete(verificationKey);
     }
 
     @Override
@@ -273,10 +312,10 @@ public class AuthServiceImpl implements AuthService {
     }
 
     private String verificationCodeKey(String email) {
-        return VERIFICATION_CODE_KEY_PREFIX + email;
+        return SIGNUP_VERIFICATION_CODE_KEY_PREFIX + email;
     }
 
     private String verificationCompletedKey(String email) {
-        return VERIFICATION_COMPLETED_KEY_PREFIX + email;
+        return SIGNUP_VERIFICATION_COMPLETED_KEY_PREFIX + email;
     }
 }
