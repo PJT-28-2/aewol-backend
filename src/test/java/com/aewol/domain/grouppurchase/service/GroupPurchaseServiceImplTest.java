@@ -7,6 +7,8 @@ import com.aewol.common.exception.BusinessException;
 import com.aewol.common.util.FileUtil;
 import com.aewol.domain.grouppurchase.dto.GroupPurchaseCreateRequest;
 import com.aewol.domain.grouppurchase.dto.GroupPurchaseImageUploadResponse;
+import com.aewol.domain.grouppurchase.dto.GroupPurchaseListItemResponse;
+import com.aewol.domain.grouppurchase.dto.GroupPurchaseListResponse;
 import com.aewol.domain.grouppurchase.dto.GroupPurchaseResponse;
 import com.aewol.domain.grouppurchase.mapper.GroupPurchaseMapper;
 import java.io.IOException;
@@ -14,6 +16,7 @@ import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -114,6 +117,81 @@ class GroupPurchaseServiceImplTest {
         assertEquals("member-1", captor.getValue().get("memberId"));
         assertEquals("사료 5kg", captor.getValue().get("productName"));
         assertEquals(10, captor.getValue().get("targetQuantity"));
+    }
+
+    @Test
+    @DisplayName("페이지 크기보다 많은 결과가 있으면 hasNext가 true이고 초과분은 잘라낸다")
+    void should_trimAndSetHasNextTrue_when_moreRowsThanPageSizeExist() {
+        GroupPurchaseServiceImpl service = service();
+        LocalDateTime deadline = LocalDateTime.now().plusDays(5);
+        when(groupPurchaseMapper.findList(isNull(), isNull(), isNull(), eq(3), eq(0)))
+                .thenReturn(List.of(
+                        listRow(1L, "OPEN", deadline, 30000, 25000),
+                        listRow(2L, "OPEN", deadline, 30000, 25000),
+                        listRow(3L, "OPEN", deadline, 30000, 25000)));
+
+        GroupPurchaseListResponse result = service.list(null, null, null, 0, 2);
+
+        assertEquals(2, result.getItems().size());
+        assertTrue(result.isHasNext());
+        GroupPurchaseListItemResponse first = result.getItems().get(0);
+        assertEquals(1L, first.getId());
+        assertEquals("진행중", first.getStatus());
+        assertEquals("D-5", first.getDDay());
+        assertEquals("17% 할인", first.getBadgeText());
+        assertFalse(first.getIsParticipating());
+    }
+
+    @Test
+    @DisplayName("결과가 없으면 빈 목록과 hasNext false를 반환한다")
+    void should_returnEmptyListWithHasNextFalse_when_noRowsMatch() {
+        GroupPurchaseServiceImpl service = service();
+        when(groupPurchaseMapper.findList(any(), any(), any(), anyInt(), anyInt()))
+                .thenReturn(List.of());
+
+        GroupPurchaseListResponse result = service.list(null, null, null, 99, 10);
+
+        assertTrue(result.getItems().isEmpty());
+        assertFalse(result.isHasNext());
+    }
+
+    @Test
+    @DisplayName("한글 상태 필터는 DB 상태 코드로 변환되어 매퍼에 전달된다")
+    void should_translateKoreanStatusFilter_toDbStatusCode() {
+        GroupPurchaseServiceImpl service = service();
+        when(groupPurchaseMapper.findList(eq("COMPLETED"), isNull(), eq("사료"), eq(11), eq(0)))
+                .thenReturn(List.of());
+
+        service.list("마감(성공)", null, "사료", 0, 10);
+
+        verify(groupPurchaseMapper).findList("COMPLETED", null, "사료", 11, 0);
+    }
+
+    @Test
+    @DisplayName("상태 필터가 없어도 예외 없이 전체 목록을 조회한다")
+    void should_notThrow_when_statusFilterIsNull() {
+        GroupPurchaseServiceImpl service = service();
+        when(groupPurchaseMapper.findList(isNull(), isNull(), isNull(), anyInt(), anyInt()))
+                .thenReturn(List.of());
+
+        assertDoesNotThrow(() -> service.list(null, null, null, 0, 10));
+    }
+
+    private Map<String, Object> listRow(Long gpId, String status, LocalDateTime deadline,
+                                          int unitPrice, int groupPrice) {
+        Map<String, Object> row = new HashMap<>();
+        row.put("gp_id", gpId);
+        row.put("member_id", 3L);
+        row.put("product_name", "사료 5kg");
+        row.put("category", "사료");
+        row.put("status", status);
+        row.put("current_quantity", 0);
+        row.put("target_quantity", 10);
+        row.put("unit_price", new BigDecimal(unitPrice));
+        row.put("group_price", new BigDecimal(groupPrice));
+        row.put("deadline", deadline);
+        row.put("created_at", LocalDateTime.now());
+        return row;
     }
 
     private GroupPurchaseCreateRequest createRequest() {
