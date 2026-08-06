@@ -36,7 +36,10 @@ public class AccountServiceImpl implements AccountService {
     private static final long DEPOSIT_AUTH_TIMEOUT_SECONDS = 180;
 
     @Override
-    @Transactional
+    // CODEF 호출(동기 HTTP)이 끝난 뒤 insert 한 번만 하면 되는 메서드라 @Transactional을
+    // 붙이지 않는다. 트랜잭션 안에서 외부 HTTP 호출을 하면 CODEF 응답을 기다리는 동안
+    // DB 커넥션을 계속 점유하게 돼서, CODEF가 지연되면 커넥션 풀 고갈로 서비스 전체가
+    // 영향을 받을 수 있다(CodeRabbit 지적, 2026-08-06).
     public DepositVerificationResponse requestDepositVerification(String memberId, DepositVerificationRequest request) {
         String transactionId = generateTransactionId();
 
