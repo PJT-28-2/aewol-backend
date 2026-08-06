@@ -52,6 +52,8 @@ external:
   naver:
     client-id: ${NAVER_CLIENT_ID:}
     client-secret: ${NAVER_CLIENT_SECRET:}
+  gov24:
+    service-key: ${GOV24_SERVICE_KEY:}
 
 # File
 file:

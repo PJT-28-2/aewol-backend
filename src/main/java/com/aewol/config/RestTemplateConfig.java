@@ -12,7 +12,10 @@ public class RestTemplateConfig {
     @Primary
     @Bean
     public RestTemplate restTemplate() {
-        return new RestTemplate();
+        SimpleClientHttpRequestFactory requestFactory = new SimpleClientHttpRequestFactory();
+        requestFactory.setConnectTimeout(10_000);
+        requestFactory.setReadTimeout(10_000);
+        return new RestTemplate(requestFactory);
     }
 
     @Bean(name = "geminiRestTemplate")
