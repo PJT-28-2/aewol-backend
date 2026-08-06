@@ -18,6 +18,22 @@
           AND is_active = 1
     </select>
 
+    <!-- 동시 복구 요청이 같은 회원을 중복 활성화하지 못하도록 복구 대상 행을 잠근다. -->
+    <select id="findLatestInactiveByEmailForUpdate" resultType="map">
+        SELECT *,
+               CASE
+                   WHEN withdrawn_at >= DATE_SUB(NOW(), INTERVAL 30 DAY) THEN 1
+                   ELSE 0
+               END AS recoverable_within_30_days
+        FROM member
+        WHERE email = #{email}
+          AND is_active = 0
+          AND withdrawn_at IS NOT NULL
+        ORDER BY withdrawn_at DESC, member_id DESC
+        LIMIT 1
+        FOR UPDATE
+    </select>
+
     <!-- member_id는 BIGINT AUTO_INCREMENT — 생성 키를 맵의 memberId로 돌려받는다 -->
     <insert id="insert" parameterType="map" useGeneratedKeys="true" keyProperty="memberId" keyColumn="member_id">
         INSERT INTO member (email, password, name, phone,
@@ -27,6 +43,25 @@
                 #{profileImg}, #{provider}, #{providerId}, #{emailVerified}, #{role},
                 #{zipCode}, #{address}, #{addressDetail})
     </insert>
+
+    <update id="restoreLocalMember" parameterType="map">
+        UPDATE member
+        SET password = #{password},
+            name = #{name},
+            phone = #{phone},
+            provider = 'LOCAL',
+            provider_id = NULL,
+            email_verified = 'Y',
+            is_active = 1,
+            withdrawn_at = NULL,
+            zip_code = #{zipCode},
+            address = #{address},
+            address_detail = #{addressDetail},
+            updated_at = NOW()
+        WHERE member_id = #{memberId}
+          AND provider = 'LOCAL'
+          AND is_active = 0
+    </update>
 
     <update id="update" parameterType="map">
         UPDATE member

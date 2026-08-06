@@ -6,6 +6,7 @@ import com.aewol.domain.auth.dto.SignupEmailCodeRequest;
 import com.aewol.domain.auth.dto.SignupEmailCodeResponse;
 import com.aewol.domain.auth.dto.SignupEmailVerificationRequest;
 import com.aewol.domain.member.mapper.MemberMapper;
+import com.aewol.domain.notification.mapper.NotificationSettingMapper;
 import com.aewol.domain.wallet.mapper.WalletMapper;
 import com.aewol.external.kakao.KakaoAuthClient;
 import com.aewol.external.smtp.EmailService;
@@ -48,6 +49,7 @@ class AuthServiceImplEmailVerificationTest {
 
     @Mock MemberMapper memberMapper;
     @Mock WalletMapper walletMapper;
+    @Mock NotificationSettingMapper notificationSettingMapper;
     @Mock JwtUtil jwtUtil;
     @Mock PasswordEncoder passwordEncoder;
     @Mock RedisTemplate<String, String> redisTemplate;
@@ -60,7 +62,7 @@ class AuthServiceImplEmailVerificationTest {
     @BeforeEach
     void setUp() {
         authService = new AuthServiceImpl(
-                memberMapper, walletMapper, jwtUtil, passwordEncoder,
+                memberMapper, walletMapper, notificationSettingMapper, jwtUtil, passwordEncoder,
                 redisTemplate, emailService, kakaoAuthClient);
     }
 
@@ -172,7 +174,7 @@ class AuthServiceImplEmailVerificationTest {
                             && text.contains("string.sub(stored, delimiter + 1)")
                             && text.contains("code ~= ARGV[1]")
                             && text.contains("redis.call('DEL', KEYS[1])")
-                            && text.contains("redis.call('SET', KEYS[2], 'true', 'EX', ARGV[2])");
+                            && text.contains("redis.call('SET', KEYS[2], stored, 'EX', ARGV[2])");
                 }),
                 eq(List.of(VERIFICATION_KEY, COMPLETED_KEY)), eq("123456"), eq("300"));
         verify(valueOperations, never()).get(anyString());
