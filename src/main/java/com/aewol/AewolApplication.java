@@ -10,6 +10,7 @@ import org.springframework.web.filter.DelegatingFilterProxy;
 import org.springframework.web.servlet.DispatcherServlet;
 
 import javax.servlet.Filter;
+import javax.servlet.MultipartConfigElement;
 import java.io.File;
 
 public class AewolApplication {
@@ -40,6 +41,13 @@ public class AewolApplication {
         servletWrapper.setAsyncSupported(true);
         servletWrapper.setLoadOnStartup(1);
         context.addServletMappingDecoded("/", "dispatcher");
+
+        // 멀티파트(파일 업로드) 요청 처리를 위한 설정. Spring Boot가 아니므로
+        // application.yml의 spring.servlet.multipart.* 값은 자동 반영되지 않아 여기서 직접 설정한다.
+        long maxFileSize = 10L * 1024 * 1024;   // application.yml: max-file-size
+        long maxRequestSize = 10L * 1024 * 1024; // application.yml: max-request-size
+        servletWrapper.setMultipartConfigElement(new MultipartConfigElement(
+                System.getProperty("java.io.tmpdir"), maxFileSize, maxRequestSize, 0));
 
         // CharacterEncoding 필터 (UTF-8)
         registerFilter(context, "encodingFilter",
