@@ -15,12 +15,21 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
+import javax.validation.ConstraintViolation;
+import javax.validation.Validation;
+import javax.validation.Validator;
+import javax.validation.executable.ExecutableValidator;
+import java.lang.reflect.Method;
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -29,6 +38,11 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * 401/403 인증 거부는 단위테스트로 검증하지 않는다 (standaloneSetup은 Security 필터체인을
  * 거치지 않아 거짓 양성이 된다) — .omc/plans/emergency-hospital-sos-plan.md Step A6 결정 사항.
  * 인증 거부 확인은 로컬 통합 확인(Verification step 3)에서 수행한다.
+ *
+ * @Validated 파라미터 제약조건도 같은 이유로 MockMvc로 검증하지 않는다 — standaloneSetup은
+ * MethodValidationPostProcessor가 만드는 Spring AOP 프록시를 거치지 않으므로, latitude=999 같은
+ * 잘못된 값을 보내도 400이 나오지 않고 그대로 컨트롤러 메서드가 호출된다. 대신 Bean Validation API로
+ * 제약조건 애노테이션 자체가 위반을 잡아내는지 직접 검증한다.
  */
 @ExtendWith(MockitoExtension.class)
 class EmergencyControllerTest {
@@ -76,6 +90,7 @@ class EmergencyControllerTest {
                 .andReturn();
 
         assertEquals("애월동물병원", resultNode(result).get(0).path("name").asText());
+        verify(emergencyService).searchNearby(33.45, 126.56, 5.0, false);
     }
 
     @Test
@@ -89,6 +104,8 @@ class EmergencyControllerTest {
                         .param("longitude", "126.56")
                         .param("is24h", "true"))
                 .andExpect(status().isOk());
+
+        verify(emergencyService).searchNearby(33.45, 126.56, 5.0, true);
     }
 
     @Test
@@ -101,5 +118,52 @@ class EmergencyControllerTest {
                         .param("latitude", "33.45")
                         .param("longitude", "126.56"))
                 .andExpect(status().isOk());
+
+        verify(emergencyService).searchNearby(33.45, 126.56, 5.0, false);
+    }
+
+    private Set<ConstraintViolation<EmergencyController>> validateSearchNearbyParams(Object[] args) throws Exception {
+        Validator baseValidator = Validation.buildDefaultValidatorFactory().getValidator();
+        ExecutableValidator validator = baseValidator.forExecutables();
+        EmergencyController controller = new EmergencyController(emergencyService);
+        Method method = EmergencyController.class.getMethod(
+                "searchNearby", double.class, double.class, double.class, boolean.class);
+        return validator.validateParameters(controller, method, args);
+    }
+
+    @Test
+    @DisplayName("latitude가 -90~90 범위를 벗어나면 ConstraintViolation이 발생한다")
+    void should_violateConstraint_when_latitudeOutOfRange() throws Exception {
+        Set<ConstraintViolation<EmergencyController>> violations =
+                validateSearchNearbyParams(new Object[]{999.0, 126.56, 5.0, false});
+
+        assertFalse(violations.isEmpty());
+    }
+
+    @Test
+    @DisplayName("longitude가 -180~180 범위를 벗어나면 ConstraintViolation이 발생한다")
+    void should_violateConstraint_when_longitudeOutOfRange() throws Exception {
+        Set<ConstraintViolation<EmergencyController>> violations =
+                validateSearchNearbyParams(new Object[]{33.45, 999.0, 5.0, false});
+
+        assertFalse(violations.isEmpty());
+    }
+
+    @Test
+    @DisplayName("radiusKm이 0 이하이면 ConstraintViolation이 발생한다")
+    void should_violateConstraint_when_radiusKmNotPositive() throws Exception {
+        Set<ConstraintViolation<EmergencyController>> violations =
+                validateSearchNearbyParams(new Object[]{33.45, 126.56, -1.0, false});
+
+        assertFalse(violations.isEmpty());
+    }
+
+    @Test
+    @DisplayName("유효 범위 내 값은 ConstraintViolation이 발생하지 않는다")
+    void should_haveNoViolation_when_paramsWithinRange() throws Exception {
+        Set<ConstraintViolation<EmergencyController>> violations =
+                validateSearchNearbyParams(new Object[]{33.45, 126.56, 5.0, false});
+
+        assertTrue(violations.isEmpty());
     }
 }
