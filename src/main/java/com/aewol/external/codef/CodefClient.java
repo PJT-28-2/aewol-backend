@@ -27,7 +27,9 @@ import java.util.concurrent.TimeUnit;
 @RequiredArgsConstructor
 public class CodefClient {
 
-    private final RestTemplate restTemplate;
+    // 필드명을 codefRestTemplate으로 맞춰서 RestTemplateConfig의 동명 빈(타임아웃 설정됨)이
+    // 주입되게 한다 — 같은 타입의 빈이 여러 개일 때 Spring은 필드명과 빈 이름을 매칭한다.
+    private final RestTemplate codefRestTemplate;
     private final RedisTemplate<String, String> redisTemplate;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
@@ -110,7 +112,7 @@ public class CodefClient {
 
         String rawResponse;
         try {
-            rawResponse = restTemplate.postForObject(apiBaseUrl + path, entity, String.class);
+            rawResponse = codefRestTemplate.postForObject(apiBaseUrl + path, entity, String.class);
         } catch (Exception e) {
             log.error("CODEF API 호출 실패 - path: {}", path, e);
             throw new BusinessException(HttpStatus.BAD_GATEWAY, "은행 인증 서비스와 통신에 실패했어요");
@@ -193,7 +195,7 @@ public class CodefClient {
 
         String rawResponse;
         try {
-            rawResponse = restTemplate.postForObject(oauthUrl, entity, String.class);
+            rawResponse = codefRestTemplate.postForObject(oauthUrl, entity, String.class);
         } catch (Exception e) {
             log.error("CODEF accessToken 발급 실패", e);
             throw new BusinessException(HttpStatus.BAD_GATEWAY, "은행 인증 서비스 연결에 실패했어요");
