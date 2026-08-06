@@ -5,9 +5,9 @@
 
     <insert id="insert" parameterType="map" useGeneratedKeys="true" keyProperty="accountId" keyColumn="account_id">
         INSERT INTO linked_account
-            (member_id, bank_code, account_number, account_number_hash, account_holder, connected_id, is_primary)
+            (member_id, bank_code, account_number, account_number_hash, is_primary)
         VALUES
-            (#{memberId}, #{bankCode}, #{accountNumber}, #{accountNumberHash}, #{accountHolder}, #{connectedId}, #{isPrimary})
+            (#{memberId}, #{bankCode}, #{accountNumber}, #{accountNumberHash}, #{isPrimary})
     </insert>
 
     <select id="findByMemberId" resultType="map">
@@ -15,6 +15,13 @@
         FROM linked_account la
         JOIN bank_master bm ON bm.bank_code = la.bank_code
         WHERE la.member_id = #{memberId} AND la.status = 'ACTIVE'
+    </select>
+
+    <select id="findByAccountId" resultType="map">
+        SELECT la.*, bm.bank_name
+        FROM linked_account la
+        JOIN bank_master bm ON bm.bank_code = la.bank_code
+        WHERE la.account_id = #{accountId}
     </select>
 
     <update id="updateStatus">

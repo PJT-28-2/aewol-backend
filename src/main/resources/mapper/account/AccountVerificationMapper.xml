@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.aewol.domain.account.mapper.AccountVerificationMapper">
+    <!-- account_verification: transaction_id는 자연키(앱에서 생성), V4에서 정의됨 -->
+
+    <insert id="insert" parameterType="map">
+        <!-- requested_at: DB DEFAULT CURRENT_TIMESTAMP 대신 JVM 시각(#{requestedAt})을 명시적으로 저장.
+             MySQL 컨테이너 TZ(UTC)와 JVM TZ(KST)가 어긋나면 저장 직후 만료로 오판되는 문제 방지용. -->
+        INSERT INTO account_verification
+            (transaction_id, member_id, bank_code, account_number, verification_code, status, requested_at)
+        VALUES
+            (#{transactionId}, #{memberId}, #{bankCode}, #{accountNumber}, #{verificationCode}, 'PENDING', #{requestedAt})
+    </insert>
+
+    <select id="findById" resultType="map">
+        SELECT * FROM account_verification WHERE transaction_id = #{transactionId}
+    </select>
+
+    <update id="updateStatus">
+        UPDATE account_verification
+        SET status = #{status},
+            verified_at = CASE WHEN #{status} = 'VERIFIED' THEN NOW() ELSE verified_at END
+        WHERE transaction_id = #{transactionId}
+    </update>
+
+    <!-- VERIFIED -> USED 전환에만 쓰는 조건부 UPDATE. status 조건을 WHERE절에 걸어서
+         동시 요청 중 하나만 실제로 갱신되도록 한다(원자적 1회성 보장). -->
+    <update id="markUsedIfVerified">
+        UPDATE account_verification
+        SET status = 'USED'
+        WHERE transaction_id = #{transactionId}
+          AND status = 'VERIFIED'
+    </update>
+
+</mapper>

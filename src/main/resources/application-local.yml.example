@@ -54,6 +54,8 @@ external:
   codef:
     client-id: ${CODEF_CLIENT_ID}
     client-secret: ${CODEF_CLIENT_SECRET}
+    oauth-url: ${CODEF_OAUTH_URL:https://oauth.codef.io/oauth/token}
+    api-base-url: ${CODEF_API_BASE_URL:https://development.codef.io}
   naver:
     client-id: ${NAVER_CLIENT_ID}
     client-secret: ${NAVER_CLIENT_SECRET}

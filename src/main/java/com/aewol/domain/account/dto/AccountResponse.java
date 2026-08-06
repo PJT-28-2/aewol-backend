@@ -10,7 +10,6 @@ public class AccountResponse {
     private String bankCode;
     private String bankName;
     private String accountNumber;
-    private String accountHolder;
     private Boolean isPrimary;
     private String status;
 }
