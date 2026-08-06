@@ -19,7 +19,6 @@ import java.sql.Timestamp;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
-import java.util.concurrent.ThreadLocalRandom;
 import java.util.stream.Collectors;
 
 @Service
@@ -156,11 +155,16 @@ public class AccountServiceImpl implements AccountService {
                 .build();
     }
 
-    /** TX + yyyyMMdd + 6자리 랜덤(V4 코멘트의 "TX20260722001" 형식과 동일 계열, 순번 대신 랜덤으로 충돌 방지) */
+    /**
+     * TX + yyyyMMdd + UUID(하이픈 제거). 기존에는 6자리 랜덤 숫자라 하루 100만 개
+     * 공간뿐이어서 하루 몇천 건만 요청돼도 PRIMARY KEY 충돌 확률이 컸다(CodeRabbit
+     * 지적, 2026-08-06). transaction_id가 VARCHAR(50)이라 "TX"+8자리 날짜+32자리
+     * UUID(총 42자)까지 여유롭게 들어간다.
+     */
     private String generateTransactionId() {
         String datePart = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd"));
-        int random = ThreadLocalRandom.current().nextInt(1_000_000);
-        return "TX" + datePart + String.format("%06d", random);
+        String uuidPart = UUID.randomUUID().toString().replace("-", "");
+        return "TX" + datePart + uuidPart;
     }
 
     // MyBatis 드라이버 설정에 따라 DATETIME 컬럼이 Timestamp/LocalDateTime/Date
