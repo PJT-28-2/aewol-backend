@@ -23,4 +23,13 @@
         WHERE transaction_id = #{transactionId}
     </update>
 
+    <!-- VERIFIED -> USED 전환에만 쓰는 조건부 UPDATE. status 조건을 WHERE절에 걸어서
+         동시 요청 중 하나만 실제로 갱신되도록 한다(원자적 1회성 보장). -->
+    <update id="markUsedIfVerified">
+        UPDATE account_verification
+        SET status = 'USED'
+        WHERE transaction_id = #{transactionId}
+          AND status = 'VERIFIED'
+    </update>
+
 </mapper>

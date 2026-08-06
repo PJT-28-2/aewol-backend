@@ -111,6 +111,17 @@ public class AccountServiceImpl implements AccountService {
             throw new BusinessException(HttpStatus.CONFLICT, "1원 인증이 완료되지 않았어요");
         }
 
+        // VERIFIED -> USED 전환을 조건부 UPDATE + 영향 행 수 확인으로 원자적으로 처리한다.
+        // 위의 findById 읽기와 상태 체크는 잠금이 없어서, 같은 transactionId로
+        // registerAccount가 동시에 두 번 들어오면 둘 다 VERIFIED를 읽고 그대로 통과해
+        // 계좌가 중복 생성될 수 있다(CodeRabbit 지적, 2026-08-06). markUsedIfVerified는
+        // WHERE절에 status='VERIFIED'를 같이 걸기 때문에 둘 중 하나만 실제로 행을
+        // 갱신하고, 나머지는 영향 행 0을 받아 계좌 insert 전에 여기서 바로 막힌다.
+        int updated = accountVerificationMapper.markUsedIfVerified(request.getTransactionId());
+        if (updated == 0) {
+            throw new BusinessException(HttpStatus.CONFLICT, "이미 처리된 1원 인증 요청이에요");
+        }
+
         String bankCode = (String) verification.get("bank_code");
         String accountNumber = (String) verification.get("account_number");
 
@@ -125,13 +136,10 @@ public class AccountServiceImpl implements AccountService {
         // useGeneratedKeys가 정상 동작하면 account_id가 채워진다. 못 채우면 아래에서
         // String.valueOf(null) → "null" 문자열이 되어 findByAccountId가 null을 반환하고
         // toAccountResponse에서 NPE가 나기 전에 여기서 먼저 막는다(CodeRabbit 지적, 2026-08-06).
-        // @Transactional이라 여기서 던지면 방금 한 insert도 롤백된다.
+        // @Transactional이라 여기서 던지면 방금 한 markUsedIfVerified/insert도 함께 롤백된다.
         if (account.get("accountId") == null) {
             throw new BusinessException(HttpStatus.INTERNAL_SERVER_ERROR, "계좌 등록에 실패했어요. 다시 시도해주세요");
         }
-
-        // transaction_id 재사용/이중 등록 방지
-        accountVerificationMapper.updateStatus(request.getTransactionId(), "USED");
 
         Map<String, Object> saved = accountMapper.findByAccountId(String.valueOf(account.get("accountId")));
         return toAccountResponse(saved);
