@@ -2,14 +2,14 @@ package com.aewol.domain.grouppurchase.service;
 
 import com.aewol.domain.grouppurchase.dto.GroupPurchaseCreateRequest;
 import com.aewol.domain.grouppurchase.dto.GroupPurchaseImageUploadResponse;
+import com.aewol.domain.grouppurchase.dto.GroupPurchaseListResponse;
 import com.aewol.domain.grouppurchase.dto.GroupPurchaseResponse;
 import org.springframework.web.multipart.MultipartFile;
 
-import java.util.List;
 import java.util.Map;
 
 public interface GroupPurchaseService {
-    List<Map<String, Object>> list();
+    GroupPurchaseListResponse list(String status, String keyword, String category, int page, int size);
     GroupPurchaseResponse create(String memberId, GroupPurchaseCreateRequest request);
     Map<String, Object> getDetail(String gpId);
     void join(String memberId, String gpId, int quantity);

@@ -4,6 +4,8 @@ import com.aewol.common.exception.BusinessException;
 import com.aewol.common.util.FileUtil;
 import com.aewol.domain.grouppurchase.dto.GroupPurchaseCreateRequest;
 import com.aewol.domain.grouppurchase.dto.GroupPurchaseImageUploadResponse;
+import com.aewol.domain.grouppurchase.dto.GroupPurchaseListItemResponse;
+import com.aewol.domain.grouppurchase.dto.GroupPurchaseListResponse;
 import com.aewol.domain.grouppurchase.dto.GroupPurchaseResponse;
 import com.aewol.domain.grouppurchase.mapper.GroupPurchaseMapper;
 import lombok.RequiredArgsConstructor;
@@ -13,10 +15,13 @@ import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.sql.Timestamp;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.temporal.ChronoUnit;
 import java.util.*;
+import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
@@ -24,12 +29,40 @@ public class GroupPurchaseServiceImpl implements GroupPurchaseService {
 
     private static final List<String> ALLOWED_IMAGE_EXTENSIONS = List.of("jpg", "jpeg", "png", "webp");
 
+    private static final Map<String, String> STATUS_TO_KOREAN = Map.of(
+            "OPEN", "진행중",
+            "COMPLETED", "마감(성공)",
+            "CLOSED", "마감(미달)"
+    );
+    private static final Map<String, String> KOREAN_TO_STATUS = Map.of(
+            "진행중", "OPEN",
+            "마감(성공)", "COMPLETED",
+            "마감(미달)", "CLOSED"
+    );
+
     private final GroupPurchaseMapper groupPurchaseMapper;
     private final FileUtil fileUtil;
 
     @Override
-    public List<Map<String, Object>> list() {
-        return groupPurchaseMapper.findAll();
+    public GroupPurchaseListResponse list(String status, String keyword, String category, int page, int size) {
+        int safePage = Math.max(page, 0);
+        int safeSize = size <= 0 ? 10 : size;
+        String dbStatus = status == null ? null : KOREAN_TO_STATUS.get(status);
+
+        List<Map<String, Object>> rows = groupPurchaseMapper.findList(
+                dbStatus, keyword, category, safeSize + 1, safePage * safeSize);
+
+        boolean hasNext = rows.size() > safeSize;
+        List<Map<String, Object>> pageRows = hasNext ? rows.subList(0, safeSize) : rows;
+
+        List<GroupPurchaseListItemResponse> items = pageRows.stream()
+                .map(this::toListItemResponse)
+                .collect(Collectors.toList());
+
+        return GroupPurchaseListResponse.builder()
+                .items(items)
+                .hasNext(hasNext)
+                .build();
     }
 
     @Override
@@ -113,6 +146,49 @@ public class GroupPurchaseServiceImpl implements GroupPurchaseService {
                 .deadline(toLocalDateTime(gp.get("deadline")))
                 .createdAt(toLocalDateTime(gp.get("created_at")))
                 .build();
+    }
+
+    private GroupPurchaseListItemResponse toListItemResponse(Map<String, Object> gp) {
+        LocalDateTime deadline = toLocalDateTime(gp.get("deadline"));
+        return GroupPurchaseListItemResponse.builder()
+                .id(toLong(gp.get("gp_id")))
+                .memberId(toLong(gp.get("member_id")))
+                .productName((String) gp.get("product_name"))
+                .category((String) gp.get("category"))
+                .status(STATUS_TO_KOREAN.getOrDefault(gp.get("status"), (String) gp.get("status")))
+                .currentQuantity(toInt(gp.get("current_quantity")))
+                .targetQuantity(toInt(gp.get("target_quantity")))
+                .dDay(toDDay(deadline))
+                .badgeText(toBadgeText(toDecimal(gp.get("unit_price")), toDecimal(gp.get("group_price"))))
+                // TODO: 로그인 유저의 실제 참여 여부(group_purchase_participant 조회)는 별도 이슈에서 처리 — 지금은 스텁
+                .isParticipating(false)
+                .createdAt(toLocalDateTime(gp.get("created_at")))
+                .build();
+    }
+
+    private static String toDDay(LocalDateTime deadline) {
+        if (deadline == null) return null;
+        long days = ChronoUnit.DAYS.between(LocalDate.now(), deadline.toLocalDate());
+        if (days > 0) return "D-" + days;
+        if (days == 0) return "D-DAY";
+        return "마감";
+    }
+
+    private static String toBadgeText(BigDecimal unitPrice, BigDecimal groupPrice) {
+        if (unitPrice == null || groupPrice == null
+                || unitPrice.signum() <= 0 || groupPrice.compareTo(unitPrice) >= 0) {
+            return null;
+        }
+        int rate = unitPrice.subtract(groupPrice)
+                .multiply(BigDecimal.valueOf(100))
+                .divide(unitPrice, 0, RoundingMode.HALF_UP)
+                .intValue();
+        return rate + "% 할인";
+    }
+
+    private static Long toLong(Object value) {
+        if (value == null) return null;
+        return value instanceof Number ? ((Number) value).longValue() : Long.parseLong(String.valueOf(value));
     }
 
     private static BigDecimal toDecimal(Object value) {

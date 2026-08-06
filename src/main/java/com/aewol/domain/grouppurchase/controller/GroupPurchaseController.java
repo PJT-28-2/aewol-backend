@@ -3,6 +3,7 @@ package com.aewol.domain.grouppurchase.controller;
 import com.aewol.common.response.ApiResponse;
 import com.aewol.domain.grouppurchase.dto.GroupPurchaseCreateRequest;
 import com.aewol.domain.grouppurchase.dto.GroupPurchaseImageUploadResponse;
+import com.aewol.domain.grouppurchase.dto.GroupPurchaseListResponse;
 import com.aewol.domain.grouppurchase.dto.GroupPurchaseResponse;
 import com.aewol.domain.grouppurchase.service.GroupPurchaseService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -14,7 +15,6 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
-import java.util.List;
 import java.util.Map;
 
 @Tag(name = "GroupPurchase", description = "공동구매 API")
@@ -25,10 +25,16 @@ public class GroupPurchaseController {
 
     private final GroupPurchaseService groupPurchaseService;
 
-    @Operation(summary = "공동구매 목록")
+    @Operation(summary = "공동구매 게시글 조회")
     @GetMapping
-    public ResponseEntity<ApiResponse<List<Map<String, Object>>>> list() {
-        return ResponseEntity.ok(ApiResponse.success(groupPurchaseService.list()));
+    public ResponseEntity<ApiResponse<GroupPurchaseListResponse>> list(
+            @RequestParam(required = false) String status,
+            @RequestParam(required = false) String keyword,
+            @RequestParam(required = false) String category,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "10") int size) {
+        return ResponseEntity.ok(ApiResponse.success("공동구매 목록 조회 성공",
+                groupPurchaseService.list(status, keyword, category, page, size)));
     }
 
     @Operation(summary = "공동구매 생성")

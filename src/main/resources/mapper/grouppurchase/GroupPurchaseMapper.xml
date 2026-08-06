@@ -3,8 +3,24 @@
 <mapper namespace="com.aewol.domain.grouppurchase.mapper.GroupPurchaseMapper">
     <!-- V1: 작성자 컴럼은 member_id, 참여 테이블은 group_purchase_participant(purchase_quantity) -->
 
-    <select id="findAll" resultType="map">
-        SELECT * FROM group_purchase WHERE status = 'OPEN' ORDER BY created_at DESC
+    <select id="findList" resultType="map">
+        SELECT * FROM group_purchase
+        <where>
+            <if test="status != null and status != ''">
+                status = #{status}
+            </if>
+            <if test="status == null or status == ''">
+                status != 'CANCELLED'
+            </if>
+            <if test="category != null and category != ''">
+                AND category = #{category}
+            </if>
+            <if test="keyword != null and keyword != ''">
+                AND product_name LIKE CONCAT('%', #{keyword}, '%')
+            </if>
+        </where>
+        ORDER BY deadline ASC, gp_id ASC
+        LIMIT #{limit} OFFSET #{offset}
     </select>
 
     <select id="findById" resultType="map">
