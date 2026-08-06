@@ -11,6 +11,13 @@
         SELECT * FROM member WHERE email = #{email}
     </select>
 
+    <select id="existsActiveByEmail" resultType="boolean">
+        SELECT COUNT(*) > 0
+        FROM member
+        WHERE email = #{email}
+          AND is_active = 1
+    </select>
+
     <!-- member_id는 BIGINT AUTO_INCREMENT — 생성 키를 맵의 memberId로 돌려받는다 -->
     <insert id="insert" parameterType="map" useGeneratedKeys="true" keyProperty="memberId" keyColumn="member_id">
         INSERT INTO member (email, password, name, phone,

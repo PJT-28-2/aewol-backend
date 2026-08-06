@@ -33,4 +33,24 @@
         SELECT * FROM insurance_claim WHERE member_id = #{memberId} ORDER BY created_at DESC
     </select>
 
+    <select id="findProductsBySpecies" resultType="map">
+        SELECT * FROM insurance_product WHERE species = #{species}
+    </select>
+
+    <select id="findCoveragesByProductIds" resultType="map">
+        SELECT * FROM insurance_product_coverage
+        WHERE product_id IN
+        <foreach item="productId" collection="productIds" open="(" separator="," close=")">
+            #{productId}
+        </foreach>
+    </select>
+
+    <select id="findPlanTiersByProductIds" resultType="map">
+        SELECT * FROM insurance_product_plan_tiers
+        WHERE product_id IN
+        <foreach item="productId" collection="productIds" open="(" separator="," close=")">
+            #{productId}
+        </foreach>
+    </select>
+
 </mapper>

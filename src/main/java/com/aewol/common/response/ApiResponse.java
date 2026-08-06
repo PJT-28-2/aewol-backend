@@ -13,21 +13,22 @@ public class ApiResponse<T> {
 
     private final int status;
     private final String message;
-    private final T data;
+    @JsonInclude(JsonInclude.Include.ALWAYS)
+    private final T result;
 
-    public static <T> ApiResponse<T> success(T data) {
+    public static <T> ApiResponse<T> success(T result) {
         return ApiResponse.<T>builder()
                 .status(200)
                 .message("success")
-                .data(data)
+                .result(result)
                 .build();
     }
 
-    public static <T> ApiResponse<T> success(String message, T data) {
+    public static <T> ApiResponse<T> success(String message, T result) {
         return ApiResponse.<T>builder()
                 .status(200)
                 .message(message)
-                .data(data)
+                .result(result)
                 .build();
     }
 
@@ -38,11 +39,11 @@ public class ApiResponse<T> {
                 .build();
     }
 
-    public static <T> ApiResponse<T> created(T data) {
+    public static <T> ApiResponse<T> created(T result) {
         return ApiResponse.<T>builder()
                 .status(201)
                 .message("created")
-                .data(data)
+                .result(result)
                 .build();
     }
 

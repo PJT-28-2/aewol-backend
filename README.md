@@ -181,7 +181,8 @@ PR은 `feature/{기능명}` → `develop` → `main` 순서로 병합합니다.
 | 거래 | GET | `/api/transactions` | 거래 내역 조회 |
 | 거래 | POST | `/api/transactions` | 거래 등록 |
 | 대시보드 | GET | `/api/dashboard/summary` | 월별 지출 요약 |
-| 보험 | POST | `/api/insurance/simulate` | 보험료 시뮬레이션 |
+| 보험 | POST | `/api/insurance/simulations` | 보험 시뮬레이터 결과 계산 |
+| 보험 | GET | `/api/insurance/products` | 보험 상품 리스트 조회 |
 | 보험 | POST | `/api/insurance/claims` | 보험 청구 (OCR) |
 | 공동양육 | POST | `/api/share/invite` | 공동양육 초대 |
 | 공동양육 | GET | `/api/share/pets` | 소유·공유 반려동물 조회 |

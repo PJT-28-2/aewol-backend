@@ -7,6 +7,10 @@
         SELECT * FROM pet WHERE pet_id = #{petId}
     </select>
 
+    <select id="findByIdAndMemberId" resultType="map">
+        SELECT * FROM pet WHERE pet_id = #{petId} AND member_id = #{memberId}
+    </select>
+
     <select id="findByMemberId" resultType="map">
         SELECT * FROM pet WHERE member_id = #{memberId} AND is_active = 1 ORDER BY created_at
     </select>
