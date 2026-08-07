@@ -1,6 +1,8 @@
 package com.aewol.domain.emergency.controller;
 
+import com.aewol.common.exception.BusinessException;
 import com.aewol.common.exception.GlobalExceptionHandler;
+import com.aewol.domain.emergency.dto.HospitalDetailResponse;
 import com.aewol.domain.emergency.dto.HospitalResponse;
 import com.aewol.domain.emergency.service.EmergencyService;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -22,6 +24,7 @@ import javax.validation.executable.ExecutableValidator;
 import java.lang.reflect.Method;
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Set;
 
@@ -122,6 +125,48 @@ class EmergencyControllerTest {
         verify(emergencyService).searchNearby(33.45, 126.56, 5.0, false);
     }
 
+    private HospitalDetailResponse sampleHospitalDetail() {
+        return HospitalDetailResponse.builder()
+                .hospitalId(1L)
+                .name("애월동물병원")
+                .address("제주시 애월읍 123")
+                .phone("064-000-0000")
+                .latitude(new BigDecimal("33.4500000"))
+                .longitude(new BigDecimal("126.5600000"))
+                .is24h(true)
+                .isHolidayOpen(false)
+                .avgWaitMinutes(15)
+                .updatedAt(LocalDateTime.of(2026, 8, 1, 10, 30))
+                .build();
+    }
+
+    @Test
+    @DisplayName("GET /api/emergency/hospitals/{hospitalId}는 병원 상세 정보를 200으로 반환한다")
+    void should_return200WithHospitalDetail_when_hospitalExists() throws Exception {
+        when(emergencyService.getDetail(1L))
+                .thenReturn(sampleHospitalDetail());
+
+        MvcResult result = mockMvc.perform(get("/api/emergency/hospitals/{hospitalId}", 1L))
+                .andExpect(status().isOk())
+                .andReturn();
+
+        JsonNode resultNode = resultNode(result);
+        assertEquals("애월동물병원", resultNode.path("name").asText());
+        assertTrue(resultNode.path("is24h").asBoolean());
+        assertFalse(resultNode.path("isHolidayOpen").asBoolean());
+        verify(emergencyService).getDetail(1L);
+    }
+
+    @Test
+    @DisplayName("존재하지 않는 hospitalId 조회 시 404를 반환한다")
+    void should_return404_when_hospitalDoesNotExist() throws Exception {
+        when(emergencyService.getDetail(999L))
+                .thenThrow(BusinessException.notFound("존재하지 않는 병원입니다."));
+
+        mockMvc.perform(get("/api/emergency/hospitals/{hospitalId}", 999L))
+                .andExpect(status().isNotFound());
+    }
+
     private Set<ConstraintViolation<EmergencyController>> validateSearchNearbyParams(Object[] args) throws Exception {
         Validator baseValidator = Validation.buildDefaultValidatorFactory().getValidator();
         ExecutableValidator validator = baseValidator.forExecutables();
@@ -163,6 +208,41 @@ class EmergencyControllerTest {
     void should_haveNoViolation_when_paramsWithinRange() throws Exception {
         Set<ConstraintViolation<EmergencyController>> violations =
                 validateSearchNearbyParams(new Object[]{33.45, 126.56, 5.0, false});
+
+        assertTrue(violations.isEmpty());
+    }
+
+    private Set<ConstraintViolation<EmergencyController>> validateGetDetailParams(Object[] args) throws Exception {
+        Validator baseValidator = Validation.buildDefaultValidatorFactory().getValidator();
+        ExecutableValidator validator = baseValidator.forExecutables();
+        EmergencyController controller = new EmergencyController(emergencyService);
+        Method method = EmergencyController.class.getMethod("getDetail", Long.class);
+        return validator.validateParameters(controller, method, args);
+    }
+
+    @Test
+    @DisplayName("hospitalId가 0이면 ConstraintViolation이 발생한다")
+    void should_violateConstraint_when_hospitalIdIsZero() throws Exception {
+        Set<ConstraintViolation<EmergencyController>> violations =
+                validateGetDetailParams(new Object[]{0L});
+
+        assertFalse(violations.isEmpty());
+    }
+
+    @Test
+    @DisplayName("hospitalId가 음수이면 ConstraintViolation이 발생한다")
+    void should_violateConstraint_when_hospitalIdIsNegative() throws Exception {
+        Set<ConstraintViolation<EmergencyController>> violations =
+                validateGetDetailParams(new Object[]{-1L});
+
+        assertFalse(violations.isEmpty());
+    }
+
+    @Test
+    @DisplayName("hospitalId가 1 이상이면 ConstraintViolation이 발생하지 않는다")
+    void should_haveNoViolation_when_hospitalIdIsPositive() throws Exception {
+        Set<ConstraintViolation<EmergencyController>> violations =
+                validateGetDetailParams(new Object[]{1L});
 
         assertTrue(violations.isEmpty());
     }
