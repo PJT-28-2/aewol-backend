@@ -1,5 +1,7 @@
 package com.aewol.domain.emergency.service;
 
+import com.aewol.common.exception.BusinessException;
+import com.aewol.domain.emergency.dto.HospitalDetailResponse;
 import com.aewol.domain.emergency.dto.HospitalResponse;
 import com.aewol.domain.emergency.mapper.EmergencyMapper;
 import org.junit.jupiter.api.DisplayName;
@@ -8,14 +10,20 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.http.HttpStatus;
 
 import java.math.BigDecimal;
+import java.sql.Timestamp;
+import java.time.LocalDateTime;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyDouble;
 import static org.mockito.Mockito.verify;
@@ -80,5 +88,50 @@ class EmergencyServiceImplTest {
 
         assertNull(result.get(0).getLatitude());
         assertNull(result.get(0).getDistanceKm());
+    }
+
+    private Map<String, Object> hospitalDetailRow() {
+        Map<String, Object> row = new LinkedHashMap<>();
+        row.put("hospital_id", 1L);
+        row.put("name", "애월동물병원");
+        row.put("address", "제주시 애월읍 123");
+        row.put("phone", "064-000-0000");
+        row.put("latitude", new BigDecimal("33.4500000"));
+        row.put("longitude", new BigDecimal("126.5600000"));
+        row.put("is_24h", true);
+        row.put("is_holiday_open", false);
+        row.put("avg_wait_minutes", 15);
+        row.put("updated_at", Timestamp.valueOf(LocalDateTime.of(2026, 8, 1, 10, 30)));
+        return row;
+    }
+
+    @Test
+    @DisplayName("mapper의 raw Map 결과를 HospitalDetailResponse DTO로 매핑한다")
+    void should_mapRowToHospitalDetailResponse_when_found() {
+        when(emergencyMapper.findById(1L))
+                .thenReturn(hospitalDetailRow());
+
+        HospitalDetailResponse response = emergencyService.getDetail(1L);
+
+        assertEquals(1L, response.getHospitalId());
+        assertEquals("애월동물병원", response.getName());
+        assertEquals("제주시 애월읍 123", response.getAddress());
+        assertEquals("064-000-0000", response.getPhone());
+        assertEquals(new BigDecimal("33.4500000"), response.getLatitude());
+        assertTrue(response.getIs24h());
+        assertFalse(response.getIsHolidayOpen());
+        assertEquals(15, response.getAvgWaitMinutes());
+        assertEquals(LocalDateTime.of(2026, 8, 1, 10, 30), response.getUpdatedAt());
+    }
+
+    @Test
+    @DisplayName("존재하지 않는 hospitalId 조회 시 404 BusinessException을 던진다")
+    void should_throwNotFound_when_hospitalIdDoesNotExist() {
+        when(emergencyMapper.findById(999L)).thenReturn(null);
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> emergencyService.getDetail(999L));
+
+        assertEquals(HttpStatus.NOT_FOUND, exception.getStatus());
     }
 }
