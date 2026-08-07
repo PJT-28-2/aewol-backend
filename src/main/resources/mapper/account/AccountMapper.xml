@@ -35,10 +35,13 @@
         WHERE account_id = #{accountId}
     </update>
 
-    <!-- 대표 계좌는 회원당 항상 최대 1개 — 새 대표 지정 전에 기존 대표를 먼저 내린다 -->
+    <!-- 대표 계좌는 회원당 항상 최대 1개 — 새 대표 지정 전에 기존 대표를 먼저 내린다.
+         status 조건 없이 회원의 모든 행(INACTIVE 포함)을 내린다 — ACTIVE로만 좁히면
+         과거에 연동 해제된 계좌에 남아있는 is_primary=1이 안 지워진다(CodeRabbit
+         지적, 2026-08-07). 배포 전 기존 데이터는 V9 마이그레이션으로 별도 보정한다. -->
     <update id="clearPrimaryByMemberId">
         UPDATE linked_account SET is_primary = 0, updated_at = NOW()
-        WHERE member_id = #{memberId} AND status = 'ACTIVE'
+        WHERE member_id = #{memberId}
     </update>
 
     <!-- status='ACTIVE' 조건을 걸어서, findByAccountId로 확인한 뒤 setPrimary 실행 전

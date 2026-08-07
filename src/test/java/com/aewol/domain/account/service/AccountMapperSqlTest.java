@@ -36,6 +36,18 @@ class AccountMapperSqlTest {
         assertTrue(setPrimaryBlock.contains("WHERE account_id = #{accountId} AND status = 'ACTIVE'"));
     }
 
+    @Test
+    void clearPrimaryByMemberIdIgnoresStatusSoInactiveRowsAreCleared() throws Exception {
+        String accountSql = resource("mapper/account/AccountMapper.xml");
+
+        String clearBlock = accountSql.substring(
+                accountSql.indexOf("<update id=\"clearPrimaryByMemberId\">"),
+                accountSql.indexOf("</update>", accountSql.indexOf("<update id=\"clearPrimaryByMemberId\">")));
+
+        assertTrue(clearBlock.contains("WHERE member_id = #{memberId}"));
+        assertTrue(!clearBlock.contains("status = 'ACTIVE'"));
+    }
+
     private String resource(String path) throws Exception {
         try (InputStream input = getClass().getClassLoader().getResourceAsStream(path)) {
             assertNotNull(input);
