@@ -29,6 +29,9 @@ public class EmergencyServiceImpl implements EmergencyService {
 
     @Override
     public HospitalDetailResponse getDetail(Long hospitalId) {
+        if (hospitalId == null || hospitalId < 1) {
+            throw new BusinessException("hospitalId는 1 이상이어야 합니다.");
+        }
         Map<String, Object> row = emergencyMapper.findById(hospitalId);
         if (row == null) {
             throw BusinessException.notFound("존재하지 않는 병원입니다.");

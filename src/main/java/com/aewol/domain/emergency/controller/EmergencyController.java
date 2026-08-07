@@ -8,6 +8,7 @@ import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import javax.validation.constraints.DecimalMax;
 import javax.validation.constraints.DecimalMin;
+import javax.validation.constraints.Min;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.validation.annotation.Validated;
@@ -44,7 +45,10 @@ public class EmergencyController {
 
     @Operation(summary = "병원 상세 조회")
     @GetMapping("/hospitals/{hospitalId}")
-    public ResponseEntity<ApiResponse<HospitalDetailResponse>> getDetail(@PathVariable Long hospitalId) {
+    public ResponseEntity<ApiResponse<HospitalDetailResponse>> getDetail(
+            @PathVariable
+            @Min(value = 1, message = "hospitalId는 1 이상이어야 합니다.")
+            Long hospitalId) {
         return ResponseEntity.ok(ApiResponse.success(emergencyService.getDetail(hospitalId)));
     }
 }
