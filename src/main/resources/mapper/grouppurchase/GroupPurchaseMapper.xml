@@ -3,8 +3,32 @@
 <mapper namespace="com.aewol.domain.grouppurchase.mapper.GroupPurchaseMapper">
     <!-- V1: 작성자 컴럼은 member_id, 참여 테이블은 group_purchase_participant(purchase_quantity) -->
 
-    <select id="findAll" resultType="map">
-        SELECT * FROM group_purchase WHERE status = 'OPEN' ORDER BY created_at DESC
+    <!-- status 필터는 저장 코드가 아니라 GroupPurchaseServiceImpl#computeDisplayStatus와 동일한
+         계산 규칙(마감 시각, 목표 수량 달성 여부)으로 판정한다. 필터는 반드시 LIMIT/OFFSET 이전에 적용한다. -->
+    <select id="findList" resultType="map">
+        SELECT * FROM group_purchase
+        <where>
+            status != 'CANCELLED'
+            <choose>
+                <when test="status == 'OPEN'">
+                    AND deadline &gt;= NOW()
+                </when>
+                <when test="status == 'COMPLETED'">
+                    AND deadline &lt; NOW() AND current_quantity &gt;= target_quantity
+                </when>
+                <when test="status == 'CLOSED'">
+                    AND deadline &lt; NOW() AND current_quantity &lt; target_quantity
+                </when>
+            </choose>
+            <if test="category != null and category != ''">
+                AND category = #{category}
+            </if>
+            <if test="keyword != null and keyword != ''">
+                AND product_name LIKE CONCAT('%', #{keyword}, '%')
+            </if>
+        </where>
+        ORDER BY deadline ASC, gp_id ASC
+        LIMIT #{limit} OFFSET #{offset}
     </select>
 
     <select id="findById" resultType="map">
