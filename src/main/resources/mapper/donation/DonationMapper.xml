@@ -150,15 +150,25 @@
         ORDER BY dh.created_at DESC
     </select>
 
+    <select id="findWithdrawalByIdempotencyKey" resultType="map">
+        SELECT t.*
+        FROM `transaction` t
+        JOIN wallet w ON w.wallet_id = t.wallet_id
+        WHERE w.member_id = #{memberId}
+          AND w.wallet_type = 'DONATION'
+          AND t.txn_type = 'TRANSFER'
+          AND t.idempotency_key = #{idempotencyKey}
+    </select>
+
     <!-- 저금통 -> 실지갑 출금은 내부 이체(TRANSFER).
          chk_txn_type_consistency: TRANSFER는 counter_wallet_id 필수, recurring_id NULL. -->
     <insert id="insertWalletTransaction" parameterType="map" useGeneratedKeys="true" keyProperty="txnId" keyColumn="txn_id">
         INSERT INTO `transaction`
             (wallet_id, counter_wallet_id, pet_id, txn_type, price,
-             category, merchant_name, memo, auto_tagged, txn_date)
+             category, merchant_name, memo, auto_tagged, idempotency_key, txn_date)
         VALUES
             (#{donationWalletId}, #{walletId}, NULL, 'TRANSFER', #{amount},
-             'ETC', '짜투리 저금통', '짜투리 저금통 출금', 'N', NOW())
+             'ETC', '짜투리 저금통', '짜투리 저금통 출금', 'N', #{idempotencyKey}, NOW())
     </insert>
 
     <!-- transaction에는 member_id가 없다(V1) — wallet 경유로 결제자의 적립 설정을 찾는다 -->
