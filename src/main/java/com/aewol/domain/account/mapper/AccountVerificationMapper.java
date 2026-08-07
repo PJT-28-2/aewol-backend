@@ -9,6 +9,7 @@ public interface AccountVerificationMapper {
     void insert(Map<String, Object> verification);
     Map<String, Object> findById(@Param("transactionId") String transactionId);
     void updateStatus(@Param("transactionId") String transactionId, @Param("status") String status);
+    void incrementAttemptCount(@Param("transactionId") String transactionId);
 
     // registerAccount 전용 원자적 상태 전환. WHERE절에 status='VERIFIED'를 같이 걸어서,
     // 같은 transactionId로 동시에 두 번 들어와도 한쪽만 실제로 행을 갱신하고 반환값(영향

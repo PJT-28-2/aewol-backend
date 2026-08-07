@@ -72,6 +72,17 @@ public class CodefClient {
     private static final String TRANSFER_AUTH_LOCK_PREFIX = "codef:transfer-auth-lock:";
     private static final long TRANSFER_AUTH_LOCK_TTL_SECONDS = 10;
 
+    // 위 10초 락은 "순간 중복 클릭"만 막을 뿐, 10초 이상 간격을 두고 재전송을 계속
+    // 누르는 건 못 막는다 — confirm 쪽 오답 5회 제한(AccountServiceImpl)이 있어도,
+    // 재전송할 때마다 attempt_count가 0인 새 transactionId를 받으므로 재전송 횟수
+    // 자체에 제한이 없으면 결국 무제한 시도가 가능해진다(2026-08-07, 코드 리뷰 중
+    // 발견). 그래서 같은 계좌로 30분 동안 만들 수 있는 1원 인증 요청 자체를
+    // 5번으로 제한한다 — confirm의 5회 제한과 곱해도 최악의 경우 30분에 25번
+    // 추측으로 묶인다(전체 후보 378개 대비 충분히 낮은 성공 확률).
+    private static final String TRANSFER_AUTH_RATE_LIMIT_PREFIX = "codef:transfer-auth-count:";
+    private static final long TRANSFER_AUTH_RATE_LIMIT_WINDOW_SECONDS = 1800;
+    private static final long TRANSFER_AUTH_RATE_LIMIT_MAX = 5;
+
     // CODEF inPrintType="1"(랜덤 한글 단어)은 CODEF가 자체 사전에서 단어를 골라주는
     // 방식이라 길이를 우리가 통제할 수 없다 — 4자, 5자, 6자가 다 나온다(2026-08-06 확인).
     // 그래서 inPrintType="9"(고객사 직접 입력)로 바꿔서, 우리가 직접 4자 한글 단어 풀에서
@@ -117,13 +128,28 @@ public class CodefClient {
      *
      * 같은 bankCode+accountNumber로 {@value #TRANSFER_AUTH_LOCK_TTL_SECONDS}초 안에
      * 재요청이 들어오면 CONFLICT로 막는다 — 실제 돈이 오가는 호출이라 중복 이체를
-     * 방지하기 위함(2026-08-07).
+     * 방지하기 위함(2026-08-07). 그와 별개로, 같은 계좌로 {@value
+     * #TRANSFER_AUTH_RATE_LIMIT_WINDOW_SECONDS}초 동안 만들 수 있는 인증 요청
+     * 자체를 {@value #TRANSFER_AUTH_RATE_LIMIT_MAX}번으로 제한한다(재전송 무제한
+     * 반복으로 confirm의 오답 횟수 제한을 우회하는 것 방지, 2026-08-07).
      *
      * @return 우리가 고른 입금자명(authCode) — 이 값을 verification_code로 저장해두고
      *         confirm 때 사용자 입력과 그대로 대조한다.
      */
     public String requestAccountTransferAuth(String bankCode, String accountNumber) {
-        String lockKey = TRANSFER_AUTH_LOCK_PREFIX + bankCode + ":" + accountNumber;
+        String accountHash = hashForLockKey(bankCode, accountNumber);
+
+        String rateLimitKey = TRANSFER_AUTH_RATE_LIMIT_PREFIX + accountHash;
+        Long requestCount = redisTemplate.opsForValue().increment(rateLimitKey);
+        if (requestCount != null && requestCount == 1L) {
+            redisTemplate.expire(rateLimitKey, TRANSFER_AUTH_RATE_LIMIT_WINDOW_SECONDS, TimeUnit.SECONDS);
+        }
+        if (requestCount != null && requestCount > TRANSFER_AUTH_RATE_LIMIT_MAX) {
+            throw new BusinessException(HttpStatus.TOO_MANY_REQUESTS,
+                    "1원 인증 요청이 너무 많아요. 30분 후 다시 시도해주세요");
+        }
+
+        String lockKey = TRANSFER_AUTH_LOCK_PREFIX + accountHash;
         Boolean acquired = redisTemplate.opsForValue()
                 .setIfAbsent(lockKey, "1", TRANSFER_AUTH_LOCK_TTL_SECONDS, TimeUnit.SECONDS);
         if (!Boolean.TRUE.equals(acquired)) {
@@ -170,6 +196,23 @@ public class CodefClient {
             return "****";
         }
         return "*".repeat(accountNumber.length() - 4) + accountNumber.substring(accountNumber.length() - 4);
+    }
+
+    /**
+     * Redis 락 키에 계좌번호 원문을 그대로 쓰면 Redis 모니터링/로그/스냅샷에 계좌번호가
+     * 그대로 노출된다(CodeRabbit 지적, 2026-08-07). SHA-256으로 해시해서 같은 계좌면
+     * 항상 같은 값이 나오는(락 기능 유지) 동시에 원문은 알아볼 수 없게 만든다.
+     */
+    private static String hashForLockKey(String bankCode, String accountNumber) {
+        try {
+            java.security.MessageDigest digest = java.security.MessageDigest.getInstance("SHA-256");
+            byte[] hash = digest.digest((bankCode + ":" + accountNumber).getBytes(StandardCharsets.UTF_8));
+            StringBuilder sb = new StringBuilder();
+            for (byte b : hash) sb.append(String.format("%02x", b));
+            return sb.toString();
+        } catch (java.security.NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 미지원 환경", e);
+        }
     }
 
     @SuppressWarnings("unchecked")
