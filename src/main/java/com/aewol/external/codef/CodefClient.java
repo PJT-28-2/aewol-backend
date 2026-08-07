@@ -142,20 +142,28 @@ public class CodefClient {
     public String requestAccountTransferAuth(String bankCode, String accountNumber) {
         String accountHash = hashForLockKey(bankCode, accountNumber);
 
-        String rateLimitKey = TRANSFER_AUTH_RATE_LIMIT_PREFIX + accountHash;
-        // INCR와 최초 증가 시 EXPIRE를 Lua 스크립트로 한 번에 원자 실행 — 그 사이 인스턴스가
-        // 죽어도 TTL 없는 키가 영구히 남지 않는다(CodeRabbit 지적, 2026-08-07).
-        long requestCount = redisRateLimiter.incrementWithExpiry(rateLimitKey, TRANSFER_AUTH_RATE_LIMIT_WINDOW_SECONDS);
-        if (requestCount > TRANSFER_AUTH_RATE_LIMIT_MAX) {
-            throw new BusinessException(HttpStatus.TOO_MANY_REQUESTS,
-                    "1원 인증 요청이 너무 많아요. 30분 후 다시 시도해주세요");
-        }
-
+        // 잠금을 먼저 확보하고, 확보에 성공했을 때만 요청 횟수를 증가시킨다. 순서가
+        // 반대면 동시에 들어온 재시도들이 잠금 실패(CONFLICT)로 끝나면서도 30분 요청
+        // 횟수를 매번 소비해서, 자동 재시도가 반복되면 실제 CODEF 호출 없이 한도(5회)에
+        // 도달할 수 있다(CodeRabbit 지적, 2026-08-07).
         String lockKey = TRANSFER_AUTH_LOCK_PREFIX + accountHash;
         Boolean acquired = redisTemplate.opsForValue()
                 .setIfAbsent(lockKey, "1", TRANSFER_AUTH_LOCK_TTL_SECONDS, TimeUnit.SECONDS);
         if (!Boolean.TRUE.equals(acquired)) {
             throw new BusinessException(HttpStatus.CONFLICT, "이미 처리 중인 1원 인증 요청이 있어요. 잠시 후 다시 시도해주세요");
+        }
+
+        String rateLimitKey = TRANSFER_AUTH_RATE_LIMIT_PREFIX + accountHash;
+        // INCR와 최초 증가 시 EXPIRE를 Lua 스크립트로 한 번에 원자 실행 — 그 사이 인스턴스가
+        // 죽어도 TTL 없는 키가 영구히 남지 않는다(CodeRabbit 지적, 2026-08-07).
+        long requestCount = redisRateLimiter.incrementWithExpiry(rateLimitKey, TRANSFER_AUTH_RATE_LIMIT_WINDOW_SECONDS);
+        if (requestCount > TRANSFER_AUTH_RATE_LIMIT_MAX) {
+            // 잠금은 확보했지만 요청 횟수 한도를 넘겨서 실제 처리 없이 끝나는 경우이므로,
+            // 짧은 TTL(10초)이 지나기 전이라도 잠금을 즉시 풀어 이후의 정상 요청을
+            // 불필요하게 막지 않는다.
+            redisTemplate.delete(lockKey);
+            throw new BusinessException(HttpStatus.TOO_MANY_REQUESTS,
+                    "1원 인증 요청이 너무 많아요. 30분 후 다시 시도해주세요");
         }
 
         String organization = "0" + bankCode;
