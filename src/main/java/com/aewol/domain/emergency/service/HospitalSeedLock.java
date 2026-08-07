@@ -6,7 +6,9 @@ import java.util.UUID;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
-import java.util.function.Supplier;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.BooleanSupplier;
+import java.util.function.Function;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.core.RedisTemplate;
@@ -19,6 +21,18 @@ import org.springframework.stereotype.Component;
  * <p>전국 동물병원 수만 건을 페이지네이션으로 수집한 뒤 한 트랜잭션에 upsert하는 작업이라
  * TTL(30분)보다 오래 걸릴 수 있다. 그동안 다른 인스턴스가 락을 획득해 동시에 upsert하는
  * 것을 막기 위해, 소유 토큰이 일치할 때만 TTL을 갱신하는 백그라운드 스케줄러를 둔다.
+ *
+ * <p>TTL 연장만으로는 부족하다 — 연장에 실패해 소유권을 잃었더라도, 그 사실이 실행 중인
+ * {@code action}에 전달되지 않으면 이미 다른 인스턴스가 처리 중인 데이터를 그대로 계속
+ * 덮어쓸 수 있다(예: 새 인스턴스가 폐업 병원을 삭제한 직후, 소유권을 잃은 이전 실행이 자신이
+ * 수집해둔 오래된 데이터로 그 병원을 다시 upsert). 그래서 {@code action}에는 매번 최신
+ * 소유권 상태를 조회할 수 있는 {@link BooleanSupplier}를 함께 넘기고, 호출자는 DB에 쓰기
+ * 직전마다(가능하면 매 쓰기마다) 이를 확인해 소유권을 잃었으면 즉시 중단해야 한다.
+ *
+ * <p>다만 이 확인은 "확인 시점과 실제 쓰기 시점 사이의 아주 짧은 창"까지 막아주진 못한다.
+ * 그 창까지 완전히 없애려면 각 쓰기에 fencing token(예: DB에 락 세대값 컬럼을 두고 조건부
+ * UPDATE)을 적용해야 하는데, 월 1회 배치인 이 기능의 리스크 대비 스키마 변경 비용이 커서
+ * 지금은 적용하지 않았다.
  */
 @Component
 @RequiredArgsConstructor
@@ -41,21 +55,26 @@ public class HospitalSeedLock {
 
     private final RedisTemplate<String, String> redisTemplate;
 
-    public <T> T execute(Supplier<T> action) {
+    /**
+     * @param action 락을 쥐고 실행할 작업. 인자로 전달되는 {@link BooleanSupplier}는 현재도
+     *               이 실행이 락 소유자인지를 반환하며, DB 쓰기 직전마다 확인해야 한다.
+     */
+    public <T> T execute(Function<BooleanSupplier, T> action) {
         String token = UUID.randomUUID().toString();
         Boolean acquired = redisTemplate.opsForValue().setIfAbsent(LOCK_KEY, token, LOCK_TTL);
         if (!Boolean.TRUE.equals(acquired)) {
             throw new IllegalStateException("병원 데이터 시딩이 이미 실행 중입니다.");
         }
 
+        AtomicBoolean owned = new AtomicBoolean(true);
         ScheduledExecutorService renewer = newRenewalScheduler();
         renewer.scheduleAtFixedRate(
-                () -> renew(token),
+                () -> renew(token, owned),
                 RENEWAL_INTERVAL.toMillis(),
                 RENEWAL_INTERVAL.toMillis(),
                 TimeUnit.MILLISECONDS);
         try {
-            return action.get();
+            return action.apply(owned::get);
         } finally {
             renewer.shutdownNow();
             try {
@@ -66,8 +85,12 @@ public class HospitalSeedLock {
         }
     }
 
-    /** 소유 토큰이 일치할 때만 TTL을 연장한다 (다른 실행이 이미 락을 가져간 경우 갱신하지 않음). */
-    private void renew(String token) {
+    /**
+     * 소유 토큰이 일치할 때만 TTL을 연장한다. 연장 실패(다른 실행이 이미 락을 가져감) 또는
+     * Redis 호출 자체의 실패(소유 여부를 확인할 수 없음)는 모두 소유권 상실로 간주해 안전한
+     * 쪽으로 처리한다 — {@code action}이 이 상태를 확인하면 남은 DB 쓰기를 건너뛴다.
+     */
+    private void renew(String token, AtomicBoolean owned) {
         try {
             Long renewed = redisTemplate.execute(
                     RENEW_SCRIPT,
@@ -75,10 +98,12 @@ public class HospitalSeedLock {
                     token,
                     String.valueOf(LOCK_TTL.toMillis()));
             if (renewed == null || renewed == 0) {
-                log.warn("병원 데이터 시딩 잠금 연장 실패 - 소유권을 이미 상실했을 수 있습니다.");
+                owned.set(false);
+                log.warn("병원 데이터 시딩 잠금 연장 실패 - 소유권을 상실했습니다. 이후 DB 쓰기는 중단됩니다.");
             }
         } catch (RuntimeException e) {
-            log.error("병원 데이터 시딩 잠금 연장 중 오류가 발생했습니다.", e);
+            owned.set(false);
+            log.error("병원 데이터 시딩 잠금 연장 중 오류가 발생했습니다 - 소유권 상실로 간주해 이후 DB 쓰기를 중단합니다.", e);
         }
     }
 

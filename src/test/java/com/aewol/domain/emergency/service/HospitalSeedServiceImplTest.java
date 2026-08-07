@@ -1,10 +1,13 @@
 package com.aewol.domain.emergency.service;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyMap;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -14,7 +17,9 @@ import java.math.BigDecimal;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.function.Supplier;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.BooleanSupplier;
+import java.util.function.Function;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -38,8 +43,12 @@ class HospitalSeedServiceImplTest {
 
     @BeforeEach
     void setUp() {
-        lenient().doAnswer(invocation -> ((Supplier<?>) invocation.getArgument(0)).get())
-                .when(hospitalSeedLock).execute(any());
+        // 기본값: 락 소유권을 계속 유지한다고 가정. 소유권 상실 시나리오는 각 테스트에서
+        // hospitalSeedLock.execute(...) 스텁을 오버라이드해 BooleanSupplier를 직접 제어한다.
+        lenient().doAnswer(invocation -> {
+            Function<BooleanSupplier, ?> action = invocation.getArgument(0);
+            return action.apply(() -> true);
+        }).when(hospitalSeedLock).execute(any());
         lenient().doAnswer(invocation ->
                         ((TransactionCallback<?>) invocation.getArgument(0)).doInTransaction(null))
                 .when(transactionOperations).execute(any());
@@ -156,6 +165,57 @@ class HospitalSeedServiceImplTest {
 
         assertEquals(0, upserted);
         verify(hospitalSeedMapper, never()).upsertHospital(anyMap());
+    }
+
+    @Test
+    @DisplayName("[회귀] 수집 후 DB 쓰기 전에 락 소유권을 상실하면 어떤 행도 upsert/삭제하지 않고 중단한다")
+    void should_abortBeforeAnyWrite_when_lockOwnershipLostBeforePersisting() {
+        Map<String, Object> row = row();
+        when(animalHospitalClient.isConfigured()).thenReturn(true);
+        when(animalHospitalClient.findAllHospitals()).thenReturn(List.of(row));
+        // 소유권을 이미 상실한 상태로 시작 — 새 인스턴스가 이미 락을 가져갔다고 가정.
+        doExecuteWithOwnership(() -> false);
+
+        assertThrows(IllegalStateException.class, () -> service().syncHospitals());
+
+        verify(hospitalSeedMapper, never()).upsertHospital(anyMap());
+        verify(hospitalSeedMapper, never()).deleteHospitalByExternalMngNo(org.mockito.ArgumentMatchers.anyString());
+    }
+
+    @Test
+    @DisplayName("[회귀] 트랜잭션 도중 락 소유권을 상실하면 이미 처리한 행 이후로는 즉시 중단한다"
+            + " (새 인스턴스가 삭제한 폐업 병원을 이전 실행이 다시 upsert하는 것을 방지)")
+    void should_stopMidTransaction_when_lockOwnershipLostDuringPersisting() {
+        Map<String, Object> row1 = new HashMap<>(Map.of("mgtNo", "row-1"));
+        Map<String, Object> row2 = new HashMap<>(Map.of("mgtNo", "row-2"));
+        when(animalHospitalClient.isConfigured()).thenReturn(true);
+        when(animalHospitalClient.findAllHospitals()).thenReturn(List.of(row1, row2));
+        when(animalHospitalClient.mgtNo(row1)).thenReturn("row-1");
+        when(animalHospitalClient.name(row1)).thenReturn("병원1");
+        when(animalHospitalClient.address(row1)).thenReturn("주소1");
+        when(animalHospitalClient.statusName(row1)).thenReturn("영업/정상");
+        // row2는 값을 세팅하지 않는다 — 소유권 상실로 row1 처리 직후 중단되어 row2까지는
+        // 도달하지 않아야 하므로, 도달한다면 스텁 부재로 NPE가 나서 테스트가 실패해 드러난다.
+
+        // 사전 확인(1회) + row1 확인(2회째까지는 true) + row2 확인 시점(3회째)부터 false.
+        AtomicInteger callIndex = new AtomicInteger();
+        doExecuteWithOwnership(() -> callIndex.getAndIncrement() < 2);
+
+        assertThrows(IllegalStateException.class, () -> service().syncHospitals());
+
+        verify(hospitalSeedMapper, times(1)).upsertHospital(anyMap());
+    }
+
+    /**
+     * {@code when(mock.execute(any()))} 형태로 재스텁하면, 이미 걸려있는 이전 doAnswer 스텁이
+     * 그 호출 자체를 가로채 실행되면서 {@code any()} 매처의 null 플레이스홀더를 action으로
+     * 잘못 넘겨 NPE가 난다. doAnswer(...).when(...) 형태로 덮어써야 안전하다.
+     */
+    private void doExecuteWithOwnership(BooleanSupplier lockOwned) {
+        doAnswer(invocation -> {
+            Function<BooleanSupplier, ?> action = invocation.getArgument(0);
+            return action.apply(lockOwned);
+        }).when(hospitalSeedLock).execute(any());
     }
 
     @Test

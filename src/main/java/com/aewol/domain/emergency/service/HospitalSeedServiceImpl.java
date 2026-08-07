@@ -7,6 +7,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.function.BooleanSupplier;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -39,9 +40,12 @@ public class HospitalSeedServiceImpl implements HospitalSeedService {
         return hospitalSeedLock.execute(this::syncConfiguredHospitals);
     }
 
-    private int syncConfiguredHospitals() {
+    private int syncConfiguredHospitals(BooleanSupplier lockOwned) {
         List<Map<String, Object>> rows = collectRows();
-        Integer upserted = transactionOperations.execute(status -> persistRows(rows));
+        // 수집(HTTP)에 오래 걸려 그 사이 락 소유권을 잃었을 수 있으니, DB 트랜잭션을 열기
+        // 전에 한 번 더 확인한다. 트랜잭션 안에서도 행마다 다시 확인한다(persistRows 참고).
+        requireStillOwned(lockOwned);
+        Integer upserted = transactionOperations.execute(status -> persistRows(rows, lockOwned));
         return Objects.requireNonNull(upserted, "병원 시딩 트랜잭션 결과가 없습니다.");
     }
 
@@ -52,11 +56,15 @@ public class HospitalSeedServiceImpl implements HospitalSeedService {
         return rows;
     }
 
-    private int persistRows(List<Map<String, Object>> rows) {
+    private int persistRows(List<Map<String, Object>> rows, BooleanSupplier lockOwned) {
         int upserted = 0;
         int deleted = 0;
         int skipped = 0;
         for (Map<String, Object> row : rows) {
+            // 인메모리 플래그 조회라 Redis 왕복 없이 행마다 확인해도 비용이 거의 없다.
+            // 소유권을 잃었으면 즉시 예외를 던져 트랜잭션 전체를 롤백시킨다 — 이전 실행의
+            // 오래된 데이터가 새 실행이 이미 반영한 폐업/갱신을 덮어쓰는 것을 막기 위함이다.
+            requireStillOwned(lockOwned);
             switch (persistOne(row)) {
                 case UPSERTED -> upserted++;
                 case DELETED -> deleted++;
@@ -65,6 +73,12 @@ public class HospitalSeedServiceImpl implements HospitalSeedService {
         }
         log.info("[HospitalSeed] upsert {}건, 폐업 삭제 {}건, skip {}건", upserted, deleted, skipped);
         return upserted;
+    }
+
+    private void requireStillOwned(BooleanSupplier lockOwned) {
+        if (!lockOwned.getAsBoolean()) {
+            throw new IllegalStateException("병원 시딩 잠금 소유권을 상실해 DB 쓰기를 중단합니다.");
+        }
     }
 
     /**
