@@ -82,7 +82,7 @@ class PetDocumentQueryDeleteServiceTest {
     @Test
     void should_deleteRecordAndFile_when_ownerDeletesDocument() throws IOException {
         givenOwner();
-        when(petDocumentMapper.findByIdAndPetId("doc-1", "pet-1"))
+        when(petDocumentMapper.findByIdAndPetIdForUpdate("doc-1", "pet-1"))
                 .thenReturn(document("doc-1", "/uploads/pet-documents/file.pdf", null));
         when(petDocumentMapper.deleteByIdAndPetId("doc-1", "pet-1")).thenReturn(1);
 
@@ -93,9 +93,23 @@ class PetDocumentQueryDeleteServiceTest {
     }
 
     @Test
+    void should_keepDeleteResult_when_fileCleanupFailsAfterDatabaseDelete() throws IOException {
+        givenOwner();
+        when(petDocumentMapper.findByIdAndPetIdForUpdate("doc-1", "pet-1"))
+                .thenReturn(document("doc-1", "/uploads/pet-documents/file.pdf", null));
+        when(petDocumentMapper.deleteByIdAndPetId("doc-1", "pet-1")).thenReturn(1);
+        doThrow(new IOException("disk error"))
+                .when(fileUtil).delete("/uploads/pet-documents/file.pdf");
+
+        assertDoesNotThrow(() -> service.deletePetDocument("member-1", "pet-1", "doc-1"));
+
+        verify(fileUtil).delete("/uploads/pet-documents/file.pdf");
+    }
+
+    @Test
     void should_throwNotFound_when_documentDoesNotBelongToPet() {
         givenOwner();
-        when(petDocumentMapper.findByIdAndPetId("doc-2", "pet-1")).thenReturn(null);
+        when(petDocumentMapper.findByIdAndPetIdForUpdate("doc-2", "pet-1")).thenReturn(null);
 
         BusinessException exception = assertThrows(BusinessException.class,
                 () -> service.deletePetDocument("member-1", "pet-1", "doc-2"));
