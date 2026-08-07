@@ -25,6 +25,17 @@ class AccountMapperSqlTest {
         assertTrue(updateStatusBlock.contains("CASE WHEN #{status} = 'INACTIVE' THEN 0 ELSE is_primary END"));
     }
 
+    @Test
+    void setPrimaryOnlyAffectsActiveAccounts() throws Exception {
+        String accountSql = resource("mapper/account/AccountMapper.xml");
+
+        String setPrimaryBlock = accountSql.substring(
+                accountSql.indexOf("<update id=\"setPrimary\">"),
+                accountSql.indexOf("</update>", accountSql.indexOf("<update id=\"setPrimary\">")));
+
+        assertTrue(setPrimaryBlock.contains("WHERE account_id = #{accountId} AND status = 'ACTIVE'"));
+    }
+
     private String resource(String path) throws Exception {
         try (InputStream input = getClass().getClassLoader().getResourceAsStream(path)) {
             assertNotNull(input);

@@ -36,12 +36,29 @@ class AccountServiceImplTest {
         when(accountMapper.findByAccountId(ACCOUNT_ID))
                 .thenReturn(accountRow(ACCOUNT_ID, MEMBER_ID, "ACTIVE", false))
                 .thenReturn(accountRow(ACCOUNT_ID, MEMBER_ID, "ACTIVE", true));
+        when(accountMapper.setPrimary(ACCOUNT_ID)).thenReturn(1);
 
         var result = service.setPrimaryAccount(MEMBER_ID, ACCOUNT_ID, request(true));
 
         assertTrue(result.getIsPrimary());
         verify(accountMapper).clearPrimaryByMemberId(MEMBER_ID);
         verify(accountMapper).setPrimary(ACCOUNT_ID);
+    }
+
+    @Test
+    @DisplayName("findByAccountId 확인 이후 계좌가 동시에 연동 해제되면(setPrimary 영향 행 0) 예외를 던진다")
+    void should_throwConflict_when_accountDisconnectedConcurrentlyBeforeSetPrimary() {
+        // findByAccountId 시점엔 ACTIVE였지만, 그 사이 다른 트랜잭션이 INACTIVE로
+        // 바꿔서 setPrimary의 WHERE status='ACTIVE' 조건에 안 걸리는 상황을 재현한다.
+        when(accountMapper.findByAccountId(ACCOUNT_ID))
+                .thenReturn(accountRow(ACCOUNT_ID, MEMBER_ID, "ACTIVE", false));
+        when(accountMapper.setPrimary(ACCOUNT_ID)).thenReturn(0);
+
+        BusinessException ex = assertThrows(BusinessException.class,
+                () -> service.setPrimaryAccount(MEMBER_ID, ACCOUNT_ID, request(true)));
+
+        assertEquals(org.springframework.http.HttpStatus.CONFLICT, ex.getStatus());
+        verify(accountMapper).clearPrimaryByMemberId(MEMBER_ID);
     }
 
     @Test

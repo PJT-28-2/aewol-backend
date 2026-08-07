@@ -41,9 +41,13 @@
         WHERE member_id = #{memberId} AND status = 'ACTIVE'
     </update>
 
+    <!-- status='ACTIVE' 조건을 걸어서, findByAccountId로 확인한 뒤 setPrimary 실행 전
+         사이에 다른 트랜잭션이 이 계좌를 연동 해제(INACTIVE)해도 대표로 올라가지
+         않는다. 영향 행 수(0/1)를 그대로 반환해서 서비스가 경쟁 상태를 감지한다
+         (CodeRabbit 지적, 2026-08-07). -->
     <update id="setPrimary">
         UPDATE linked_account SET is_primary = 1, updated_at = NOW()
-        WHERE account_id = #{accountId}
+        WHERE account_id = #{accountId} AND status = 'ACTIVE'
     </update>
 
 </mapper>

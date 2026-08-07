@@ -182,7 +182,15 @@ public class AccountServiceImpl implements AccountService {
         // 해당 행에 락을 걸어서 동시에 들어온 다른 요청은 이 트랜잭션이 커밋될 때까지
         // 대기하기 때문이다(InnoDB 행 잠금, 2026-08-07 코드리뷰 지적으로 주석 정정).
         accountMapper.clearPrimaryByMemberId(memberId);
-        accountMapper.setPrimary(accountId);
+
+        // 위의 findByAccountId 조회 이후, 여기 도달하기 전에 다른 트랜잭션이 같은
+        // 계좌를 연동 해제(INACTIVE)할 수 있다. setPrimary는 status='ACTIVE' 조건부라
+        // 그 경우 영향 행 0을 반환하므로, 방금 한 clearPrimaryByMemberId까지 롤백해서
+        // "대표 계좌 0개" 상태가 커밋되는 걸 막는다(CodeRabbit 지적, 2026-08-07).
+        int updated = accountMapper.setPrimary(accountId);
+        if (updated == 0) {
+            throw new BusinessException(HttpStatus.CONFLICT, "연동 해제된 계좌는 대표 계좌로 설정할 수 없어요");
+        }
 
         return toAccountResponse(accountMapper.findByAccountId(accountId));
     }
