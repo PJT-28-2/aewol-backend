@@ -14,16 +14,18 @@
         ORDER BY created_at DESC, doc_id DESC
     </select>
 
-    <select id="findByPetIdAndType" resultType="map">
+    <select id="findByPetIdAndTypeForUpdate" resultType="map">
         SELECT * FROM pet_document
         WHERE pet_id = #{petId} AND doc_type = #{docType}
         ORDER BY created_at DESC
         LIMIT 1
+        FOR UPDATE
     </select>
 
-    <select id="findByIdAndPetId" resultType="map">
+    <select id="findByIdAndPetIdForUpdate" resultType="map">
         SELECT * FROM pet_document
         WHERE doc_id = #{docId} AND pet_id = #{petId}
+        FOR UPDATE
     </select>
 
     <update id="update" parameterType="map">

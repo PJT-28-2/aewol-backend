@@ -8,6 +8,7 @@ import com.aewol.domain.pet.dto.PetResponse;
 import com.aewol.domain.pet.mapper.PetDocumentMapper;
 import com.aewol.domain.pet.mapper.PetMapper;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -21,6 +22,7 @@ import java.util.*;
 import java.util.stream.Collectors;
 
 @Service
+@Slf4j
 @RequiredArgsConstructor
 public class PetServiceImpl implements PetService {
 
@@ -106,7 +108,7 @@ public class PetServiceImpl implements PetService {
                                                           MultipartFile file, LocalDate issuedDate) {
         assertOwner(memberId, petId);
         String storageExtension = validateDocument(file);
-        Map<String, Object> existing = petDocumentMapper.findByPetIdAndType(petId, VACCINATION);
+        Map<String, Object> existing = petDocumentMapper.findByPetIdAndTypeForUpdate(petId, VACCINATION);
         String newFileUrl;
         try {
             newFileUrl = fileUtil.upload(file, DOCUMENT_SUB_DIR, storageExtension);
@@ -151,7 +153,7 @@ public class PetServiceImpl implements PetService {
     @Transactional
     public void deletePetDocument(String memberId, String petId, String docId) {
         assertOwner(memberId, petId);
-        Map<String, Object> document = petDocumentMapper.findByIdAndPetId(docId, petId);
+        Map<String, Object> document = petDocumentMapper.findByIdAndPetIdForUpdate(docId, petId);
         if (document == null) {
             throw BusinessException.notFound("문서를 찾을 수 없습니다.");
         }
@@ -212,8 +214,10 @@ public class PetServiceImpl implements PetService {
     private void deleteQuietly(String fileUrl) {
         try {
             fileUtil.delete(fileUrl);
-        } catch (IOException ignored) {
-            // 파일 정리 실패가 이미 반영된 DB 트랜잭션을 되돌리지는 않는다.
+        } catch (IOException e) {
+            // 파일시스템은 DB 트랜잭션에 참여하지 않으므로 실패를 숨기지 않고 후속 정리가
+            // 가능하도록 파일 URL과 예외를 남긴다. 영속 재시도는 별도 이슈에서 처리한다.
+            log.warn("반려동물 문서 파일 삭제 실패 - fileUrl: {}", fileUrl, e);
         }
     }
 
