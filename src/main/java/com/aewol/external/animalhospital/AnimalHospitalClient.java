@@ -73,8 +73,13 @@ public class AnimalHospitalClient {
             try {
                 body = restTemplate.getForObject(buildUri(page), Map.class);
             } catch (RestClientException e) {
-                log.error("동물병원 조회 실패 - page={}, message={}", page, e.getMessage());
-                throw e;
+                // RestClientException(특히 ResourceAccessException)의 메시지에는 서비스키가 포함된
+                // 요청 URI가 그대로 들어있다. 원본 예외를 그대로 던지면(cause로 감싸도 "Caused by"에
+                // 메시지가 다시 노출된다) 상위 배치 잡의 catch(Exception) 로깅에서 새어나가므로,
+                // 여기서 페이지 번호/예외 타입만 남긴 새 예외로 완전히 대체해서 던진다.
+                log.error("동물병원 조회 실패 - page={}, exceptionType={}", page, e.getClass().getSimpleName());
+                throw new IllegalStateException(
+                        "동물병원 API 호출 실패 (page=" + page + ", exceptionType=" + e.getClass().getSimpleName() + ")");
             }
             if (body == null) {
                 throw new IllegalStateException("동물병원 API가 빈 응답을 반환했습니다.");

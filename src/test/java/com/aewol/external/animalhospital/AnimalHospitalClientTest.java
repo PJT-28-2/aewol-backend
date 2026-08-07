@@ -1,6 +1,9 @@
 package com.aewol.external.animalhospital;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
@@ -19,6 +22,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
+import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestTemplate;
 
 @ExtendWith(MockitoExtension.class)
@@ -117,5 +121,28 @@ class AnimalHospitalClientTest {
         row.put("LOTNO_ADDR", "제주시 애월읍 1번지");
 
         assertEquals("제주시 애월읍 1번지", client.address(row));
+    }
+
+    @Test
+    @DisplayName("[보안] RestClientException 메시지에 담긴 서비스키가 상위로 전파되지 않는다")
+    void should_notLeakServiceKey_when_restCallFails() {
+        // ResourceAccessException은 실제로 "I/O error on GET request for \"<URI>\": ..." 형태로
+        // 요청 URI(서비스키 쿼리파라미터 포함)를 메시지에 그대로 담는다.
+        String leakedSecret = "SECRET-KEY-VALUE";
+        ResourceAccessException original = new ResourceAccessException(
+                "I/O error on GET request for \"https://apis.data.go.kr/test/AnimalHospitalService"
+                        + "?serviceKey=" + leakedSecret + "&pageNo=1\": Connection refused");
+        when(restTemplate.getForObject(any(URI.class), org.mockito.ArgumentMatchers.eq(Map.class)))
+                .thenThrow(original);
+
+        IllegalStateException thrown =
+                assertThrows(IllegalStateException.class, () -> client.findAllHospitals());
+
+        assertFalse(thrown.getMessage().contains(leakedSecret),
+                "예외 메시지에 서비스키가 노출되면 안 된다: " + thrown.getMessage());
+        assertNull(thrown.getCause(),
+                "cause를 원본 예외로 설정하면 상위 로거의 스택트레이스(Caused by)에 서비스키가 다시 노출된다");
+        assertTrue(thrown.getMessage().contains("page=1"));
+        assertTrue(thrown.getMessage().contains("ResourceAccessException"));
     }
 }
