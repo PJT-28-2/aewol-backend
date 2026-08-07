@@ -46,7 +46,17 @@ class AnimalHospitalClientTest {
         Map<String, Object> body = new HashMap<>();
         body.put("items", itemsWrapper);
         Map<String, Object> response = new HashMap<>();
+        response.put("header", Map.of("resultCode", "0", "resultMsg", "정상"));
         response.put("body", body);
+        Map<String, Object> root = new HashMap<>();
+        root.put("response", response);
+        return root;
+    }
+
+    /** HTTP 200이지만 resultCode가 오류인 응답. items가 아예 없거나 비어있을 수 있다. */
+    private Map<String, Object> wrapError(String resultCode, String resultMsg) {
+        Map<String, Object> response = new HashMap<>();
+        response.put("header", Map.of("resultCode", resultCode, "resultMsg", resultMsg));
         Map<String, Object> root = new HashMap<>();
         root.put("response", response);
         return root;
@@ -121,6 +131,32 @@ class AnimalHospitalClientTest {
         row.put("LOTNO_ADDR", "제주시 애월읍 1번지");
 
         assertEquals("제주시 애월읍 1번지", client.address(row));
+    }
+
+    @Test
+    @DisplayName("[회귀] HTTP 200이어도 resultCode가 오류면 빈 목록으로 처리하지 않고 예외로 전파한다")
+    void should_throwWithResultMsg_when_resultCodeIsError() {
+        when(restTemplate.getForObject(any(URI.class), org.mockito.ArgumentMatchers.eq(Map.class)))
+                .thenReturn(wrapError("-2", "요청하신 파라미터가 적합하지 않습니다."));
+
+        IllegalStateException thrown =
+                assertThrows(IllegalStateException.class, () -> client.findAllHospitals());
+
+        assertTrue(thrown.getMessage().contains("-2"));
+        assertTrue(thrown.getMessage().contains("요청하신 파라미터가 적합하지 않습니다."));
+    }
+
+    @Test
+    @DisplayName("[회귀] resultCode 자체가 없는 응답도 성공으로 간주하지 않고 예외로 전파한다")
+    void should_throw_when_resultCodeMissing() {
+        Map<String, Object> response = new HashMap<>();
+        response.put("header", Map.of("resultMsg", "정상"));
+        Map<String, Object> root = new HashMap<>();
+        root.put("response", response);
+        when(restTemplate.getForObject(any(URI.class), org.mockito.ArgumentMatchers.eq(Map.class)))
+                .thenReturn(root);
+
+        assertThrows(IllegalStateException.class, () -> client.findAllHospitals());
     }
 
     @Test

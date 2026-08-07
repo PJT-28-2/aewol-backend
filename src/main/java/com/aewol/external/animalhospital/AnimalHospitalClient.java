@@ -46,6 +46,9 @@ public class AnimalHospitalClient {
     private static final String FIELD_Y = "CRD_INFO_Y";
     private static final String FIELD_STATUS_NAME = "SALS_STTS_NM";
 
+    /** 라이브 호출로 확인한 성공 코드. 그 외 값(-1, -2, ... -999)은 전부 오류 응답이다. */
+    private static final String SUCCESS_RESULT_CODE = "0";
+
     private final RestTemplate restTemplate;
     private final Wgs84CoordinateConverter coordinateConverter;
 
@@ -130,6 +133,11 @@ public class AnimalHospitalClient {
     /**
      * 실응답 구조 {@code response.body.items.item}(item은 배열)을 파싱한다. 결과가 1건뿐이면
      * item이 배열이 아니라 단일 객체로 내려오는 data.go.kr의 흔한 케이스도 함께 처리한다.
+     *
+     * <p>이 API는 HTTP 상태코드와 무관하게 항상 200을 반환하고, 실제 성공/실패는
+     * {@code response.header.resultCode}로만 구분된다. 이걸 건너뛰면 오류 응답(예: 일시적인
+     * 파라미터 오류, 트래픽 초과)의 빈 body를 "병원이 0건"으로 오인해 시딩이 조용히
+     * 성공한 것처럼 끝나버리므로, items를 읽기 전에 반드시 성공 코드인지 확인한다.
      */
     @SuppressWarnings("unchecked")
     private List<Map<String, Object>> extractItems(Map<String, Object> body) {
@@ -137,7 +145,17 @@ public class AnimalHospitalClient {
         if (!(response instanceof Map)) {
             throw new IllegalStateException("동물병원 API 응답 형식이 예상과 다릅니다: response 없음");
         }
-        Object responseBody = ((Map<String, Object>) response).get("body");
+        Map<String, Object> responseMap = (Map<String, Object>) response;
+
+        Object headerObj = responseMap.get("header");
+        String resultCode = headerObj instanceof Map ? text((Map<String, Object>) headerObj, "resultCode") : null;
+        if (!SUCCESS_RESULT_CODE.equals(resultCode)) {
+            String resultMsg = headerObj instanceof Map ? text((Map<String, Object>) headerObj, "resultMsg") : null;
+            throw new IllegalStateException(
+                    "동물병원 API가 오류 응답을 반환했습니다 - resultCode=" + resultCode + ", resultMsg=" + resultMsg);
+        }
+
+        Object responseBody = responseMap.get("body");
         if (!(responseBody instanceof Map)) {
             throw new IllegalStateException("동물병원 API 응답 형식이 예상과 다릅니다: body 없음");
         }
