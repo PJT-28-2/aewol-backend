@@ -24,8 +24,26 @@
         WHERE la.account_id = #{accountId}
     </select>
 
+    <!-- INACTIVE로 바뀌는 계좌가 대표 계좌였으면 is_primary도 같이 내린다. 안 내리면
+         연동 해제 후에도 DB엔 대표 표시가 남아있어서, 나중에 대표 계좌 설정 로직이
+         "이미 대표가 있다"고 잘못 판단할 여지가 생긴다(2026-08-07 코드리뷰 지적). -->
     <update id="updateStatus">
-        UPDATE linked_account SET status = #{status}, updated_at = NOW() WHERE account_id = #{accountId}
+        UPDATE linked_account
+        SET status = #{status},
+            is_primary = CASE WHEN #{status} = 'INACTIVE' THEN 0 ELSE is_primary END,
+            updated_at = NOW()
+        WHERE account_id = #{accountId}
+    </update>
+
+    <!-- 대표 계좌는 회원당 항상 최대 1개 — 새 대표 지정 전에 기존 대표를 먼저 내린다 -->
+    <update id="clearPrimaryByMemberId">
+        UPDATE linked_account SET is_primary = 0, updated_at = NOW()
+        WHERE member_id = #{memberId} AND status = 'ACTIVE'
+    </update>
+
+    <update id="setPrimary">
+        UPDATE linked_account SET is_primary = 1, updated_at = NOW()
+        WHERE account_id = #{accountId}
     </update>
 
 </mapper>

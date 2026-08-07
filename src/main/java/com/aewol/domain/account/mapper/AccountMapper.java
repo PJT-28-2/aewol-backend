@@ -11,4 +11,6 @@ public interface AccountMapper {
     List<Map<String, Object>> findByMemberId(@Param("memberId") String memberId);
     Map<String, Object> findByAccountId(@Param("accountId") String accountId);
     void updateStatus(@Param("accountId") String accountId, @Param("status") String status);
+    void clearPrimaryByMemberId(@Param("memberId") String memberId);
+    void setPrimary(@Param("accountId") String accountId);
 }

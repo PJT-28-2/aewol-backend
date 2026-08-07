@@ -1,6 +1,7 @@
 package com.aewol.domain.account.service;
 
 import com.aewol.common.exception.BusinessException;
+import com.aewol.domain.account.dto.AccountPrimaryRequest;
 import com.aewol.domain.account.dto.AccountRegisterRequest;
 import com.aewol.domain.account.dto.AccountResponse;
 import com.aewol.domain.account.dto.DepositConfirmRequest;
@@ -156,6 +157,34 @@ public class AccountServiceImpl implements AccountService {
     @Transactional
     public void disconnectAccount(String accountId) {
         accountMapper.updateStatus(accountId, "INACTIVE");
+    }
+
+    @Override
+    @Transactional
+    public AccountResponse setPrimaryAccount(String memberId, String accountId, AccountPrimaryRequest request) {
+        if (!Boolean.TRUE.equals(request.getIsPrimary())) {
+            // isPrimary=false로 대표 계좌를 "해제"하는 요청은 지원하지 않는다 — 다른
+            // 계좌를 대표로 지정하면 자동으로 해제되므로, 회원당 대표 계좌 0개 상태를
+            // 만들 수 있는 요청 자체를 막는다.
+            throw new BusinessException(HttpStatus.BAD_REQUEST, "isPrimary는 true만 지원해요");
+        }
+
+        Map<String, Object> account = accountMapper.findByAccountId(accountId);
+        if (account == null || !String.valueOf(account.get("member_id")).equals(memberId)) {
+            throw BusinessException.notFound("연동된 계좌를 찾을 수 없어요");
+        }
+        if (!"ACTIVE".equals(account.get("status"))) {
+            throw new BusinessException(HttpStatus.CONFLICT, "연동 해제된 계좌는 대표 계좌로 설정할 수 없어요");
+        }
+
+        // 회원당 대표 계좌는 항상 1개 — 기존 대표를 먼저 내리고 지정한 계좌만 올린다.
+        // 안전한 이유는 "트랜잭션 안이라서"가 아니라, UPDATE ... WHERE 문 자체가
+        // 해당 행에 락을 걸어서 동시에 들어온 다른 요청은 이 트랜잭션이 커밋될 때까지
+        // 대기하기 때문이다(InnoDB 행 잠금, 2026-08-07 코드리뷰 지적으로 주석 정정).
+        accountMapper.clearPrimaryByMemberId(memberId);
+        accountMapper.setPrimary(accountId);
+
+        return toAccountResponse(accountMapper.findByAccountId(accountId));
     }
 
     // 연동된 외부 은행 계좌의 실제 잔액은 조회하지 않는다(2026-08-06 결정) — 실시간 조회는

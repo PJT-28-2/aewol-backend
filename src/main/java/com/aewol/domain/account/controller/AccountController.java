@@ -1,6 +1,7 @@
 package com.aewol.domain.account.controller;
 
 import com.aewol.common.response.ApiResponse;
+import com.aewol.domain.account.dto.AccountPrimaryRequest;
 import com.aewol.domain.account.dto.AccountRegisterRequest;
 import com.aewol.domain.account.dto.AccountResponse;
 import com.aewol.domain.account.dto.DepositConfirmRequest;
@@ -61,5 +62,14 @@ public class AccountController {
     public ResponseEntity<ApiResponse<Void>> disconnect(@PathVariable String accountId) {
         accountService.disconnectAccount(accountId);
         return ResponseEntity.ok(ApiResponse.success());
+    }
+
+    @Operation(summary = "대표 계좌 설정")
+    @PatchMapping("/{accountId}")
+    public ResponseEntity<ApiResponse<AccountResponse>> setPrimaryAccount(
+            @AuthenticationPrincipal String memberId,
+            @PathVariable String accountId,
+            @Valid @RequestBody AccountPrimaryRequest request) {
+        return ResponseEntity.ok(ApiResponse.success(accountService.setPrimaryAccount(memberId, accountId, request)));
     }
 }
