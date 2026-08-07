@@ -120,7 +120,7 @@ public class CodefClient {
      * CODEF 계좌 인증(1원 이체) 요청.
      * bankCode는 bank_master의 금융결제원 3자리 코드 — CODEF organization(4자리)으로
      * 패딩해서 보낸다("0" + bankCode, 예: "004" -> "0004").
-     * inPrintType=9(고객사 직접 입력)로 수식어+명사 조합(둘 다 2음절)을 골라
+     * inPrintType=9(고객사 직접 입력)로 완성형 한글 음절 4개를 독립적으로 뽑아
      * inPrintContent로 보낸다 — 우리가 고른 값이 그대로 실제 1원 이체의 입금자명이
      * 되므로 길이가 항상 4자로 고정된다. 프론트(AccountAuthOneWon.vue)는 응답의
      * depositorNameLength(항상 4)만큼 입력 칸을 그린다.
