@@ -1,6 +1,7 @@
 package com.aewol.domain.account.service;
 
 import com.aewol.common.exception.BusinessException;
+import com.aewol.common.util.RedisRateLimiter;
 import com.aewol.domain.account.dto.AccountRegisterRequest;
 import com.aewol.domain.account.dto.AccountResponse;
 import com.aewol.domain.account.dto.DepositConfirmRequest;
@@ -13,7 +14,6 @@ import com.aewol.external.codef.CodefClient;
 import lombok.RequiredArgsConstructor;
 import org.springframework.core.env.Environment;
 import org.springframework.core.env.Profiles;
-import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -22,7 +22,6 @@ import java.sql.Timestamp;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
-import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 @Service
@@ -33,7 +32,7 @@ public class AccountServiceImpl implements AccountService {
     private final AccountVerificationMapper accountVerificationMapper;
     private final CodefClient codefClient;
     private final Environment environment;
-    private final RedisTemplate<String, String> redisTemplate;
+    private final RedisRateLimiter redisRateLimiter;
 
     // 프론트(store.requestDepositAuth의 DEPOSIT_AUTH_TIMEOUT_SECONDS)와 동일한 유효시간.
     // 여기서 안 맞추면 프론트는 아직 타이머가 남았다고 보여주는데 서버는 이미
@@ -99,11 +98,10 @@ public class AccountServiceImpl implements AccountService {
      */
     private void enforceRequestRateLimit(String memberId) {
         String key = VERIFICATION_REQUEST_KEY_PREFIX + memberId;
-        Long count = redisTemplate.opsForValue().increment(key);
-        if (count != null && count == 1L) {
-            redisTemplate.expire(key, VERIFICATION_REQUEST_WINDOW_SECONDS, TimeUnit.SECONDS);
-        }
-        if (count != null && count > MAX_VERIFICATION_REQUESTS) {
+        // INCR와 최초 증가 시 EXPIRE를 Lua 스크립트로 원자 실행 — 그 사이 인스턴스가 죽어도
+        // TTL 없는 키가 영구히 남지 않는다(CodeRabbit 지적, 2026-08-07).
+        long count = redisRateLimiter.incrementWithExpiry(key, VERIFICATION_REQUEST_WINDOW_SECONDS);
+        if (count > MAX_VERIFICATION_REQUESTS) {
             throw new BusinessException(HttpStatus.TOO_MANY_REQUESTS, "1원 인증 요청이 너무 많아요. 잠시 후 다시 시도해주세요");
         }
     }
@@ -111,7 +109,10 @@ public class AccountServiceImpl implements AccountService {
     @Override
     @Transactional
     public DepositConfirmResponse confirmDepositVerification(String memberId, DepositConfirmRequest request) {
-        Map<String, Object> verification = accountVerificationMapper.findById(request.getTransactionId());
+        // findByIdForUpdate로 행을 잠근 채 한도 검사 -> 값 비교 -> 갱신까지 이 트랜잭션
+        // 안에서 순서대로 끝낸다 — findById(잠금 없음)로 읽으면 동시 요청이 같은
+        // attempt_count를 읽고 모두 한도 미만으로 통과할 수 있다(CodeRabbit 지적, 2026-08-07).
+        Map<String, Object> verification = accountVerificationMapper.findByIdForUpdate(request.getTransactionId());
         if (verification == null || !String.valueOf(verification.get("member_id")).equals(memberId)) {
             throw BusinessException.notFound("1원 인증 요청을 찾을 수 없어요");
         }

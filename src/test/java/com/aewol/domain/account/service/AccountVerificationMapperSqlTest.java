@@ -26,6 +26,20 @@ class AccountVerificationMapperSqlTest {
         assertTrue(block.contains("WHERE transaction_id = #{transactionId}"));
     }
 
+    // confirm 동시 요청 경합 방지(CodeRabbit 지적, 2026-08-07) — findByIdForUpdate가
+    // 실제로 FOR UPDATE로 행을 잠그는지 XML 원문으로 확인한다.
+    @Test
+    void findByIdForUpdateLocksRowWithForUpdate() throws Exception {
+        String sql = resource("mapper/account/AccountVerificationMapper.xml");
+
+        String block = sql.substring(
+                sql.indexOf("<select id=\"findByIdForUpdate\""),
+                sql.indexOf("</select>", sql.indexOf("<select id=\"findByIdForUpdate\"")));
+
+        assertTrue(block.contains("WHERE transaction_id = #{transactionId}"));
+        assertTrue(block.contains("FOR UPDATE"));
+    }
+
     private String resource(String path) throws Exception {
         try (InputStream input = getClass().getClassLoader().getResourceAsStream(path)) {
             assertNotNull(input);

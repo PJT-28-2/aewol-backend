@@ -35,7 +35,7 @@ class AccountServiceImplTest {
     @Test
     @DisplayName("입금자명이 일치하고 시도 횟수가 한도 미만이면 인증에 성공한다")
     void should_verify_when_codeCorrectAndUnderLimit() {
-        when(accountVerificationMapper.findById(TRANSACTION_ID))
+        when(accountVerificationMapper.findByIdForUpdate(TRANSACTION_ID))
                 .thenReturn(pendingVerification(0));
 
         DepositConfirmResponse result = service.confirmDepositVerification(MEMBER_ID, confirmRequest(CORRECT_CODE));
@@ -47,9 +47,25 @@ class AccountServiceImplTest {
     }
 
     @Test
+    @DisplayName("confirm은 잠금 없는 findById가 아니라 FOR UPDATE로 행을 잠그는 findByIdForUpdate를 사용한다")
+    void should_useLockingRead_notPlainFindById() {
+        // 동시에 들어온 confirm 요청들이 같은 attempt_count를 읽고 모두 통과하는 경합을
+        // 막으려면 반드시 findByIdForUpdate(FOR UPDATE)로 행을 잠가야 한다(CodeRabbit
+        // 지적, 2026-08-07). Mockito로는 실제 동시성 재현이 불가능해서, 대신 서비스가
+        // 잠금 없는 findById를 절대 호출하지 않는다는 걸로 회귀를 방지한다.
+        when(accountVerificationMapper.findByIdForUpdate(TRANSACTION_ID))
+                .thenReturn(pendingVerification(0));
+
+        service.confirmDepositVerification(MEMBER_ID, confirmRequest(CORRECT_CODE));
+
+        verify(accountVerificationMapper).findByIdForUpdate(TRANSACTION_ID);
+        verify(accountVerificationMapper, never()).findById(any());
+    }
+
+    @Test
     @DisplayName("입금자명이 틀리면 MISMATCH를 반환하고 시도 횟수를 올린다")
     void should_returnMismatch_and_incrementAttempt_when_codeWrong() {
-        when(accountVerificationMapper.findById(TRANSACTION_ID))
+        when(accountVerificationMapper.findByIdForUpdate(TRANSACTION_ID))
                 .thenReturn(pendingVerification(0));
 
         DepositConfirmResponse result = service.confirmDepositVerification(MEMBER_ID, confirmRequest("틀린값"));
@@ -63,7 +79,7 @@ class AccountServiceImplTest {
     @Test
     @DisplayName("시도 횟수가 한도(5회)에 도달하면 정답을 넣어도 통과시키지 않는다")
     void should_returnTooManyAttempts_when_attemptCountAtLimit() {
-        when(accountVerificationMapper.findById(TRANSACTION_ID))
+        when(accountVerificationMapper.findByIdForUpdate(TRANSACTION_ID))
                 .thenReturn(pendingVerification(5));
 
         DepositConfirmResponse result = service.confirmDepositVerification(MEMBER_ID, confirmRequest(CORRECT_CODE));

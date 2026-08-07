@@ -8,6 +8,11 @@ import java.util.Map;
 public interface AccountVerificationMapper {
     void insert(Map<String, Object> verification);
     Map<String, Object> findById(@Param("transactionId") String transactionId);
+
+    // confirm 전용 — 트랜잭션 안에서 이 행을 잠근 채로 한도 검사/값 비교/상태 갱신을
+    // 순서대로 수행해야 여러 confirm 요청이 동시에 같은 attempt_count를 읽고 모두
+    // 통과하는 경합을 막을 수 있다(CodeRabbit 지적, 2026-08-07).
+    Map<String, Object> findByIdForUpdate(@Param("transactionId") String transactionId);
     void updateStatus(@Param("transactionId") String transactionId, @Param("status") String status);
     void incrementAttemptCount(@Param("transactionId") String transactionId);
 
