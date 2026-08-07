@@ -48,7 +48,7 @@ public class EmergencyServiceImpl implements EmergencyService {
                 .latitude(toBigDecimal(row.get("latitude")))
                 .longitude(toBigDecimal(row.get("longitude")))
                 .is24h(toBoolean(row.get("is_24h")))
-                .isHolidayOpen(toBoolean(row.get("is_holiday_open")))
+                .isHolidayOpen(toNullableBoolean(row.get("is_holiday_open")))
                 .avgWaitMinutes(toInteger(row.get("avg_wait_minutes")))
                 .updatedAt(toLocalDateTime(row.get("updated_at")))
                 .build();
@@ -89,6 +89,13 @@ public class EmergencyServiceImpl implements EmergencyService {
             return ((Number) value).intValue() != 0;
         }
         return Boolean.parseBoolean(value.toString());
+    }
+
+    private static Boolean toNullableBoolean(Object value) {
+        if (value == null) {
+            return null;
+        }
+        return toBoolean(value);
     }
 
     private static Long toLong(Object value) {
