@@ -58,6 +58,15 @@ public class CodefClient {
     // CODEF accessToken은 1주일 유효 — 만료 임박 재요청을 피하려고 6일만 캐싱
     private static final long TOKEN_TTL_DAYS = 6;
 
+    // 1원 이체 요청은 실제 돈이 오가는 멱등하지 않은 호출이라, 같은 계좌로 짧은 시간
+    // 안에 중복 요청(더블클릭, 프론트 재시도, 네트워크 타임아웃 후 재시도 등)이 들어오면
+    // CODEF가 매번 새 입금자명으로 별도 이체를 발생시킬 수 있다(CodeRabbit 지적,
+    // 2026-08-07). bankCode+accountNumber 기준으로 짧은 락을 걸어서 막는다 — 잠금
+    // 해제는 따로 하지 않고 TTL 만료에만 맡긴다(성공/실패 여부와 무관하게 쿨다운으로
+    // 동작해야 진짜 중복 클릭을 막을 수 있음).
+    private static final String TRANSFER_AUTH_LOCK_PREFIX = "codef:transfer-auth-lock:";
+    private static final long TRANSFER_AUTH_LOCK_TTL_SECONDS = 10;
+
     // CODEF inPrintType="1"(랜덤 한글 단어)은 CODEF가 자체 사전에서 단어를 골라주는
     // 방식이라 길이를 우리가 통제할 수 없다 — 4자, 5자, 6자가 다 나온다(2026-08-06 확인).
     // 그래서 inPrintType="9"(고객사 직접 입력)로 바꿔서, 우리가 직접 4자 한글 단어 풀에서
@@ -101,10 +110,21 @@ public class CodefClient {
      * 반환한다(CODEF 문서 명시) — 정식 버전 전환 전까지는 이 검증이 항상
      * 신뢰할 수 있는 건 아니라는 점 감안 필요.
      *
+     * 같은 bankCode+accountNumber로 {@value #TRANSFER_AUTH_LOCK_TTL_SECONDS}초 안에
+     * 재요청이 들어오면 CONFLICT로 막는다 — 실제 돈이 오가는 호출이라 중복 이체를
+     * 방지하기 위함(2026-08-07).
+     *
      * @return 우리가 고른 입금자명(authCode) — 이 값을 verification_code로 저장해두고
      *         confirm 때 사용자 입력과 그대로 대조한다.
      */
     public String requestAccountTransferAuth(String bankCode, String accountNumber) {
+        String lockKey = TRANSFER_AUTH_LOCK_PREFIX + bankCode + ":" + accountNumber;
+        Boolean acquired = redisTemplate.opsForValue()
+                .setIfAbsent(lockKey, "1", TRANSFER_AUTH_LOCK_TTL_SECONDS, TimeUnit.SECONDS);
+        if (!Boolean.TRUE.equals(acquired)) {
+            throw new BusinessException(HttpStatus.CONFLICT, "이미 처리 중인 1원 인증 요청이 있어요. 잠시 후 다시 시도해주세요");
+        }
+
         String organization = "0" + bankCode;
         String depositorName = randomDepositorName();
 
