@@ -7,10 +7,14 @@ import com.aewol.common.exception.BusinessException;
 import com.aewol.common.util.FileUtil;
 import com.aewol.domain.grouppurchase.dto.GroupPurchaseCreateRequest;
 import com.aewol.domain.grouppurchase.dto.GroupPurchaseImageUploadResponse;
+import com.aewol.domain.grouppurchase.dto.GroupPurchaseJoinRequest;
+import com.aewol.domain.grouppurchase.dto.GroupPurchaseJoinResponse;
 import com.aewol.domain.grouppurchase.dto.GroupPurchaseListItemResponse;
 import com.aewol.domain.grouppurchase.dto.GroupPurchaseListResponse;
 import com.aewol.domain.grouppurchase.dto.GroupPurchaseResponse;
 import com.aewol.domain.grouppurchase.mapper.GroupPurchaseMapper;
+import com.aewol.domain.transaction.mapper.TransactionMapper;
+import com.aewol.domain.wallet.mapper.WalletMapper;
 import java.io.IOException;
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -33,6 +37,8 @@ class GroupPurchaseServiceImplTest {
 
     @Mock GroupPurchaseMapper groupPurchaseMapper;
     @Mock FileUtil fileUtil;
+    @Mock WalletMapper walletMapper;
+    @Mock TransactionMapper transactionMapper;
 
     @Test
     @DisplayName("허용된 확장자의 이미지를 업로드하면 저장된 이미지 URL을 반환한다")
@@ -130,7 +136,7 @@ class GroupPurchaseServiceImplTest {
                         listRow(2L, "OPEN", deadline, 30000, 25000),
                         listRow(3L, "OPEN", deadline, 30000, 25000)));
 
-        GroupPurchaseListResponse result = service.list(null, null, null, 0, 2);
+        GroupPurchaseListResponse result = service.list(null, null, null, null, 0, 2);
 
         assertEquals(2, result.getItems().size());
         assertTrue(result.isHasNext());
@@ -143,13 +149,42 @@ class GroupPurchaseServiceImplTest {
     }
 
     @Test
+    @DisplayName("로그인한 유저가 이미 참여한 게시글은 isParticipating이 true로 내려간다")
+    void should_returnIsParticipatingTrue_when_memberAlreadyJoined() {
+        GroupPurchaseServiceImpl service = service();
+        LocalDateTime deadline = LocalDateTime.now().plusDays(5);
+        when(groupPurchaseMapper.findList(isNull(), isNull(), isNull(), eq(11), eq(0)))
+                .thenReturn(List.of(listRow(1L, "OPEN", deadline, 30000, 25000)));
+        when(groupPurchaseMapper.findParticipant("1", "member-1"))
+                .thenReturn(participantRow(10523L, "1", "member-1", 1));
+
+        GroupPurchaseListResponse result = service.list("member-1", null, null, null, 0, 10);
+
+        assertTrue(result.getItems().get(0).getIsParticipating());
+    }
+
+    @Test
+    @DisplayName("비로그인 상태로 조회하면 isParticipating은 항상 false이고 참여 여부를 조회하지 않는다")
+    void should_returnIsParticipatingFalse_when_memberIdIsNull() {
+        GroupPurchaseServiceImpl service = service();
+        LocalDateTime deadline = LocalDateTime.now().plusDays(5);
+        when(groupPurchaseMapper.findList(isNull(), isNull(), isNull(), eq(11), eq(0)))
+                .thenReturn(List.of(listRow(1L, "OPEN", deadline, 30000, 25000)));
+
+        GroupPurchaseListResponse result = service.list(null, null, null, null, 0, 10);
+
+        assertFalse(result.getItems().get(0).getIsParticipating());
+        verify(groupPurchaseMapper, never()).findParticipant(any(), any());
+    }
+
+    @Test
     @DisplayName("결과가 없으면 빈 목록과 hasNext false를 반환한다")
     void should_returnEmptyListWithHasNextFalse_when_noRowsMatch() {
         GroupPurchaseServiceImpl service = service();
         when(groupPurchaseMapper.findList(any(), any(), any(), anyInt(), anyInt()))
                 .thenReturn(List.of());
 
-        GroupPurchaseListResponse result = service.list(null, null, null, 99, 10);
+        GroupPurchaseListResponse result = service.list(null, null, null, null, 99, 10);
 
         assertTrue(result.getItems().isEmpty());
         assertFalse(result.isHasNext());
@@ -162,7 +197,7 @@ class GroupPurchaseServiceImplTest {
         when(groupPurchaseMapper.findList(eq("COMPLETED"), isNull(), eq("사료"), eq(11), eq(0)))
                 .thenReturn(List.of());
 
-        service.list("마감(성공)", null, "사료", 0, 10);
+        service.list(null, "마감(성공)", null, "사료", 0, 10);
 
         verify(groupPurchaseMapper).findList("COMPLETED", null, "사료", 11, 0);
     }
@@ -174,7 +209,7 @@ class GroupPurchaseServiceImplTest {
         when(groupPurchaseMapper.findList(isNull(), isNull(), isNull(), anyInt(), anyInt()))
                 .thenReturn(List.of());
 
-        assertDoesNotThrow(() -> service.list(null, null, null, 0, 10));
+        assertDoesNotThrow(() -> service.list(null, null, null, null, 0, 10));
     }
 
     @Test
@@ -183,7 +218,7 @@ class GroupPurchaseServiceImplTest {
         GroupPurchaseServiceImpl service = service();
 
         BusinessException exception = assertThrows(BusinessException.class,
-                () -> service.list("invalid", null, null, 0, 10));
+                () -> service.list(null, "invalid", null, null, 0, 10));
 
         assertEquals("지원하지 않는 상태 값입니다: invalid", exception.getMessage());
         verifyNoInteractions(groupPurchaseMapper);
@@ -197,7 +232,7 @@ class GroupPurchaseServiceImplTest {
         when(groupPurchaseMapper.findList(isNull(), isNull(), isNull(), eq(11), eq(0)))
                 .thenReturn(List.of(listRow(1L, "OPEN", futureDeadline, 30000, 25000, 5, 10)));
 
-        GroupPurchaseListResponse result = service.list(null, null, null, 0, 10);
+        GroupPurchaseListResponse result = service.list(null, null, null, null, 0, 10);
 
         assertEquals("진행중", result.getItems().get(0).getStatus());
     }
@@ -210,7 +245,7 @@ class GroupPurchaseServiceImplTest {
         when(groupPurchaseMapper.findList(isNull(), isNull(), isNull(), eq(11), eq(0)))
                 .thenReturn(List.of(listRow(1L, "OPEN", pastDeadline, 30000, 25000, 10, 10)));
 
-        GroupPurchaseListResponse result = service.list(null, null, null, 0, 10);
+        GroupPurchaseListResponse result = service.list(null, null, null, null, 0, 10);
 
         assertEquals("마감(성공)", result.getItems().get(0).getStatus());
     }
@@ -223,9 +258,177 @@ class GroupPurchaseServiceImplTest {
         when(groupPurchaseMapper.findList(isNull(), isNull(), isNull(), eq(11), eq(0)))
                 .thenReturn(List.of(listRow(1L, "OPEN", pastDeadline, 30000, 25000, 4, 10)));
 
-        GroupPurchaseListResponse result = service.list(null, null, null, 0, 10);
+        GroupPurchaseListResponse result = service.list(null, null, null, null, 0, 10);
 
         assertEquals("마감(미달)", result.getItems().get(0).getStatus());
+    }
+
+    @Test
+    @DisplayName("공동구매 참여에 성공하면 지갑에서 차감하고 거래내역을 생성한 뒤 참여 정보를 반환한다")
+    void should_returnJoinResponse_when_joinSucceeds() {
+        GroupPurchaseServiceImpl service = service();
+        Map<String, Object> gpRow = savedRow();
+        Map<String, Object> updatedGpRow = savedRow();
+        updatedGpRow.put("current_quantity", 2);
+        Map<String, Object> savedParticipantRow = participantRow(10523L, "1", "member-1", 2);
+        savedParticipantRow.put("paid_amount", new BigDecimal("50000"));
+        savedParticipantRow.put("payment_status", "PAID");
+        savedParticipantRow.put("paid_at", LocalDateTime.of(2026, 8, 7, 10, 0));
+        savedParticipantRow.put("txn_id", 777L);
+
+        when(groupPurchaseMapper.findById("1")).thenReturn(gpRow, updatedGpRow);
+        when(groupPurchaseMapper.findParticipant("1", "member-1")).thenReturn(null, savedParticipantRow);
+
+        Map<String, Object> wallet = new HashMap<>();
+        wallet.put("wallet_id", "wallet-1");
+        wallet.put("member_id", "member-1");
+        wallet.put("balance", new BigDecimal("100000"));
+        when(walletMapper.findByMemberId("member-1")).thenReturn(wallet);
+        doAnswer(invocation -> {
+            Map<String, Object> txn = invocation.getArgument(0);
+            txn.put("txnId", 777L);
+            return null;
+        }).when(transactionMapper).insert(anyMap());
+
+        GroupPurchaseJoinResponse result = service.join("member-1", "1", 2, joinRequest());
+
+        assertEquals("1", result.getGpId());
+        assertEquals(10523L, result.getParticipantId());
+        assertEquals(2, result.getQuantity());
+        assertEquals(2, result.getCurrentQuantity());
+        assertEquals(10, result.getTargetQuantity());
+        assertEquals("김애월", result.getRecipientName());
+        assertEquals("010-1234-5678", result.getRecipientPhone());
+        assertEquals("16856", result.getZipCode());
+        assertEquals("서울특별시 광진구 화양동", result.getAddress());
+        assertEquals("세종대점 컴포즈 302호", result.getAddressDetail());
+        assertEquals("PAID", result.getPaymentStatus());
+        assertEquals(new BigDecimal("50000"), result.getPaidAmount());
+        assertEquals(LocalDateTime.of(2026, 8, 7, 10, 0), result.getPaidAt());
+        assertEquals(LocalDateTime.of(2026, 8, 7, 10, 0), result.getJoinedAt());
+
+        verify(walletMapper).updateBalance("wallet-1", new BigDecimal("50000"));
+
+        ArgumentCaptor<Map<String, Object>> txnCaptor = ArgumentCaptor.forClass(Map.class);
+        verify(transactionMapper).insert(txnCaptor.capture());
+        assertEquals("wallet-1", txnCaptor.getValue().get("walletId"));
+        assertEquals("PAYMENT", txnCaptor.getValue().get("txnType"));
+        assertEquals(new BigDecimal("50000"), txnCaptor.getValue().get("price"));
+        assertEquals("FOOD", txnCaptor.getValue().get("category"));
+
+        ArgumentCaptor<Map<String, Object>> captor = ArgumentCaptor.forClass(Map.class);
+        verify(groupPurchaseMapper).insertParticipant(captor.capture());
+        assertEquals("김애월", captor.getValue().get("recipientName"));
+        assertEquals("010-1234-5678", captor.getValue().get("recipientPhone"));
+        assertEquals(new BigDecimal("50000"), captor.getValue().get("paidAmount"));
+        assertEquals("PAID", captor.getValue().get("paymentStatus"));
+        assertEquals(777L, captor.getValue().get("txnId"));
+        verify(groupPurchaseMapper).updateQuantity("1", 2);
+    }
+
+    @Test
+    @DisplayName("공동구매가가 설정돼 있지 않으면 paidAmount는 null로 응답한다")
+    void should_returnNullPaidAmount_when_groupPriceIsNull() {
+        GroupPurchaseServiceImpl service = service();
+        Map<String, Object> gpRow = savedRow();
+        gpRow.put("group_price", null);
+        Map<String, Object> updatedGpRow = savedRow();
+        updatedGpRow.put("group_price", null);
+        updatedGpRow.put("current_quantity", 1);
+        Map<String, Object> savedParticipantRow = participantRow(999L, "1", "member-1", 1);
+        savedParticipantRow.put("paid_amount", null);
+
+        when(groupPurchaseMapper.findById("1")).thenReturn(gpRow, updatedGpRow);
+        when(groupPurchaseMapper.findParticipant("1", "member-1")).thenReturn(null, savedParticipantRow);
+
+        GroupPurchaseJoinResponse result = service.join("member-1", "1", 1, joinRequest());
+
+        assertNull(result.getPaidAmount());
+
+        ArgumentCaptor<Map<String, Object>> captor = ArgumentCaptor.forClass(Map.class);
+        verify(groupPurchaseMapper).insertParticipant(captor.capture());
+        assertNull(captor.getValue().get("paidAmount"));
+        verifyNoInteractions(walletMapper);
+        verifyNoInteractions(transactionMapper);
+    }
+
+    @Test
+    @DisplayName("지갑 잔액이 부족하면 참여 없이 예외가 발생한다")
+    void should_throwException_when_walletBalanceInsufficient() {
+        GroupPurchaseServiceImpl service = service();
+        when(groupPurchaseMapper.findById("1")).thenReturn(savedRow());
+        when(groupPurchaseMapper.findParticipant("1", "member-1")).thenReturn(null);
+
+        Map<String, Object> wallet = new HashMap<>();
+        wallet.put("wallet_id", "wallet-1");
+        wallet.put("balance", new BigDecimal("10000"));
+        when(walletMapper.findByMemberId("member-1")).thenReturn(wallet);
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.join("member-1", "1", 2, joinRequest()));
+
+        assertEquals("잔액이 부족합니다.", exception.getMessage());
+        verify(walletMapper, never()).updateBalance(any(), any());
+        verifyNoInteractions(transactionMapper);
+        verify(groupPurchaseMapper, never()).insertParticipant(any());
+        verify(groupPurchaseMapper, never()).updateQuantity(any(), anyInt());
+    }
+
+    @Test
+    @DisplayName("존재하지 않는 공동구매에 참여를 시도하면 예외가 발생한다")
+    void should_throwException_when_gpNotFound() {
+        GroupPurchaseServiceImpl service = service();
+        when(groupPurchaseMapper.findById("999")).thenReturn(null);
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.join("member-1", "999", 1, joinRequest()));
+
+        assertEquals("공동구매를 찾을 수 없습니다.", exception.getMessage());
+        verify(groupPurchaseMapper, never()).insertParticipant(any());
+    }
+
+    @Test
+    @DisplayName("이미 참여한 공동구매에 재참여를 시도하면 예외가 발생한다")
+    void should_throwException_when_alreadyParticipating() {
+        GroupPurchaseServiceImpl service = service();
+        when(groupPurchaseMapper.findById("1")).thenReturn(savedRow());
+        when(groupPurchaseMapper.findParticipant("1", "member-1"))
+                .thenReturn(participantRow(10523L, "1", "member-1", 2));
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.join("member-1", "1", 1, joinRequest()));
+
+        assertEquals("이미 참여한 공동구매입니다.", exception.getMessage());
+        verify(groupPurchaseMapper, never()).insertParticipant(any());
+        verify(groupPurchaseMapper, never()).updateQuantity(any(), anyInt());
+    }
+
+    private GroupPurchaseJoinRequest joinRequest() {
+        GroupPurchaseJoinRequest request = new GroupPurchaseJoinRequest();
+        ReflectionTestUtils.setField(request, "recipientName", "김애월");
+        ReflectionTestUtils.setField(request, "recipientPhone", "010-1234-5678");
+        ReflectionTestUtils.setField(request, "zipCode", "16856");
+        ReflectionTestUtils.setField(request, "address", "서울특별시 광진구 화양동");
+        ReflectionTestUtils.setField(request, "addressDetail", "세종대점 컴포즈 302호");
+        return request;
+    }
+
+    private Map<String, Object> participantRow(Long participantId, String gpId, String memberId, int purchaseQuantity) {
+        Map<String, Object> row = new HashMap<>();
+        row.put("participant_id", participantId);
+        row.put("gp_id", gpId);
+        row.put("member_id", memberId);
+        row.put("purchase_quantity", purchaseQuantity);
+        row.put("recipient_name", "김애월");
+        row.put("recipient_phone", "010-1234-5678");
+        row.put("zip_code", "16856");
+        row.put("address", "서울특별시 광진구 화양동");
+        row.put("address_detail", "세종대점 컴포즈 302호");
+        row.put("payment_status", "PENDING");
+        row.put("paid_amount", null);
+        row.put("paid_at", null);
+        row.put("created_at", LocalDateTime.of(2026, 8, 7, 10, 0));
+        return row;
     }
 
     private Map<String, Object> listRow(Long gpId, String status, LocalDateTime deadline,
@@ -289,6 +492,6 @@ class GroupPurchaseServiceImplTest {
     }
 
     private GroupPurchaseServiceImpl service() {
-        return new GroupPurchaseServiceImpl(groupPurchaseMapper, fileUtil);
+        return new GroupPurchaseServiceImpl(groupPurchaseMapper, fileUtil, walletMapper, transactionMapper);
     }
 }
