@@ -58,33 +58,44 @@ public class CodefClient {
     // CODEF accessToken은 1주일 유효 — 만료 임박 재요청을 피하려고 6일만 캐싱
     private static final long TOKEN_TTL_DAYS = 6;
 
-    // CODEF 입금자명은 4자리로 고정한다(2026-08-06 결정). inPrintType="1"(랜덤 한글 단어)은
-    // 길이가 4~5자로 들쭉날쭉해서(예: "하얀코끼리" 5자) inPrintType="0"(4자리 랜덤 숫자,
-    // 예: "5673")으로 바꿨다 — CODEF가 생성한다는 원칙(자체 고정값 방식 폐기)은 그대로 유지된다.
-    private static final int DEPOSITOR_NAME_LENGTH = 4;
+    // CODEF inPrintType="1"(랜덤 한글 단어)은 CODEF가 자체 사전에서 단어를 골라주는
+    // 방식이라 길이를 우리가 통제할 수 없다 — 4자, 5자, 6자가 다 나온다(2026-08-06 확인).
+    // 그래서 inPrintType="9"(고객사 직접 입력)로 바꿔서, 우리가 직접 4자 한글 단어 풀에서
+    // 랜덤으로 골라 inPrintContent에 실어 보낸다. CODEF는 이 문자열 그대로 실제 1원
+    // 이체의 입금자명으로 사용하고, 응답 authCode도 같은 값을 그대로 돌려준다(CODEF
+    // 개발가이드 "기타 계좌 인증(1원 이체) API" 문서 예시 참고). 실제 돈이 오가는 진짜
+    // 1원 인증이라는 성격은 그대로 유지되면서 길이는 항상 4자로 고정된다(2026-08-06).
+    private static final List<String> DEPOSITOR_NAME_POOL = List.of(
+            "포근애월", "노란구름", "파란하늘", "하얀토끼", "푸른바다",
+            "달콤사탕", "따뜻담요", "동그란해", "폭신베개", "몽글구름"
+    );
+    private static final java.util.Random RANDOM = new java.util.Random();
 
     /**
      * CODEF 계좌 인증(1원 이체) 요청.
      * bankCode는 bank_master의 금융결제원 3자리 코드 — CODEF organization(4자리)으로
      * 패딩해서 보낸다("0" + bankCode, 예: "004" -> "0004").
-     * inPrintType=0(4자리 랜덤 숫자, 예: "5673")으로 요청해서 CODEF가 직접 생성한 입금자명을
-     * 그대로 받아쓴다 — 우리가 미리 값을 만들어 보내지 않는다. 길이가 항상 4자로 고정되므로
-     * 프론트(AccountAuthOneWon.vue)는 고정 4칸 입력 UI를 그대로 쓸 수 있다.
+     * inPrintType=9(고객사 직접 입력)로 DEPOSITOR_NAME_POOL 중 하나를 골라 inPrintContent로
+     * 보낸다 — 우리가 고른 단어가 그대로 실제 1원 이체의 입금자명이 되므로 길이가 항상
+     * 4~5자로 고정된다. 프론트(AccountAuthOneWon.vue)는 응답의 depositorNameLength만큼
+     * 동적으로 입력 칸을 그리므로 4자든 5자든 그대로 대응한다.
      *
      * TODO: 데모 서버는 실제 인증코드가 아니라 랜덤 성공/실패 테스트 데이터를
      * 반환한다(CODEF 문서 명시) — 정식 버전 전환 전까지는 이 검증이 항상
      * 신뢰할 수 있는 건 아니라는 점 감안 필요.
      *
-     * @return CODEF가 생성한 입금자명(authCode, 4자리 숫자) — 이 값을 verification_code로
-     *         저장해두고 confirm 때 사용자 입력과 그대로 대조한다.
+     * @return 우리가 고른 입금자명(authCode) — 이 값을 verification_code로 저장해두고
+     *         confirm 때 사용자 입력과 그대로 대조한다.
      */
     public String requestAccountTransferAuth(String bankCode, String accountNumber) {
         String organization = "0" + bankCode;
+        String depositorName = DEPOSITOR_NAME_POOL.get(RANDOM.nextInt(DEPOSITOR_NAME_POOL.size()));
 
         Map<String, Object> body = Map.of(
                 "organization", organization,
                 "account", accountNumber,
-                "inPrintType", "0"
+                "inPrintType", "9",
+                "inPrintContent", depositorName
         );
 
         Map<String, Object> response = callCodef("/v1/kr/bank/a/account/transfer-authentication", body);
@@ -94,14 +105,9 @@ public class CodefClient {
             log.warn("CODEF 1원인증 authCode가 비어있음 - bankCode: {}", bankCode);
             throw new BusinessException(HttpStatus.BAD_GATEWAY, "1원 인증 요청에 실패했어요. 다시 시도해주세요");
         }
-        if (authCode.length() != DEPOSITOR_NAME_LENGTH) {
-            log.warn("CODEF가 반환한 입금자명이 {}자가 아님({}자): {}",
-                    DEPOSITOR_NAME_LENGTH, authCode.length(), authCode);
-            throw new BusinessException(HttpStatus.BAD_GATEWAY, "1원 인증 요청에 실패했어요. 다시 시도해주세요");
-        }
 
         // 테스트 편의용 — 데모 환경엔 실제 입금 알림이 없어서 DB 조회 없이 바로 확인할 수 있게 로그로 남김
-        log.info("[TEST] 1원인증 CODEF 랜덤 입금자명 = {}", authCode);
+        log.info("[TEST] 1원인증 입금자명 = {}", authCode);
         return authCode;
     }
 
