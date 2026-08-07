@@ -158,6 +158,7 @@
           AND w.wallet_type = 'DONATION'
           AND t.txn_type = 'TRANSFER'
           AND t.idempotency_key = #{idempotencyKey}
+        FOR UPDATE
     </select>
 
     <!-- 저금통 -> 실지갑 출금은 내부 이체(TRANSFER).
