@@ -11,6 +11,7 @@ import com.aewol.domain.wallet.mapper.WalletMapper;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -97,6 +98,42 @@ class TransactionServiceImplTest {
                 () -> service.getTransaction("member-2", "txn-1"));
 
         assertEquals(HttpStatus.FORBIDDEN, exception.getStatus());
+    }
+
+    @Test
+    void should_returnRecentTransactions_when_memberHasWallet() {
+        TransactionServiceImpl service = service();
+        when(walletMapper.findByMemberId("member-1")).thenReturn(map("wallet_id", "wallet-1"));
+        when(transactionMapper.findRecentByWalletId("wallet-1")).thenReturn(List.of(
+                transaction("wallet-1", null),
+                map("txn_id", "txn-2", "wallet_id", "wallet-1", "txn_type", "PAYMENT",
+                        "price", BigDecimal.ONE, "auto_tagged", "N", "txn_date", LocalDateTime.now())));
+
+        List<?> result = service.getRecentTransactions("member-1");
+
+        assertEquals(2, result.size());
+        verify(transactionMapper).findRecentByWalletId("wallet-1");
+    }
+
+    @Test
+    void should_returnEmptyList_when_memberHasNoTransactions() {
+        TransactionServiceImpl service = service();
+        when(walletMapper.findByMemberId("member-1")).thenReturn(map("wallet_id", "wallet-1"));
+        when(transactionMapper.findRecentByWalletId("wallet-1")).thenReturn(List.of());
+
+        assertEquals(List.of(), service.getRecentTransactions("member-1"));
+    }
+
+    @Test
+    void should_throwNotFound_when_memberHasNoWalletForRecentTransactions() {
+        TransactionServiceImpl service = service();
+        when(walletMapper.findByMemberId("member-1")).thenReturn(null);
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.getRecentTransactions("member-1"));
+
+        assertEquals(HttpStatus.NOT_FOUND, exception.getStatus());
+        verifyNoInteractions(transactionMapper);
     }
 
     private TransactionServiceImpl service() {
