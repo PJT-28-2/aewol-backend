@@ -1,6 +1,7 @@
 package com.aewol.external.codef;
 
 import com.aewol.common.exception.BusinessException;
+import com.aewol.common.util.RedisRateLimiter;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -30,6 +31,7 @@ public class CodefClient {
 
     private final RestTemplate codefRestTemplate;
     private final RedisTemplate<String, String> redisTemplate;
+    private final RedisRateLimiter redisRateLimiter;
     private final Environment environment;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
@@ -39,9 +41,11 @@ public class CodefClient {
     // 이미 쓰고 있는 것과 같은 방식으로 @Qualifier를 명시한다.
     public CodefClient(@Qualifier("codefRestTemplate") RestTemplate codefRestTemplate,
                         RedisTemplate<String, String> redisTemplate,
+                        RedisRateLimiter redisRateLimiter,
                         Environment environment) {
         this.codefRestTemplate = codefRestTemplate;
         this.redisTemplate = redisTemplate;
+        this.redisRateLimiter = redisRateLimiter;
         this.environment = environment;
     }
 
@@ -77,8 +81,9 @@ public class CodefClient {
     // 재전송할 때마다 attempt_count가 0인 새 transactionId를 받으므로 재전송 횟수
     // 자체에 제한이 없으면 결국 무제한 시도가 가능해진다(2026-08-07, 코드 리뷰 중
     // 발견). 그래서 같은 계좌로 30분 동안 만들 수 있는 1원 인증 요청 자체를
-    // 5번으로 제한한다 — confirm의 5회 제한과 곱해도 최악의 경우 30분에 25번
-    // 추측으로 묶인다(전체 후보 378개 대비 충분히 낮은 성공 확률).
+    // 5번으로 제한한다 — confirm의 5회 제한과 곱하면 최악의 경우 30분에 25번까지
+    // 추측할 수 있지만, 후보 공간을 11172^4로 늘려서(아래 randomDepositorName 참고)
+    // 25번 추측으로는 사실상 맞힐 수 없는 수준으로 낮춘다.
     private static final String TRANSFER_AUTH_RATE_LIMIT_PREFIX = "codef:transfer-auth-count:";
     private static final long TRANSFER_AUTH_RATE_LIMIT_WINDOW_SECONDS = 1800;
     private static final long TRANSFER_AUTH_RATE_LIMIT_MAX = 5;
@@ -91,26 +96,24 @@ public class CodefClient {
     // 개발가이드 "기타 계좌 인증(1원 이체) API" 문서 예시 참고). 실제 돈이 오가는 진짜
     // 1원 인증이라는 성격은 그대로 유지되면서 길이는 항상 4자로 고정된다(2026-08-06).
     //
-    // 후보 10개 + java.util.Random은 brute-force 범위가 너무 좁다(CodeRabbit 지적,
-    // 2026-08-07). 2음절 수식어 x 2음절 명사 조합으로 뽑아서 4자 고정은 유지하면서
-    // 후보 수를 늘린다(18 x 21 = 378가지). 예측 가능한 PRNG도 실제 인증 값 생성에
-    // 쓰기엔 부적절해서 SecureRandom으로 교체한다.
-    private static final List<String> DEPOSITOR_NAME_MODIFIERS = List.of(
-            "노란", "파란", "하얀", "푸른", "포근", "달콤", "따뜻", "몽글",
-            "폭신", "상큼", "촉촉", "살랑", "반짝", "몽실", "산뜻", "새콤",
-            "뽀송", "몰랑"
-    );
-    private static final List<String> DEPOSITOR_NAME_NOUNS = List.of(
-            "구름", "하늘", "토끼", "바다", "사탕", "담요", "베개", "나무",
-            "바람", "햇살", "별빛", "노을", "이슬", "파도", "나비", "참새",
-            "우산", "모래", "눈꽃", "단풍", "새싹"
-    );
+    // 수식어x명사 조합(18x21=378가지)도 brute-force 방어엔 너무 좁다(CodeRabbit 지적,
+    // 2026-08-07) — 계좌당 30분에 5회 요청 x transaction당 5회 확인 = 최대 25회 추측이
+    // 가능해서 성공 확률이 약 6.5%까지 올라간다. 단어 조합 대신 완성형 한글 음절
+    // 전체(가~힣, 11,172자) 범위에서 4글자를 독립적으로 뽑아 UI 4자 고정은 유지하면서
+    // 후보 공간을 11172^4(약 1.56x10^16가지)로 늘린다. 의미 있는 단어가 아니어도
+    // 은행 앱 알림에 찍히는 값과 화면에 뜨는 값을 그대로 대조하기만 하면 되므로
+    // 문제없다. SecureRandom은 그대로 유지(예측 가능한 PRNG는 인증 값 생성에 부적절).
+    private static final int DEPOSITOR_NAME_LENGTH = 4;
+    private static final int HANGUL_SYLLABLE_START = 0xAC00; // '가'
+    private static final int HANGUL_SYLLABLE_COUNT = 11172; // '가'(0xAC00) ~ '힣'(0xD7A3)
     private static final java.security.SecureRandom RANDOM = new java.security.SecureRandom();
 
     private static String randomDepositorName() {
-        String modifier = DEPOSITOR_NAME_MODIFIERS.get(RANDOM.nextInt(DEPOSITOR_NAME_MODIFIERS.size()));
-        String noun = DEPOSITOR_NAME_NOUNS.get(RANDOM.nextInt(DEPOSITOR_NAME_NOUNS.size()));
-        return modifier + noun;
+        StringBuilder sb = new StringBuilder(DEPOSITOR_NAME_LENGTH);
+        for (int i = 0; i < DEPOSITOR_NAME_LENGTH; i++) {
+            sb.append((char) (HANGUL_SYLLABLE_START + RANDOM.nextInt(HANGUL_SYLLABLE_COUNT)));
+        }
+        return sb.toString();
     }
 
     /**
@@ -140,11 +143,10 @@ public class CodefClient {
         String accountHash = hashForLockKey(bankCode, accountNumber);
 
         String rateLimitKey = TRANSFER_AUTH_RATE_LIMIT_PREFIX + accountHash;
-        Long requestCount = redisTemplate.opsForValue().increment(rateLimitKey);
-        if (requestCount != null && requestCount == 1L) {
-            redisTemplate.expire(rateLimitKey, TRANSFER_AUTH_RATE_LIMIT_WINDOW_SECONDS, TimeUnit.SECONDS);
-        }
-        if (requestCount != null && requestCount > TRANSFER_AUTH_RATE_LIMIT_MAX) {
+        // INCR와 최초 증가 시 EXPIRE를 Lua 스크립트로 한 번에 원자 실행 — 그 사이 인스턴스가
+        // 죽어도 TTL 없는 키가 영구히 남지 않는다(CodeRabbit 지적, 2026-08-07).
+        long requestCount = redisRateLimiter.incrementWithExpiry(rateLimitKey, TRANSFER_AUTH_RATE_LIMIT_WINDOW_SECONDS);
+        if (requestCount > TRANSFER_AUTH_RATE_LIMIT_MAX) {
             throw new BusinessException(HttpStatus.TOO_MANY_REQUESTS,
                     "1원 인증 요청이 너무 많아요. 30분 후 다시 시도해주세요");
         }
