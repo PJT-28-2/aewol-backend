@@ -18,5 +18,4 @@ public interface AuthService {
     TokenResponse kakaoLogin(String code);
     TokenResponse refresh(String refreshToken);
     void logout(String memberId);
-    void withdraw(String memberId);
 }

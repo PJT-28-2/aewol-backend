@@ -16,6 +16,13 @@ class AuthSignupMapperSqlTest {
         assertTrue(memberSql.contains("ORDER BY withdrawn_at DESC, member_id DESC"));
         assertTrue(memberSql.contains("LIMIT 1"));
         assertTrue(memberSql.contains("FOR UPDATE"));
+        String deactivateSql = statement(memberSql, "<update id=\"deactivateActiveMember\"", "</update>");
+        assertTrue(deactivateSql.contains("SET is_active = 0"));
+        assertTrue(deactivateSql.contains("withdrawn_at = NOW()"));
+        assertTrue(deactivateSql.contains("WHERE member_id = #{memberId}"));
+        assertTrue(deactivateSql.contains("AND is_active = 1"));
+        assertTrue(!deactivateSql.contains("DELETE"));
+        assertTrue(!deactivateSql.contains("wallet"));
 
         String notificationSql = resource("mapper/notification/NotificationSettingMapper.xml");
         String duplicateClause = notificationSql.substring(notificationSql.indexOf("ON DUPLICATE KEY UPDATE"));
@@ -32,5 +39,13 @@ class AuthSignupMapperSqlTest {
             assertNotNull(input);
             return new String(input.readAllBytes(), StandardCharsets.UTF_8);
         }
+    }
+
+    private String statement(String sql, String startMarker, String endMarker) {
+        int start = sql.indexOf(startMarker);
+        assertTrue(start >= 0);
+        int end = sql.indexOf(endMarker, start);
+        assertTrue(end > start);
+        return sql.substring(start, end + endMarker.length());
     }
 }

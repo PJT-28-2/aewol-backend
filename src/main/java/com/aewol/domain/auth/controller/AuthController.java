@@ -1,5 +1,6 @@
 package com.aewol.domain.auth.controller;
 
+import com.aewol.common.exception.BusinessException;
 import com.aewol.common.response.ApiResponse;
 import com.aewol.domain.auth.dto.LoginRequest;
 import com.aewol.domain.auth.dto.SignupRequest;
@@ -14,9 +15,11 @@ import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import javax.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.util.StringUtils;
 import org.springframework.web.bind.annotation.*;
 
 @Tag(name = "Auth", description = "인증/인가 API")
@@ -24,6 +27,8 @@ import org.springframework.web.bind.annotation.*;
 @RequestMapping("/api/auth")
 @RequiredArgsConstructor
 public class AuthController {
+
+    private static final String INVALID_REFRESH_TOKEN_MESSAGE = "유효하지 않은 리프레시 토큰입니다.";
 
     private final AuthService authService;
 
@@ -71,8 +76,11 @@ public class AuthController {
 
     @Operation(summary = "토큰 재발급")
     @PostMapping("/refresh")
-    public ResponseEntity<ApiResponse<TokenResponse>> refresh(@RequestHeader("X-Refresh-Token") String refreshToken) {
-        return ResponseEntity.ok(ApiResponse.success(authService.refresh(refreshToken)));
+    public ResponseEntity<ApiResponse<TokenResponse>> refresh(
+            @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorization) {
+        String refreshToken = resolveRefreshToken(authorization);
+        return ResponseEntity.ok(ApiResponse.success(
+                "토큰이 재발급되었습니다.", authService.refresh(refreshToken)));
     }
 
     @Operation(summary = "로그아웃")
@@ -82,10 +90,16 @@ public class AuthController {
         return ResponseEntity.ok(ApiResponse.success());
     }
 
-    @Operation(summary = "회원 탈퇴")
-    @DeleteMapping("/withdraw")
-    public ResponseEntity<ApiResponse<Void>> withdraw(@AuthenticationPrincipal String memberId) {
-        authService.withdraw(memberId);
-        return ResponseEntity.ok(ApiResponse.success());
+    private String resolveRefreshToken(String authorization) {
+        if (!StringUtils.hasText(authorization) || !authorization.startsWith("Bearer ")) {
+            throw BusinessException.unauthorized(INVALID_REFRESH_TOKEN_MESSAGE);
+        }
+
+        String refreshToken = authorization.substring(7).trim();
+        if (!StringUtils.hasText(refreshToken) || refreshToken.contains(" ")) {
+            throw BusinessException.unauthorized(INVALID_REFRESH_TOKEN_MESSAGE);
+        }
+        return refreshToken;
     }
+
 }

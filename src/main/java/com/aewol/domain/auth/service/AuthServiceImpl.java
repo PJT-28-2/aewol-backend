@@ -200,7 +200,7 @@ public class AuthServiceImpl implements AuthService {
 
     @Override
     public TokenResponse login(LoginRequest request) {
-        Map<String, Object> member = memberMapper.findByEmail(request.getEmail());
+        Map<String, Object> member = memberMapper.findActiveByEmail(request.getEmail());
         if (member == null) {
             throw BusinessException.unauthorized("이메일 또는 비밀번호가 잘못되었습니다.");
         }
@@ -232,10 +232,15 @@ public class AuthServiceImpl implements AuthService {
         Map<String, Object> profileInfo = kakaoAccount != null ? (Map<String, Object>) kakaoAccount.get("profile") : null;
         String nickname = profileInfo != null ? (String) profileInfo.get("nickname") : "카카오유저";
 
-        Map<String, Object> existingMember = email != null ? memberMapper.findByEmail(email) : null;
+        Map<String, Object> existingMember = memberMapper.findActiveKakaoByIdentity(email, kakaoId);
 
         String memberId;
         if (existingMember == null) {
+            // 탈퇴한 동일 카카오 계정이나 이메일이 있으면 토큰 발급과 신규 계정 생성을 모두 막는다.
+            if (memberMapper.existsInactiveByKakaoIdentity(email, kakaoId)
+                    || (email != null && memberMapper.existsActiveByEmail(email))) {
+                throw BusinessException.unauthorized("카카오 로그인에 실패했습니다.");
+            }
             Map<String, Object> member = new HashMap<>();
             member.put("email", email != null ? email : kakaoId + "@kakao.user");
             member.put("password", null);
@@ -278,7 +283,10 @@ public class AuthServiceImpl implements AuthService {
         }
 
         Map<String, Object> member = memberMapper.findById(memberId);
-        String role = member != null ? (String) member.get("role") : "USER";
+        if (member == null || !isActive(member.get("is_active"))) {
+            throw BusinessException.unauthorized("리프레시 토큰이 만료되었습니다.");
+        }
+        String role = (String) member.get("role");
 
         redisTemplate.delete("refresh:" + memberId);
         return generateTokens(memberId, role);
@@ -287,15 +295,7 @@ public class AuthServiceImpl implements AuthService {
     @Override
     public void logout(String memberId) {
         redisTemplate.delete("refresh:" + memberId);
-        log.info("로그아웃 완료 - memberId: {}", memberId);
-    }
-
-    @Override
-    @Transactional
-    public void withdraw(String memberId) {
-        // soft delete — 실제 삭제 대신 비활성화 등 처리
-        log.info("회원 탈퇴 처리 - memberId: {}", memberId);
-        redisTemplate.delete("refresh:" + memberId);
+        log.info("로그아웃이 완료되었습니다.");
     }
 
     private void validateCompletedVerification(String completedValue, String requestedCode) {
@@ -447,6 +447,13 @@ public class AuthServiceImpl implements AuthService {
             return (Boolean) result;
         }
         return result instanceof Number && ((Number) result).intValue() == 1;
+    }
+
+    private boolean isActive(Object value) {
+        if (value instanceof Boolean) {
+            return (Boolean) value;
+        }
+        return value instanceof Number && ((Number) value).intValue() == 1;
     }
 
     private TokenResponse generateTokens(String memberId, String role) {
