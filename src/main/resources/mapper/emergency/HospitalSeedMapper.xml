@@ -23,4 +23,12 @@
             is_holiday_open = VALUES(is_holiday_open),
             avg_wait_minutes = VALUES(avg_wait_minutes)
     </insert>
+
+    <!--
+      원본 데이터에서 폐업으로 전환된 병원을 제거한다. 시딩 이전(=한 번도 저장된 적 없는)
+      폐업 병원에 대해서도 호출될 수 있으므로 삭제 대상이 없어도(영향받은 행 0건) 정상 흐름이다.
+    -->
+    <delete id="deleteHospitalByExternalMngNo" parameterType="string">
+        DELETE FROM emergency_hospital WHERE external_mng_no = #{externalMngNo}
+    </delete>
 </mapper>

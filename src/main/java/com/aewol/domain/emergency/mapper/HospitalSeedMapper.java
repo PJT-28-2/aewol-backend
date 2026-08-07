@@ -11,4 +11,7 @@ import org.apache.ibatis.annotations.Mapper;
 public interface HospitalSeedMapper {
 
     int upsertHospital(Map<String, Object> hospital);
+
+    /** 원본 데이터에서 폐업으로 전환된 병원을 external_mng_no 기준으로 제거한다. */
+    int deleteHospitalByExternalMngNo(String externalMngNo);
 }

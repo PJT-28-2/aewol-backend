@@ -109,8 +109,8 @@ class HospitalSeedServiceImplTest {
     }
 
     @Test
-    @DisplayName("영업상태명에 '폐업'이 포함되면 스킵한다")
-    void should_skipRow_when_hospitalIsClosed() {
+    @DisplayName("영업상태명에 '폐업'이 포함되면 upsert하지 않고 external_mng_no로 삭제한다")
+    void should_deleteExistingRecord_when_hospitalIsClosed() {
         Map<String, Object> row = row();
         when(animalHospitalClient.isConfigured()).thenReturn(true);
         when(animalHospitalClient.findAllHospitals()).thenReturn(List.of(row));
@@ -120,6 +120,25 @@ class HospitalSeedServiceImplTest {
         int upserted = service().syncHospitals();
 
         assertEquals(0, upserted);
+        verify(hospitalSeedMapper).deleteHospitalByExternalMngNo("3620000-HS-2024-000001");
+        verify(hospitalSeedMapper, never()).upsertHospital(anyMap());
+    }
+
+    @Test
+    @DisplayName("[회귀] 이전에 저장된 병원이 이후 폐업으로 전환되면 재실행 시 삭제되어 더 이상 조회되지 않는다")
+    void should_removeStaleRecord_when_previouslySeededHospitalIsLaterClosed() {
+        // 이전 실행에서 영업 중으로 upsert됐던 병원이, 이번 실행에서는 '폐업/자진'처럼
+        // 마커 문구를 포함한 다양한 표기로 내려온다고 가정한다.
+        Map<String, Object> row = row();
+        when(animalHospitalClient.isConfigured()).thenReturn(true);
+        when(animalHospitalClient.findAllHospitals()).thenReturn(List.of(row));
+        when(animalHospitalClient.mgtNo(row)).thenReturn("3620000-HS-2024-000001");
+        when(animalHospitalClient.statusName(row)).thenReturn("폐업/자진");
+
+        int upserted = service().syncHospitals();
+
+        assertEquals(0, upserted);
+        verify(hospitalSeedMapper).deleteHospitalByExternalMngNo("3620000-HS-2024-000001");
         verify(hospitalSeedMapper, never()).upsertHospital(anyMap());
     }
 
