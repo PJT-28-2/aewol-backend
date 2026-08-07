@@ -61,7 +61,7 @@ public class AuthCredentialStore {
                 GET_OR_CREATE_EPOCH_SCRIPT,
                 List.of(epochKey(memberId)),
                 UUID.randomUUID().toString(),
-                String.valueOf(jwtUtil.getAccessTokenExpiry()));
+                String.valueOf(authEpochExpiry()));
         if (epoch == null) {
             throw new IllegalStateException("인증 세대를 생성하거나 조회하지 못했습니다.");
         }
@@ -73,7 +73,7 @@ public class AuthCredentialStore {
                 ADVANCE_EPOCH_SCRIPT,
                 List.of(epochKey(memberId), refreshKey(memberId)),
                 UUID.randomUUID().toString(),
-                String.valueOf(jwtUtil.getAccessTokenExpiry()));
+                String.valueOf(authEpochExpiry()));
         if (!Long.valueOf(1L).equals(result)) {
             throw new IllegalStateException("인증 credential 세대 교체에 실패했습니다.");
         }
@@ -87,7 +87,7 @@ public class AuthCredentialStore {
                 requireEpoch(expectedEpoch),
                 refreshToken,
                 String.valueOf(jwtUtil.getRefreshTokenExpiry()),
-                String.valueOf(jwtUtil.getAccessTokenExpiry()));
+                String.valueOf(authEpochExpiry()));
         return Long.valueOf(1L).equals(result);
     }
 
@@ -103,8 +103,12 @@ public class AuthCredentialStore {
                 presentedRefreshToken,
                 newRefreshToken,
                 String.valueOf(jwtUtil.getRefreshTokenExpiry()),
-                String.valueOf(jwtUtil.getAccessTokenExpiry()));
+                String.valueOf(authEpochExpiry()));
         return Long.valueOf(1L).equals(result);
+    }
+
+    private long authEpochExpiry() {
+        return Math.max(jwtUtil.getAccessTokenExpiry(), jwtUtil.getRefreshTokenExpiry());
     }
 
     private String requireEpoch(String epoch) {

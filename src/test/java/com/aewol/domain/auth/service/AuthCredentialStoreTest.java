@@ -37,10 +37,11 @@ class AuthCredentialStoreTest {
     }
 
     @Test
-    void epochUsesAccessTokenLifetimeAndDeletesRefreshInSameScript() {
+    void withdrawalEpochUsesLongestCredentialLifetimeAndDeletesRefreshInSameScript() {
         when(jwtUtil.getAccessTokenExpiry()).thenReturn(1_800_000L);
+        when(jwtUtil.getRefreshTokenExpiry()).thenReturn(604_800_000L);
         when(redisTemplate.execute(any(RedisScript.class), anyList(),
-                any(String.class), eq("1800000"))).thenReturn(1L);
+                any(String.class), eq("604800000"))).thenReturn(1L);
 
         store.advanceEpochAndDeleteRefresh("member-1");
 
@@ -48,7 +49,7 @@ class AuthCredentialStoreTest {
         verify(redisTemplate).execute(
                 scriptCaptor.capture(),
                 eq(List.of("auth:epoch:member-1", "refresh:member-1")),
-                any(String.class), eq("1800000"));
+                any(String.class), eq("604800000"));
         String script = scriptCaptor.getValue().getScriptAsString();
         assertTrue(script.contains("SET', KEYS[1]"));
         assertTrue(script.contains("'PX', ARGV[2]"));
@@ -58,8 +59,9 @@ class AuthCredentialStoreTest {
     @Test
     void recoveryPreparationFailsClosedWhenRedisDoesNotConfirmScript() {
         when(jwtUtil.getAccessTokenExpiry()).thenReturn(1_800_000L);
+        when(jwtUtil.getRefreshTokenExpiry()).thenReturn(604_800_000L);
         when(redisTemplate.execute(any(RedisScript.class), anyList(),
-                any(String.class), eq("1800000"))).thenReturn(null);
+                any(String.class), eq("604800000"))).thenReturn(null);
 
         org.junit.jupiter.api.Assertions.assertThrows(
                 IllegalStateException.class,
@@ -67,17 +69,18 @@ class AuthCredentialStoreTest {
     }
 
     @Test
-    void loginGetOrCreateEpochIsAtomicAndUsesAccessLifetime() {
+    void loginGetOrCreateEpochIsAtomicAndUsesRefreshLifetime() {
         when(jwtUtil.getAccessTokenExpiry()).thenReturn(1_800_000L);
+        when(jwtUtil.getRefreshTokenExpiry()).thenReturn(604_800_000L);
         when(redisTemplate.execute(any(RedisScript.class), anyList(),
-                any(String.class), eq("1800000"))).thenReturn("epoch-1");
+                any(String.class), eq("604800000"))).thenReturn("epoch-1");
 
         assertEquals("epoch-1", store.getOrCreateEpochForLogin("member-1"));
 
         ArgumentCaptor<RedisScript<String>> scriptCaptor = ArgumentCaptor.forClass(RedisScript.class);
         verify(redisTemplate).execute(
                 scriptCaptor.capture(), eq(List.of("auth:epoch:member-1")),
-                any(String.class), eq("1800000"));
+                any(String.class), eq("604800000"));
         String script = scriptCaptor.getValue().getScriptAsString();
         assertTrue(script.contains("if currentEpoch then return currentEpoch"));
         assertTrue(script.contains("SET', KEYS[1]"));
@@ -87,8 +90,9 @@ class AuthCredentialStoreTest {
     @Test
     void loginGetOrCreateFailsClosedWhenRedisReturnsNoEpoch() {
         when(jwtUtil.getAccessTokenExpiry()).thenReturn(1_800_000L);
+        when(jwtUtil.getRefreshTokenExpiry()).thenReturn(604_800_000L);
         when(redisTemplate.execute(any(RedisScript.class), anyList(),
-                any(String.class), eq("1800000"))).thenReturn(null);
+                any(String.class), eq("604800000"))).thenReturn(null);
 
         assertThrows(IllegalStateException.class,
                 () -> store.getOrCreateEpochForLogin("member-1"));
@@ -107,7 +111,7 @@ class AuthCredentialStoreTest {
         when(jwtUtil.getRefreshTokenExpiry()).thenReturn(604_800_000L);
         when(jwtUtil.getAccessTokenExpiry()).thenReturn(1_800_000L);
         when(redisTemplate.execute(any(RedisScript.class), anyList(),
-                eq("epoch-1"), eq("refresh-token"), eq("604800000"), eq("1800000")))
+                eq("epoch-1"), eq("refresh-token"), eq("604800000"), eq("604800000")))
                 .thenReturn(1L);
 
         assertTrue(store.storeRefreshIfEpochUnchanged("member-1", "epoch-1", "refresh-token"));
@@ -116,11 +120,13 @@ class AuthCredentialStoreTest {
         verify(redisTemplate).execute(
                 scriptCaptor.capture(),
                 eq(List.of("auth:epoch:member-1", "refresh:member-1")),
-                eq("epoch-1"), eq("refresh-token"), eq("604800000"), eq("1800000"));
+                eq("epoch-1"), eq("refresh-token"), eq("604800000"), eq("604800000"));
         String script = scriptCaptor.getValue().getScriptAsString();
         assertTrue(script.contains("not currentEpoch or currentEpoch ~= ARGV[1]"));
         assertTrue(script.contains("SET', KEYS[2]"));
         assertTrue(script.contains("PEXPIRE', KEYS[1], ARGV[4]"));
+        assertTrue(script.indexOf("currentEpoch ~= ARGV[1]")
+                < script.indexOf("PEXPIRE', KEYS[1], ARGV[4]"));
     }
 
     @Test
@@ -128,7 +134,7 @@ class AuthCredentialStoreTest {
         when(jwtUtil.getRefreshTokenExpiry()).thenReturn(604_800_000L);
         when(jwtUtil.getAccessTokenExpiry()).thenReturn(1_800_000L);
         when(redisTemplate.execute(any(RedisScript.class), anyList(),
-                eq("epoch-1"), eq("r1"), eq("r2"), eq("604800000"), eq("1800000")))
+                eq("epoch-1"), eq("r1"), eq("r2"), eq("604800000"), eq("604800000")))
                 .thenReturn(1L, 0L);
 
         assertTrue(store.rotateRefreshAtomically("member-1", "epoch-1", "r1", "r2"));
@@ -138,12 +144,30 @@ class AuthCredentialStoreTest {
         verify(redisTemplate, org.mockito.Mockito.times(2)).execute(
                 scriptCaptor.capture(),
                 eq(List.of("auth:epoch:member-1", "refresh:member-1")),
-                eq("epoch-1"), eq("r1"), eq("r2"), eq("604800000"), eq("1800000"));
+                eq("epoch-1"), eq("r1"), eq("r2"), eq("604800000"), eq("604800000"));
         String script = scriptCaptor.getAllValues().get(0).getScriptAsString();
         assertTrue(script.contains("currentEpoch ~= ARGV[1]"));
         assertTrue(script.contains("storedToken ~= ARGV[2]"));
         assertTrue(script.contains("SET', KEYS[2]"));
         assertTrue(script.contains("PEXPIRE', KEYS[1], ARGV[5]"));
+        assertTrue(script.indexOf("currentEpoch ~= ARGV[1]")
+                < script.indexOf("PEXPIRE', KEYS[1], ARGV[5]"));
+        assertTrue(script.indexOf("storedToken ~= ARGV[2]")
+                < script.indexOf("PEXPIRE', KEYS[1], ARGV[5]"));
+    }
+
+    @Test
+    void epochLifetimeUsesAccessLifetimeWhenItIsConfiguredLongerThanRefresh() {
+        when(jwtUtil.getAccessTokenExpiry()).thenReturn(700_000_000L);
+        when(jwtUtil.getRefreshTokenExpiry()).thenReturn(604_800_000L);
+        when(redisTemplate.execute(any(RedisScript.class), anyList(),
+                any(String.class), eq("700000000"))).thenReturn("epoch-1");
+
+        assertEquals("epoch-1", store.getOrCreateEpochForLogin("member-1"));
+
+        verify(redisTemplate).execute(
+                any(RedisScript.class), eq(List.of("auth:epoch:member-1")),
+                any(String.class), eq("700000000"));
     }
 
     @Test
