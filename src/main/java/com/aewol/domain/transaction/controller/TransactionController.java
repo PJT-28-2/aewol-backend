@@ -40,6 +40,13 @@ public class TransactionController {
         return ResponseEntity.ok(ApiResponse.success(transactionService.getTransactions(memberId, category, petId)));
     }
 
+    @Operation(summary = "최근 거래 내역 조회")
+    @GetMapping("/recent")
+    public ResponseEntity<ApiResponse<List<TransactionResponse>>> getRecentTransactions(
+            @AuthenticationPrincipal String memberId) {
+        return ResponseEntity.ok(ApiResponse.success(transactionService.getRecentTransactions(memberId)));
+    }
+
     @Operation(summary = "거래 상세 조회")
     @GetMapping("/{txnId}")
     public ResponseEntity<ApiResponse<TransactionResponse>> getTransaction(

@@ -19,6 +19,12 @@
         ORDER BY t.txn_date DESC
     </select>
 
+    <select id="findRecentByWalletId" resultType="map">
+        SELECT t.* FROM `transaction` t
+        WHERE t.wallet_id = #{walletId}
+        ORDER BY t.txn_date DESC, t.txn_id DESC
+    </select>
+
     <!-- txn_id는 BIGINT AUTO_INCREMENT — 생성 키를 맵의 txnId로 돌려받는다 -->
     <insert id="insert" parameterType="map" useGeneratedKeys="true" keyProperty="txnId" keyColumn="txn_id">
         INSERT INTO `transaction` (wallet_id, pet_id, txn_type,

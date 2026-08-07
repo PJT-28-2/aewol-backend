@@ -76,6 +76,19 @@ public class TransactionServiceImpl implements TransactionService {
 
     @Override
     @Transactional(readOnly = true)
+    public List<TransactionResponse> getRecentTransactions(String memberId) {
+        Map<String, Object> wallet = walletMapper.findByMemberId(memberId);
+        if (wallet == null) {
+            throw BusinessException.notFound("지갑을 찾을 수 없습니다.");
+        }
+        String walletId = String.valueOf(wallet.get("wallet_id"));
+        return transactionMapper.findRecentByWalletId(walletId).stream()
+                .map(this::toResponse)
+                .collect(Collectors.toList());
+    }
+
+    @Override
+    @Transactional(readOnly = true)
     public TransactionResponse getTransaction(String memberId, String txnId) {
         Map<String, Object> txn = transactionMapper.findById(txnId);
         if (txn == null) {
