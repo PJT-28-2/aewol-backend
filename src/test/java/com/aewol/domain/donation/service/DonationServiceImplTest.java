@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
 import com.aewol.common.exception.BusinessException;
+import com.aewol.domain.donation.dto.DonationHistoryResponse;
 import com.aewol.domain.donation.dto.DonationRequest;
 import com.aewol.domain.donation.dto.DonationSettingRequest;
 import com.aewol.domain.donation.dto.DonationWithdrawRequest;
@@ -45,6 +46,45 @@ class DonationServiceImplTest {
         assertEquals(new BigDecimal("12400"), result.getBalance());
         assertEquals(68, result.getCampaigns().get(0).getProgress());
         assertTrue(result.getCampaigns().get(0).isPreferred());
+    }
+
+    @Test
+    @DisplayName("저금통이 없으면 빈 기부 내역을 반환한다")
+    void should_returnEmptyHistory_when_potNotFound() {
+        DonationServiceImpl service = service();
+        when(donationMapper.findPotByMemberId("member-1")).thenReturn(null);
+
+        assertTrue(service.getHistory("member-1").isEmpty());
+        verify(donationMapper, never()).findHistoryByWalletId(any());
+    }
+
+    @Test
+    @DisplayName("기부 내역을 camelCase DTO로 변환하고 표시명 스냅샷을 우선한다")
+    void should_mapHistoryToDto_when_historyExists() {
+        DonationServiceImpl service = service();
+        when(donationMapper.findPotByMemberId("member-1")).thenReturn(map("wallet_id", "pot-1"));
+        when(donationMapper.findHistoryByWalletId("pot-1")).thenReturn(List.of(
+                map("donation_id", "d-1", "recipient_name", "스냅샷 보호소",
+                        "organization_name", "현재 보호소", "campaign_title", "난방비 지원",
+                        "amount", new BigDecimal("3000"), "status", "COMPLETED",
+                        "receipt_url", "https://r/1",
+                        "completed_at", LocalDateTime.of(2026, 8, 1, 10, 0),
+                        "created_at", LocalDateTime.of(2026, 8, 1, 9, 0)),
+                map("donation_id", "d-2", "organization_name", "현재 보호소",
+                        "amount", new BigDecimal("500"), "status", "PENDING",
+                        "created_at", LocalDateTime.of(2026, 8, 2, 9, 0))));
+
+        List<DonationHistoryResponse> history = service.getHistory("member-1");
+
+        assertEquals(2, history.size());
+        // 기부 시점 표시명 스냅샷(recipient_name)을 우선 사용한다
+        assertEquals("스냅샷 보호소", history.get(0).getOrganization());
+        assertEquals("난방비 지원", history.get(0).getCampaignTitle());
+        assertEquals(new BigDecimal("3000"), history.get(0).getAmount());
+        // 스냅샷이 없으면 조인해온 현재 단체명으로 대체하고, 캠페인/완료시각 없으면 null이다
+        assertEquals("현재 보호소", history.get(1).getOrganization());
+        assertNull(history.get(1).getCampaignTitle());
+        assertNull(history.get(1).getCompletedAt());
     }
 
     @Test

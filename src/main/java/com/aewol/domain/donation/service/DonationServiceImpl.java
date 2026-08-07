@@ -163,11 +163,31 @@ public class DonationServiceImpl implements DonationService {
     }
 
     @Override
-    public List<Map<String, Object>> getHistory(String memberId) {
+    public List<DonationHistoryResponse> getHistory(String memberId) {
         memberId = requireMemberId(memberId);
         Map<String, Object> pot = donationMapper.findPotByMemberId(memberId);
         if (pot == null) return Collections.emptyList();
-        return donationMapper.findHistoryByWalletId(text(pot, "wallet_id", "walletId"));
+        return donationMapper.findHistoryByWalletId(text(pot, "wallet_id", "walletId")).stream()
+                .map(this::toHistoryResponse)
+                .collect(Collectors.toList());
+    }
+
+    private DonationHistoryResponse toHistoryResponse(Map<String, Object> row) {
+        // 기부 시점의 표시명 스냅샷을 우선 쓰고, 없으면 조인해온 현재 단체명으로 대체한다
+        String organization = text(row, "recipient_name", "recipientName");
+        if (organization == null) {
+            organization = text(row, "organization_name", "organizationName");
+        }
+        return DonationHistoryResponse.builder()
+                .donationId(text(row, "donation_id", "donationId"))
+                .organization(organization)
+                .campaignTitle(text(row, "campaign_title", "campaignTitle"))
+                .amount(decimal(row, "amount"))
+                .status(text(row, "status"))
+                .receiptUrl(text(row, "receipt_url", "receiptUrl"))
+                .completedAt(dateTimeText(value(row, "completed_at", "completedAt")))
+                .createdAt(dateTimeText(value(row, "created_at", "createdAt")))
+                .build();
     }
 
     @Override
@@ -319,6 +339,11 @@ public class DonationServiceImpl implements DonationService {
         return value instanceof Boolean ? (Boolean) value
                 : value instanceof Number ? ((Number) value).intValue() == 1
                 : "Y".equalsIgnoreCase(String.valueOf(value)) || "true".equalsIgnoreCase(String.valueOf(value));
+    }
+
+    private static String dateTimeText(Object value) {
+        LocalDateTime dateTime = localDateTime(value);
+        return dateTime == null ? null : dateTime.toString();
     }
 
     private static LocalDateTime localDateTime(Object value) {

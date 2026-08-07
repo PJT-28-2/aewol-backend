@@ -54,7 +54,7 @@ public class DonationController {
 
     @Operation(summary = "기부 내역")
     @GetMapping("/history")
-    public ResponseEntity<ApiResponse<List<Map<String, Object>>>> getHistory(
+    public ResponseEntity<ApiResponse<List<DonationHistoryResponse>>> getHistory(
             @AuthenticationPrincipal String memberId) {
         return ResponseEntity.ok(ApiResponse.success(donationService.getHistory(memberId)));
     }
