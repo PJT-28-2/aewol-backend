@@ -1,6 +1,7 @@
 package com.aewol.common.filter;
 
 import com.aewol.common.util.JwtUtil;
+import com.aewol.domain.auth.service.AuthCredentialStore;
 import com.aewol.domain.member.mapper.MemberMapper;
 import io.jsonwebtoken.Claims;
 import javax.servlet.FilterChain;
@@ -27,6 +28,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
     private final JwtUtil jwtUtil;
     private final MemberMapper memberMapper;
+    private final AuthCredentialStore authCredentialStore;
 
     @Override
     protected boolean shouldNotFilter(HttpServletRequest request) {
@@ -45,6 +47,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             Claims claims = jwtUtil.parseClaims(token);
             String memberId = claims.getSubject();
             String role = claims.get("role", String.class);
+            String tokenEpoch = claims.get("authEpoch", String.class);
 
             // 서명된 기존 Access Token이라도 현재 회원이 비활성이면 보호 API 인증을 허용하지 않는다.
             boolean active;
@@ -55,7 +58,20 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                 throw e;
             }
 
-            if (active) {
+            if (!active) {
+                filterChain.doFilter(request, response);
+                return;
+            }
+
+            String currentEpoch;
+            try {
+                currentEpoch = authCredentialStore.getEpoch(memberId);
+            } catch (RuntimeException e) {
+                log.error("인증 과정에서 인증 세대를 확인하지 못했습니다.", e);
+                throw e;
+            }
+
+            if (currentEpoch != null && tokenEpoch != null && currentEpoch.equals(tokenEpoch)) {
                 UsernamePasswordAuthenticationToken authentication =
                         new UsernamePasswordAuthenticationToken(
                                 memberId,
@@ -71,8 +87,16 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
     private String resolveToken(HttpServletRequest request) {
         String bearer = request.getHeader("Authorization");
-        if (StringUtils.hasText(bearer) && bearer.startsWith("Bearer ")) {
-            return bearer.substring(7);
+        if (StringUtils.hasText(bearer)
+                && bearer.length() > 7
+                && bearer.regionMatches(true, 0, "Bearer", 0, 6)
+                && bearer.charAt(6) == ' ') {
+            String token = bearer.substring(7);
+            if (StringUtils.hasText(token)
+                    && token.equals(token.trim())
+                    && token.chars().noneMatch(Character::isWhitespace)) {
+                return token;
+            }
         }
         return null;
     }

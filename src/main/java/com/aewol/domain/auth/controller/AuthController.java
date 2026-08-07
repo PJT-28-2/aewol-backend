@@ -9,7 +9,6 @@ import com.aewol.domain.auth.dto.SignupEmailCodeRequest;
 import com.aewol.domain.auth.dto.SignupEmailCodeResponse;
 import com.aewol.domain.auth.dto.SignupEmailVerificationRequest;
 import com.aewol.domain.auth.dto.TokenResponse;
-import com.aewol.domain.auth.dto.VerifyRequest;
 import com.aewol.domain.auth.service.AuthService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -56,12 +55,6 @@ public class AuthController {
                 .body(ApiResponse.created("회원가입이 완료되었습니다.", result));
     }
 
-    @Operation(summary = "이메일 인증 확인")
-    @PostMapping("/signup/verify")
-    public ResponseEntity<ApiResponse<TokenResponse>> verify(@Valid @RequestBody VerifyRequest request) {
-        return ResponseEntity.ok(ApiResponse.success(authService.verifyEmail(request)));
-    }
-
     @Operation(summary = "로그인")
     @PostMapping("/login")
     public ResponseEntity<ApiResponse<TokenResponse>> login(@Valid @RequestBody LoginRequest request) {
@@ -91,12 +84,17 @@ public class AuthController {
     }
 
     private String resolveRefreshToken(String authorization) {
-        if (!StringUtils.hasText(authorization) || !authorization.startsWith("Bearer ")) {
+        if (!StringUtils.hasText(authorization)
+                || authorization.length() <= 7
+                || !authorization.regionMatches(true, 0, "Bearer", 0, 6)
+                || authorization.charAt(6) != ' ') {
             throw BusinessException.unauthorized(INVALID_REFRESH_TOKEN_MESSAGE);
         }
 
-        String refreshToken = authorization.substring(7).trim();
-        if (!StringUtils.hasText(refreshToken) || refreshToken.contains(" ")) {
+        String refreshToken = authorization.substring(7);
+        if (!StringUtils.hasText(refreshToken)
+                || !refreshToken.equals(refreshToken.trim())
+                || refreshToken.chars().anyMatch(Character::isWhitespace)) {
             throw BusinessException.unauthorized(INVALID_REFRESH_TOKEN_MESSAGE);
         }
         return refreshToken;

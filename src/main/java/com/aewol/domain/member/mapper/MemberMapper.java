@@ -20,5 +20,4 @@ public interface MemberMapper {
     int restoreLocalMember(Map<String, Object> member);
     int deactivateActiveMember(@Param("memberId") String memberId);
     void update(Map<String, Object> member);
-    int markEmailVerified(@Param("memberId") String memberId);
 }

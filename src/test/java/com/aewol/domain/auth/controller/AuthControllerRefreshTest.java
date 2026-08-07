@@ -5,6 +5,7 @@ import com.aewol.common.filter.JwtAuthenticationFilter;
 import com.aewol.common.util.JwtUtil;
 import com.aewol.config.SecurityConfig;
 import com.aewol.domain.auth.dto.TokenResponse;
+import com.aewol.domain.auth.service.AuthCredentialStore;
 import com.aewol.domain.auth.service.AuthService;
 import com.aewol.domain.member.mapper.MemberMapper;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -96,6 +97,20 @@ class AuthControllerRefreshTest {
     }
 
     @Test
+    void bearerSchemeIsCaseInsensitive() throws Exception {
+        when(authService.refresh("refresh-token")).thenReturn(TokenResponse.builder()
+                .accessToken("access-token").refreshToken("rotated-token").build());
+
+        for (String scheme : new String[]{"Bearer", "bearer", "BEARER", "BeArEr"}) {
+            mockMvc.perform(post("/api/auth/refresh")
+                            .with(csrf())
+                            .header(HttpHeaders.AUTHORIZATION, scheme + " refresh-token"))
+                    .andExpect(status().isOk());
+        }
+        verify(authService, org.mockito.Mockito.times(4)).refresh("refresh-token");
+    }
+
+    @Test
     void missingAuthorizationHeaderIsRejected() throws Exception {
         assertInvalidAuthorization(post("/api/auth/refresh").with(csrf()));
     }
@@ -122,6 +137,12 @@ class AuthControllerRefreshTest {
     void emptyBearerValueIsRejected() throws Exception {
         assertInvalidAuthorization(post("/api/auth/refresh").with(csrf())
                 .header(HttpHeaders.AUTHORIZATION, "Bearer "));
+    }
+
+    @Test
+    void malformedBearerSpacingIsRejected() throws Exception {
+        assertInvalidAuthorization(post("/api/auth/refresh").with(csrf())
+                .header(HttpHeaders.AUTHORIZATION, "Bearer  refresh-token"));
     }
 
     @Test
@@ -163,8 +184,14 @@ class AuthControllerRefreshTest {
         }
 
         @Bean
-        JwtAuthenticationFilter jwtAuthenticationFilter(JwtUtil jwtUtil, MemberMapper memberMapper) {
-            return new JwtAuthenticationFilter(jwtUtil, memberMapper);
+        AuthCredentialStore authCredentialStore() {
+            return mock(AuthCredentialStore.class);
+        }
+
+        @Bean
+        JwtAuthenticationFilter jwtAuthenticationFilter(
+                JwtUtil jwtUtil, MemberMapper memberMapper, AuthCredentialStore authCredentialStore) {
+            return new JwtAuthenticationFilter(jwtUtil, memberMapper, authCredentialStore);
         }
 
         @Bean

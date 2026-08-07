@@ -9,7 +9,6 @@ import com.aewol.domain.auth.dto.SignupEmailCodeRequest;
 import com.aewol.domain.auth.dto.SignupEmailCodeResponse;
 import com.aewol.domain.auth.dto.SignupEmailVerificationRequest;
 import com.aewol.domain.auth.dto.TokenResponse;
-import com.aewol.domain.auth.dto.VerifyRequest;
 import com.aewol.domain.member.mapper.MemberMapper;
 import com.aewol.domain.notification.mapper.NotificationSettingMapper;
 import com.aewol.domain.wallet.mapper.WalletMapper;
@@ -88,6 +87,7 @@ public class AuthServiceImpl implements AuthService {
     private final RedisTemplate<String, String> redisTemplate;
     private final EmailService emailService;
     private final KakaoAuthClient kakaoAuthClient;
+    private final AuthCredentialStore authCredentialStore;
 
     @Override
     public SignupEmailCodeResponse sendSignupVerificationCode(SignupEmailCodeRequest request) {
@@ -166,45 +166,13 @@ public class AuthServiceImpl implements AuthService {
     }
 
     @Override
-    @Transactional
-    public TokenResponse verifyEmail(VerifyRequest request) {
-        String storedCode = redisTemplate.opsForValue().get("verify:" + request.getEmail());
-        if (storedCode == null) {
-            throw new BusinessException(HttpStatus.BAD_REQUEST, "인증코드가 만료되었습니다.");
-        }
-        if (!storedCode.equals(request.getCode())) {
-            throw new BusinessException(HttpStatus.BAD_REQUEST, "인증코드가 일치하지 않습니다.");
-        }
-
-        Map<String, Object> member = memberMapper.findByEmail(request.getEmail());
-        if (member == null) {
-            throw BusinessException.notFound("회원 정보를 찾을 수 없습니다.");
-        }
-
-        String memberId = String.valueOf(member.get("member_id")); // V3에서 member_id가 BIGINT로 전환되어 Long이 반환됨
-
-        // 이메일 인증 완료 처리
-        memberMapper.markEmailVerified(memberId);
-
-        // MAIN 지갑 자동 생성 (wallet_id는 AUTO_INCREMENT)
-        Map<String, Object> wallet = new HashMap<>();
-        wallet.put("memberId", memberId);
-        wallet.put("walletType", "MAIN");
-        wallet.put("balance", 0);
-        walletMapper.insert(wallet);
-
-        redisTemplate.delete("verify:" + request.getEmail());
-
-        return generateTokens(memberId, "USER");
-    }
-
-    @Override
     public TokenResponse login(LoginRequest request) {
         Map<String, Object> member = memberMapper.findActiveByEmail(request.getEmail());
         if (member == null) {
             throw BusinessException.unauthorized("이메일 또는 비밀번호가 잘못되었습니다.");
         }
 
+        String memberId = String.valueOf(member.get("member_id"));
         String storedPassword = (String) member.get("password");
         if (storedPassword == null || !passwordEncoder.matches(request.getPassword(), storedPassword)) {
             throw BusinessException.unauthorized("이메일 또는 비밀번호가 잘못되었습니다.");
@@ -214,9 +182,19 @@ public class AuthServiceImpl implements AuthService {
             throw new BusinessException(HttpStatus.FORBIDDEN, "이메일 인증이 필요합니다.");
         }
 
-        String memberId = String.valueOf(member.get("member_id")); // V3에서 member_id가 BIGINT로 전환되어 Long이 반환됨
+        // 실제 로그인 credential 검증 뒤에만 인증 세대를 원자적으로 조회하거나 생성한다.
+        String authEpoch = authCredentialStore.getOrCreateEpochForLogin(memberId);
+        // 세대 snapshot 이후 회원 상태와 비밀번호를 재검증해 탈퇴·복구를 가로지른 로그인을 차단한다.
+        member = memberMapper.findActiveByEmail(request.getEmail());
+        if (member == null
+                || !memberId.equals(String.valueOf(member.get("member_id")))
+                || member.get("password") == null
+                || !passwordEncoder.matches(request.getPassword(), (String) member.get("password"))) {
+            throw BusinessException.unauthorized("이메일 또는 비밀번호가 잘못되었습니다.");
+        }
+
         String role = (String) member.get("role");
-        return generateTokens(memberId, role);
+        return generateTokens(memberId, role, authEpoch);
     }
 
     @Override
@@ -228,13 +206,15 @@ public class AuthServiceImpl implements AuthService {
 
         String kakaoId = String.valueOf(profile.get("id"));
         Map<String, Object> kakaoAccount = (Map<String, Object>) profile.get("kakao_account");
-        String email = kakaoAccount != null ? (String) kakaoAccount.get("email") : null;
+        String email = normalizeKakaoEmail(
+                kakaoAccount != null ? (String) kakaoAccount.get("email") : null);
         Map<String, Object> profileInfo = kakaoAccount != null ? (Map<String, Object>) kakaoAccount.get("profile") : null;
         String nickname = profileInfo != null ? (String) profileInfo.get("nickname") : "카카오유저";
 
         Map<String, Object> existingMember = memberMapper.findActiveKakaoByIdentity(email, kakaoId);
 
         String memberId;
+        String authEpoch;
         if (existingMember == null) {
             // 탈퇴한 동일 카카오 계정이나 이메일이 있으면 토큰 발급과 신규 계정 생성을 모두 막는다.
             if (memberMapper.existsInactiveByKakaoIdentity(email, kakaoId)
@@ -263,11 +243,20 @@ public class AuthServiceImpl implements AuthService {
             wallet.put("walletType", "MAIN");
             wallet.put("balance", 0);
             walletMapper.insert(wallet);
+            authEpoch = authCredentialStore.getOrCreateEpochForLogin(memberId);
         } else {
             memberId = String.valueOf(existingMember.get("member_id"));
+            // 카카오 credential 확인이 끝난 뒤 로그인 경로에서만 인증 세대를 생성할 수 있다.
+            authEpoch = authCredentialStore.getOrCreateEpochForLogin(memberId);
+            // 세대 snapshot 이후에도 동일 활성 KAKAO 회원인지 다시 확인한다.
+            Map<String, Object> confirmedMember = memberMapper.findActiveKakaoByIdentity(email, kakaoId);
+            if (confirmedMember == null
+                    || !memberId.equals(String.valueOf(confirmedMember.get("member_id")))) {
+                throw BusinessException.unauthorized("카카오 로그인에 실패했습니다.");
+            }
         }
 
-        return generateTokens(memberId, "USER");
+        return generateTokens(memberId, "USER", authEpoch);
     }
 
     @Override
@@ -277,8 +266,8 @@ public class AuthServiceImpl implements AuthService {
         }
 
         String memberId = jwtUtil.getSubject(refreshToken);
-        String storedToken = redisTemplate.opsForValue().get("refresh:" + memberId);
-        if (storedToken == null || !storedToken.equals(refreshToken)) {
+        String authEpoch = authCredentialStore.getEpoch(memberId);
+        if (authEpoch == null) {
             throw BusinessException.unauthorized("리프레시 토큰이 만료되었습니다.");
         }
 
@@ -287,9 +276,14 @@ public class AuthServiceImpl implements AuthService {
             throw BusinessException.unauthorized("리프레시 토큰이 만료되었습니다.");
         }
         String role = (String) member.get("role");
-
-        redisTemplate.delete("refresh:" + memberId);
-        return generateTokens(memberId, role);
+        String accessToken = jwtUtil.generateAccessToken(memberId, role, authEpoch);
+        String newRefreshToken = jwtUtil.generateRefreshToken(memberId);
+        // 세대와 presented token 검증부터 새 Refresh 저장까지 Lua 한 번으로 처리해 복구와의 TOCTOU를 제거한다.
+        if (!authCredentialStore.rotateRefreshAtomically(
+                memberId, authEpoch, refreshToken, newRefreshToken)) {
+            throw BusinessException.unauthorized("리프레시 토큰이 만료되었습니다.");
+        }
+        return tokenResponse(accessToken, newRefreshToken);
     }
 
     @Override
@@ -348,6 +342,8 @@ public class AuthServiceImpl implements AuthService {
         }
 
         Long memberId = numberValue(inactiveMember, "member_id", "memberId").longValue();
+        // 과거 Access/Refresh credential을 Redis에서 먼저 폐기하지 못하면 DB 복구도 진행하지 않는다.
+        authCredentialStore.advanceEpochAndDeleteRefresh(String.valueOf(memberId));
         Map<String, Object> restored = memberValues(request, encodedPassword);
         restored.put("memberId", memberId);
         try {
@@ -456,20 +452,31 @@ public class AuthServiceImpl implements AuthService {
         return value instanceof Number && ((Number) value).intValue() == 1;
     }
 
-    private TokenResponse generateTokens(String memberId, String role) {
-        String accessToken = jwtUtil.generateAccessToken(memberId, role);
+    private TokenResponse generateTokens(String memberId, String role, String authEpoch) {
+        String accessToken = jwtUtil.generateAccessToken(memberId, role, authEpoch);
         String refreshToken = jwtUtil.generateRefreshToken(memberId);
 
-        // Redis에 Refresh Token 저장 (RTR)
-        redisTemplate.opsForValue().set(
-                "refresh:" + memberId, refreshToken,
-                jwtUtil.getRefreshTokenExpiry(), TimeUnit.MILLISECONDS
-        );
+        // 최초 snapshot과 현재 세대가 같을 때만 Refresh credential을 저장한다.
+        if (!authCredentialStore.storeRefreshIfEpochUnchanged(memberId, authEpoch, refreshToken)) {
+            throw BusinessException.unauthorized("인증 상태가 변경되었습니다. 다시 로그인해 주세요.");
+        }
 
+        return tokenResponse(accessToken, refreshToken);
+    }
+
+    private TokenResponse tokenResponse(String accessToken, String refreshToken) {
         return TokenResponse.builder()
                 .accessToken(accessToken)
                 .refreshToken(refreshToken)
                 .build();
+    }
+
+    private String normalizeKakaoEmail(String email) {
+        if (email == null) {
+            return null;
+        }
+        String normalized = email.trim();
+        return normalized.isEmpty() ? null : normalized;
     }
 
     private String generateVerificationCode() {

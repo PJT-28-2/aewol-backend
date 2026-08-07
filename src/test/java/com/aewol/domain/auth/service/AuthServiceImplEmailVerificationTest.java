@@ -36,6 +36,7 @@ import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -56,6 +57,7 @@ class AuthServiceImplEmailVerificationTest {
     @Mock ValueOperations<String, String> valueOperations;
     @Mock EmailService emailService;
     @Mock KakaoAuthClient kakaoAuthClient;
+    @Mock AuthCredentialStore authCredentialStore;
 
     private AuthServiceImpl authService;
 
@@ -63,7 +65,9 @@ class AuthServiceImplEmailVerificationTest {
     void setUp() {
         authService = new AuthServiceImpl(
                 memberMapper, walletMapper, notificationSettingMapper, jwtUtil, passwordEncoder,
-                redisTemplate, emailService, kakaoAuthClient);
+                redisTemplate, emailService, kakaoAuthClient, authCredentialStore);
+        lenient().when(authCredentialStore.storeRefreshIfEpochUnchanged(anyString(), any(), anyString()))
+                .thenReturn(true);
     }
 
     @Test

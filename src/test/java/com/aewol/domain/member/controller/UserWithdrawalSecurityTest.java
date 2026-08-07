@@ -4,6 +4,7 @@ import com.aewol.common.exception.BusinessException;
 import com.aewol.common.exception.GlobalExceptionHandler;
 import com.aewol.common.filter.JwtAuthenticationFilter;
 import com.aewol.common.util.JwtUtil;
+import com.aewol.domain.auth.service.AuthCredentialStore;
 import com.aewol.config.SecurityConfig;
 import com.aewol.domain.member.dto.MemberWithdrawRequest;
 import com.aewol.domain.member.mapper.MemberMapper;
@@ -47,6 +48,7 @@ class UserWithdrawalSecurityTest {
     private MemberService memberService;
     private MemberMapper memberMapper;
     private JwtUtil jwtUtil;
+    private AuthCredentialStore authCredentialStore;
 
     @BeforeEach
     void setUp() {
@@ -63,7 +65,8 @@ class UserWithdrawalSecurityTest {
         memberService = context.getBean(MemberService.class);
         memberMapper = context.getBean(MemberMapper.class);
         jwtUtil = context.getBean(JwtUtil.class);
-        reset(memberService, memberMapper, jwtUtil);
+        authCredentialStore = context.getBean(AuthCredentialStore.class);
+        reset(memberService, memberMapper, jwtUtil, authCredentialStore);
         mockMvc = MockMvcBuilders.webAppContextSetup(context)
                 .apply(springSecurity())
                 .build();
@@ -144,8 +147,10 @@ class UserWithdrawalSecurityTest {
         Claims claims = mock(Claims.class);
         when(claims.getSubject()).thenReturn("member-1");
         when(claims.get("role", String.class)).thenReturn("USER");
+        when(claims.get("authEpoch", String.class)).thenReturn("epoch-1");
         when(jwtUtil.isTokenValid("access-token")).thenReturn(true);
         when(jwtUtil.parseClaims("access-token")).thenReturn(claims);
+        when(authCredentialStore.getEpoch("member-1")).thenReturn("epoch-1");
         if (activeResults.length == 1) {
             when(memberMapper.existsActiveById("member-1")).thenReturn(activeResults[0]);
         } else {
@@ -179,8 +184,14 @@ class UserWithdrawalSecurityTest {
         }
 
         @Bean
-        JwtAuthenticationFilter jwtAuthenticationFilter(JwtUtil jwtUtil, MemberMapper memberMapper) {
-            return new JwtAuthenticationFilter(jwtUtil, memberMapper);
+        AuthCredentialStore authCredentialStore() {
+            return mock(AuthCredentialStore.class);
+        }
+
+        @Bean
+        JwtAuthenticationFilter jwtAuthenticationFilter(
+                JwtUtil jwtUtil, MemberMapper memberMapper, AuthCredentialStore authCredentialStore) {
+            return new JwtAuthenticationFilter(jwtUtil, memberMapper, authCredentialStore);
         }
 
         @Bean

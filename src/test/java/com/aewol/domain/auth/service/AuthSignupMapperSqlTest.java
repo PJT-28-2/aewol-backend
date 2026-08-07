@@ -24,6 +24,16 @@ class AuthSignupMapperSqlTest {
         assertTrue(!deactivateSql.contains("DELETE"));
         assertTrue(!deactivateSql.contains("wallet"));
 
+        String activeKakaoSql = statement(
+                memberSql, "<select id=\"findActiveKakaoByIdentity\"", "</select>");
+        String inactiveKakaoSql = statement(
+                memberSql, "<select id=\"existsInactiveByKakaoIdentity\"", "</select>");
+        assertTrue(activeKakaoSql.contains("TRIM(#{email}) &lt;&gt; ''"));
+        assertTrue(inactiveKakaoSql.contains("TRIM(#{email}) &lt;&gt; ''"));
+        // 비활성 LOCAL 이메일도 KAKAO 신규 생성을 막아 30일 복구 권리를 보존한다.
+        assertTrue(!inactiveKakaoSql.contains("WHERE provider = 'KAKAO'"));
+        assertTrue(!inactiveKakaoSql.contains("AND provider = 'KAKAO'"));
+
         String notificationSql = resource("mapper/notification/NotificationSettingMapper.xml");
         String duplicateClause = notificationSql.substring(notificationSql.indexOf("ON DUPLICATE KEY UPDATE"));
         assertTrue(notificationSql.contains("#{memberId}, TRUE, TRUE, TRUE, TRUE, #{marketingEnabled}"));

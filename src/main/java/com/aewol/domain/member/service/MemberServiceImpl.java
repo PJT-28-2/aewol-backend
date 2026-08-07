@@ -1,13 +1,13 @@
 package com.aewol.domain.member.service;
 
 import com.aewol.common.exception.BusinessException;
+import com.aewol.domain.auth.service.AuthCredentialStore;
 import com.aewol.domain.member.dto.MemberResponse;
 import com.aewol.domain.member.dto.MemberUpdateRequest;
 import com.aewol.domain.member.dto.MemberWithdrawRequest;
 import com.aewol.domain.member.mapper.MemberMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -25,7 +25,7 @@ public class MemberServiceImpl implements MemberService {
 
     private final MemberMapper memberMapper;
     private final PasswordEncoder passwordEncoder;
-    private final RedisTemplate<String, String> redisTemplate;
+    private final AuthCredentialStore authCredentialStore;
 
     @Override
     public MemberResponse getMember(String memberId) {
@@ -92,19 +92,19 @@ public class MemberServiceImpl implements MemberService {
             throw BusinessException.conflict("이미 탈퇴한 회원입니다.");
         }
 
-        registerRefreshTokenCleanup(memberId);
+        registerCredentialCleanup(memberId);
     }
 
-    private void registerRefreshTokenCleanup(String memberId) {
-        // Redis는 DB 트랜잭션에 참여하지 않으므로 commit 이후에만 Refresh Token을 정리한다.
+    private void registerCredentialCleanup(String memberId) {
+        // Redis는 DB 트랜잭션에 참여하지 않으므로 commit 이후에만 인증 세대를 교체하고 Refresh Token을 정리한다.
         TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
             @Override
             public void afterCommit() {
                 try {
-                    redisTemplate.delete("refresh:" + memberId);
+                    authCredentialStore.advanceEpochAndDeleteRefresh(memberId);
                 } catch (RuntimeException e) {
-                    // DB 탈퇴는 이미 확정됐으므로 성공 응답을 유지하고 남은 키는 TTL 만료에 맡긴다.
-                    log.warn("회원탈퇴 후 Refresh Token 정리에 실패했습니다. TTL 만료를 기다립니다.", e);
+                    // DB 탈퇴는 이미 확정됐으므로 성공 응답을 유지한다. 비활성 상태 검사가 기존 credential을 차단한다.
+                    log.warn("회원탈퇴 후 인증 credential 정리에 실패했습니다. TTL 만료를 기다립니다.", e);
                 }
             }
         });

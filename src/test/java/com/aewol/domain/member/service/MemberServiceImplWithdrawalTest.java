@@ -1,6 +1,7 @@
 package com.aewol.domain.member.service;
 
 import com.aewol.common.exception.BusinessException;
+import com.aewol.domain.auth.service.AuthCredentialStore;
 import com.aewol.domain.member.dto.MemberWithdrawRequest;
 import com.aewol.domain.member.mapper.MemberMapper;
 import java.util.HashMap;
@@ -11,7 +12,6 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
@@ -30,13 +30,13 @@ class MemberServiceImplWithdrawalTest {
 
     @Mock MemberMapper memberMapper;
     @Mock PasswordEncoder passwordEncoder;
-    @Mock RedisTemplate<String, String> redisTemplate;
+    @Mock AuthCredentialStore authCredentialStore;
 
     private MemberServiceImpl service;
 
     @BeforeEach
     void setUp() {
-        service = new MemberServiceImpl(memberMapper, passwordEncoder, redisTemplate);
+        service = new MemberServiceImpl(memberMapper, passwordEncoder, authCredentialStore);
         TransactionSynchronizationManager.initSynchronization();
     }
 
@@ -56,10 +56,10 @@ class MemberServiceImplWithdrawalTest {
         service.withdraw("member-1", request("current-password"));
 
         verify(memberMapper).deactivateActiveMember("member-1");
-        verify(redisTemplate, never()).delete("refresh:member-1");
+        verify(authCredentialStore, never()).advanceEpochAndDeleteRefresh("member-1");
 
         TransactionSynchronizationUtils.triggerAfterCommit();
-        verify(redisTemplate).delete("refresh:member-1");
+        verify(authCredentialStore).advanceEpochAndDeleteRefresh("member-1");
     }
 
     @Test
@@ -77,7 +77,7 @@ class MemberServiceImplWithdrawalTest {
         assertEquals(400, wrong.getStatus().value());
         assertEquals("현재 비밀번호가 일치하지 않습니다.", wrong.getMessage());
         verify(memberMapper, never()).deactivateActiveMember("member-1");
-        verify(redisTemplate, never()).delete("refresh:member-1");
+        verify(authCredentialStore, never()).advanceEpochAndDeleteRefresh("member-1");
     }
 
     @Test
@@ -94,7 +94,7 @@ class MemberServiceImplWithdrawalTest {
         verify(passwordEncoder, never()).matches(
                 org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.anyString());
         verify(memberMapper, never()).deactivateActiveMember("member-1");
-        verify(redisTemplate, never()).delete("refresh:member-1");
+        verify(authCredentialStore, never()).advanceEpochAndDeleteRefresh("member-1");
     }
 
     @Test
@@ -120,7 +120,7 @@ class MemberServiceImplWithdrawalTest {
         verify(passwordEncoder, never()).matches(
                 org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any());
         verify(memberMapper, never()).deactivateActiveMember("member-1");
-        verify(redisTemplate, never()).delete("refresh:member-1");
+        verify(authCredentialStore, never()).advanceEpochAndDeleteRefresh("member-1");
     }
 
     @Test
@@ -136,7 +136,7 @@ class MemberServiceImplWithdrawalTest {
 
         assertEquals(409, inactive.getStatus().value());
         assertEquals(409, concurrent.getStatus().value());
-        verify(redisTemplate, never()).delete("refresh:member-1");
+        verify(authCredentialStore, never()).advanceEpochAndDeleteRefresh("member-1");
     }
 
     @Test
@@ -148,7 +148,7 @@ class MemberServiceImplWithdrawalTest {
         assertThrows(RuntimeException.class, () -> service.withdraw("member-1", null));
 
         assertEquals(0, TransactionSynchronizationManager.getSynchronizations().size());
-        verify(redisTemplate, never()).delete("refresh:member-1");
+        verify(authCredentialStore, never()).advanceEpochAndDeleteRefresh("member-1");
     }
 
     @Test
@@ -156,7 +156,7 @@ class MemberServiceImplWithdrawalTest {
         when(memberMapper.findById("member-1")).thenReturn(member("KAKAO", 1, null));
         when(memberMapper.deactivateActiveMember("member-1")).thenReturn(1);
         doThrow(new RuntimeException("redis unavailable"))
-                .when(redisTemplate).delete("refresh:member-1");
+                .when(authCredentialStore).advanceEpochAndDeleteRefresh("member-1");
 
         service.withdraw("member-1", null);
 
