@@ -167,4 +167,14 @@ class EmergencyServiceImplTest {
         assertEquals(HttpStatus.BAD_REQUEST, exception.getStatus());
         verifyNoInteractions(emergencyMapper);
     }
+
+    @Test
+    @DisplayName("hospitalId가 null이면 400 BusinessException을 던지고 mapper를 호출하지 않는다")
+    void should_throwBadRequest_when_hospitalIdIsNull() {
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> emergencyService.getDetail(null));
+
+        assertEquals(HttpStatus.BAD_REQUEST, exception.getStatus());
+        verifyNoInteractions(emergencyMapper);
+    }
 }
