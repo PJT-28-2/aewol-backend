@@ -28,6 +28,7 @@ public class PetServiceImpl implements PetService {
 
     private static final String VACCINATION = "VACCINATION";
     private static final String DOCUMENT_SUB_DIR = "pet-documents";
+    private static final int MAX_DOCUMENT_NAME_LENGTH = 100;
     private static final Map<String, Set<String>> ALLOWED_FILE_TYPES = Map.of(
             "image/jpeg", Set.of("jpg", "jpeg"),
             "image/png", Set.of("png"),
@@ -108,6 +109,7 @@ public class PetServiceImpl implements PetService {
                                                           MultipartFile file, LocalDate issuedDate) {
         assertOwner(memberId, petId);
         String storageExtension = validateDocument(file);
+        String originalFilename = extractOriginalFilename(file);
         Map<String, Object> existing = petDocumentMapper.findByPetIdAndTypeForUpdate(petId, VACCINATION);
         String newFileUrl;
         try {
@@ -118,7 +120,7 @@ public class PetServiceImpl implements PetService {
 
         Map<String, Object> document = new HashMap<>();
         document.put("petId", petId);
-        document.put("docName", "접종증명서");
+        document.put("docName", originalFilename);
         document.put("docType", VACCINATION);
         document.put("fileUrl", newFileUrl);
         document.put("issuedDate", issuedDate);
@@ -179,6 +181,24 @@ public class PetServiceImpl implements PetService {
         return "image/jpeg".equals(contentType) ? "jpg" : extension;
     }
 
+    private String extractOriginalFilename(MultipartFile file) {
+        String originalFilename = file.getOriginalFilename();
+        if (originalFilename == null) {
+            throw new BusinessException("파일명이 올바르지 않습니다.");
+        }
+
+        String normalized = originalFilename.replace('\\', '/');
+        String filename = normalized.substring(normalized.lastIndexOf('/') + 1).trim();
+        if (filename.isBlank() || filename.equals(".") || filename.equals("..")
+                || filename.chars().anyMatch(Character::isISOControl)) {
+            throw new BusinessException("파일명이 올바르지 않습니다.");
+        }
+        if (filename.length() > MAX_DOCUMENT_NAME_LENGTH) {
+            throw new BusinessException("파일명은 100자 이하만 사용할 수 있습니다.");
+        }
+        return filename;
+    }
+
     private void arrangeFileCleanup(String newFileUrl, String oldFileUrl) {
         if (TransactionSynchronizationManager.isSynchronizationActive()) {
             TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
@@ -227,6 +247,7 @@ public class PetServiceImpl implements PetService {
         return PetDocumentResponse.builder()
                 .docId(docId == null ? null : String.valueOf(docId))
                 .petId(String.valueOf(value(document, "pet_id", "petId")))
+                .docName((String) value(document, "doc_name", "docName"))
                 .docType(String.valueOf(value(document, "doc_type", "docType")))
                 .fileUrl((String) value(document, "file_url", "fileUrl"))
                 .issuedDate(issuedDate == null ? null : issuedDate.toString())
