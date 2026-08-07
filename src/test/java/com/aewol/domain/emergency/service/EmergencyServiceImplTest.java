@@ -126,6 +126,18 @@ class EmergencyServiceImplTest {
     }
 
     @Test
+    @DisplayName("is_holiday_open이 NULL(정보 미확인)이면 false로 강제 변환하지 않고 null을 유지한다")
+    void should_mapIsHolidayOpenToNull_when_infoUnknown() {
+        Map<String, Object> row = hospitalDetailRow();
+        row.put("is_holiday_open", null);
+        when(emergencyMapper.findById(1L)).thenReturn(row);
+
+        HospitalDetailResponse response = emergencyService.getDetail(1L);
+
+        assertNull(response.getIsHolidayOpen());
+    }
+
+    @Test
     @DisplayName("존재하지 않는 hospitalId 조회 시 404 BusinessException을 던진다")
     void should_throwNotFound_when_hospitalIdDoesNotExist() {
         when(emergencyMapper.findById(999L)).thenReturn(null);
