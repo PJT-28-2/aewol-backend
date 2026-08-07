@@ -9,7 +9,9 @@
     </insert>
 
     <select id="findByPetId" resultType="map">
-        SELECT * FROM pet_document WHERE pet_id = #{petId} ORDER BY created_at DESC
+        SELECT * FROM pet_document
+        WHERE pet_id = #{petId}
+        ORDER BY created_at DESC, doc_id DESC
     </select>
 
     <select id="findByPetIdAndType" resultType="map">
@@ -19,10 +21,20 @@
         LIMIT 1
     </select>
 
+    <select id="findByIdAndPetId" resultType="map">
+        SELECT * FROM pet_document
+        WHERE doc_id = #{docId} AND pet_id = #{petId}
+    </select>
+
     <update id="update" parameterType="map">
         UPDATE pet_document
         SET doc_name = #{docName}, file_url = #{fileUrl}, issued_date = #{issuedDate}
         WHERE doc_id = #{docId}
     </update>
+
+    <delete id="deleteByIdAndPetId">
+        DELETE FROM pet_document
+        WHERE doc_id = #{docId} AND pet_id = #{petId}
+    </delete>
 
 </mapper>

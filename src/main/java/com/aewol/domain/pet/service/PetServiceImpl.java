@@ -138,6 +138,29 @@ public class PetServiceImpl implements PetService {
         return toDocumentResponse(document);
     }
 
+    @Override
+    @Transactional(readOnly = true)
+    public List<PetDocumentResponse> getPetDocuments(String memberId, String petId) {
+        assertOwner(memberId, petId);
+        return petDocumentMapper.findByPetId(petId).stream()
+                .map(this::toDocumentResponse)
+                .collect(Collectors.toList());
+    }
+
+    @Override
+    @Transactional
+    public void deletePetDocument(String memberId, String petId, String docId) {
+        assertOwner(memberId, petId);
+        Map<String, Object> document = petDocumentMapper.findByIdAndPetId(docId, petId);
+        if (document == null) {
+            throw BusinessException.notFound("문서를 찾을 수 없습니다.");
+        }
+        if (petDocumentMapper.deleteByIdAndPetId(docId, petId) != 1) {
+            throw BusinessException.notFound("문서를 찾을 수 없습니다.");
+        }
+        arrangeDeletedFileCleanup((String) value(document, "file_url", "fileUrl"));
+    }
+
     private String validateDocument(MultipartFile file) {
         if (file == null || file.isEmpty()) {
             throw new BusinessException("업로드할 파일이 없습니다.");
@@ -172,6 +195,20 @@ public class PetServiceImpl implements PetService {
         }
     }
 
+    private void arrangeDeletedFileCleanup(String fileUrl) {
+        if (fileUrl == null || fileUrl.isBlank()) return;
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    deleteQuietly(fileUrl);
+                }
+            });
+        } else {
+            deleteQuietly(fileUrl);
+        }
+    }
+
     private void deleteQuietly(String fileUrl) {
         try {
             fileUtil.delete(fileUrl);
@@ -181,15 +218,22 @@ public class PetServiceImpl implements PetService {
     }
 
     private PetDocumentResponse toDocumentResponse(Map<String, Object> document) {
-        Object issuedDate = document.get("issuedDate");
-        Object docId = document.get("docId");
+        Object issuedDate = value(document, "issued_date", "issuedDate");
+        Object docId = value(document, "doc_id", "docId");
         return PetDocumentResponse.builder()
                 .docId(docId == null ? null : String.valueOf(docId))
-                .petId(String.valueOf(document.get("petId")))
-                .docType(String.valueOf(document.get("docType")))
-                .fileUrl((String) document.get("fileUrl"))
+                .petId(String.valueOf(value(document, "pet_id", "petId")))
+                .docType(String.valueOf(value(document, "doc_type", "docType")))
+                .fileUrl((String) value(document, "file_url", "fileUrl"))
                 .issuedDate(issuedDate == null ? null : issuedDate.toString())
                 .build();
+    }
+
+    private static Object value(Map<String, Object> map, String... keys) {
+        for (String key : keys) {
+            if (map.containsKey(key)) return map.get(key);
+        }
+        return null;
     }
 
     private void assertOwner(String memberId, String petId) {
