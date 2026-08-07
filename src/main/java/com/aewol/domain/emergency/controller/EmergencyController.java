@@ -1,6 +1,7 @@
 package com.aewol.domain.emergency.controller;
 
 import com.aewol.common.response.ApiResponse;
+import com.aewol.domain.emergency.dto.HospitalDetailResponse;
 import com.aewol.domain.emergency.dto.HospitalResponse;
 import com.aewol.domain.emergency.service.EmergencyService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -39,5 +40,11 @@ public class EmergencyController {
             @RequestParam(defaultValue = "false") boolean is24h) {
         return ResponseEntity.ok(ApiResponse.success(
                 emergencyService.searchNearby(latitude, longitude, radiusKm, is24h)));
+    }
+
+    @Operation(summary = "병원 상세 조회")
+    @GetMapping("/hospitals/{hospitalId}")
+    public ResponseEntity<ApiResponse<HospitalDetailResponse>> getDetail(@PathVariable Long hospitalId) {
+        return ResponseEntity.ok(ApiResponse.success(emergencyService.getDetail(hospitalId)));
     }
 }
