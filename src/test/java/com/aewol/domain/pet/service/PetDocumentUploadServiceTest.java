@@ -45,8 +45,10 @@ class PetDocumentUploadServiceTest {
                 LocalDate.of(2026, 8, 1));
 
         assertEquals("VACCINATION", response.getDocType());
+        assertEquals("certificate.jpeg", response.getDocName());
         assertEquals("/uploads/pet-documents/new.jpg", response.getFileUrl());
-        verify(petDocumentMapper).insert(anyMap());
+        verify(petDocumentMapper).insert(argThat(row ->
+                "certificate.jpeg".equals(row.get("docName"))));
     }
 
     @Test
@@ -59,7 +61,9 @@ class PetDocumentUploadServiceTest {
 
         service.uploadVaccinationDocument("member-1", "pet-1", file, null);
 
-        verify(petDocumentMapper).update(argThat(row -> Long.valueOf(7L).equals(row.get("docId"))));
+        verify(petDocumentMapper).update(argThat(row ->
+                Long.valueOf(7L).equals(row.get("docId"))
+                        && "certificate.jpeg".equals(row.get("docName"))));
         verify(petDocumentMapper, never()).insert(anyMap());
         verify(fileUtil).delete("/uploads/pet-documents/old.pdf");
     }
@@ -132,6 +136,34 @@ class PetDocumentUploadServiceTest {
     void should_throwBadRequest_when_contentTypeDoesNotMatchExtension() {
         givenOwner();
         MockMultipartFile file = new MockMultipartFile("file", "fake.pdf", "image/png", "x".getBytes());
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.uploadVaccinationDocument("member-1", "pet-1", file, null));
+
+        assertEquals(HttpStatus.BAD_REQUEST, exception.getStatus());
+        verifyNoInteractions(petDocumentMapper, fileUtil);
+    }
+
+    @Test
+    void should_storeFilenameOnly_when_originalFilenameContainsPath() throws IOException {
+        givenOwner();
+        MockMultipartFile file = new MockMultipartFile(
+                "file", "C:\\fakepath\\몽이_접종증명서.png", "image/png", "image".getBytes());
+        when(petDocumentMapper.findByPetIdAndTypeForUpdate("pet-1", "VACCINATION")).thenReturn(null);
+        when(fileUtil.upload(file, "pet-documents", "png")).thenReturn("/uploads/pet-documents/new.png");
+
+        PetDocumentResponse response = service.uploadVaccinationDocument("member-1", "pet-1", file, null);
+
+        assertEquals("몽이_접종증명서.png", response.getDocName());
+        verify(petDocumentMapper).insert(argThat(row ->
+                "몽이_접종증명서.png".equals(row.get("docName"))));
+    }
+
+    @Test
+    void should_throwBadRequest_when_originalFilenameExceedsDatabaseLimit() {
+        givenOwner();
+        String filename = "a".repeat(97) + ".png";
+        MockMultipartFile file = new MockMultipartFile("file", filename, "image/png", "image".getBytes());
 
         BusinessException exception = assertThrows(BusinessException.class,
                 () -> service.uploadVaccinationDocument("member-1", "pet-1", file, null));

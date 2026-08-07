@@ -45,6 +45,7 @@ class PetDocumentQueryDeleteServiceTest {
 
         assertEquals(2, result.size());
         assertEquals("2", result.get(0).getDocId());
+        assertEquals("vaccination-certificate.pdf", result.get(0).getDocName());
         assertEquals("2026-08-07", result.get(0).getIssuedDate());
         verify(petDocumentMapper).findByPetId("pet-1");
     }
@@ -156,6 +157,7 @@ class PetDocumentQueryDeleteServiceTest {
         Map<String, Object> document = new HashMap<>();
         document.put("doc_id", docId);
         document.put("pet_id", "pet-1");
+        document.put("doc_name", "vaccination-certificate.pdf");
         document.put("doc_type", "VACCINATION");
         document.put("file_url", fileUrl);
         document.put("issued_date", issuedDate);
