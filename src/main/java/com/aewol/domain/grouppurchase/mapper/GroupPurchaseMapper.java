@@ -14,4 +14,5 @@ public interface GroupPurchaseMapper {
     void insert(Map<String, Object> groupPurchase);
     void updateQuantity(@Param("gpId") String gpId, @Param("quantity") int quantity);
     void insertParticipant(Map<String, Object> participant);
+    Map<String, Object> findParticipant(@Param("gpId") String gpId, @Param("memberId") String memberId);
 }

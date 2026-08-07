@@ -3,6 +3,8 @@ package com.aewol.domain.grouppurchase.controller;
 import com.aewol.common.response.ApiResponse;
 import com.aewol.domain.grouppurchase.dto.GroupPurchaseCreateRequest;
 import com.aewol.domain.grouppurchase.dto.GroupPurchaseImageUploadResponse;
+import com.aewol.domain.grouppurchase.dto.GroupPurchaseJoinRequest;
+import com.aewol.domain.grouppurchase.dto.GroupPurchaseJoinResponse;
 import com.aewol.domain.grouppurchase.dto.GroupPurchaseListResponse;
 import com.aewol.domain.grouppurchase.dto.GroupPurchaseResponse;
 import com.aewol.domain.grouppurchase.service.GroupPurchaseService;
@@ -28,13 +30,14 @@ public class GroupPurchaseController {
     @Operation(summary = "공동구매 게시글 조회")
     @GetMapping
     public ResponseEntity<ApiResponse<GroupPurchaseListResponse>> list(
+            @AuthenticationPrincipal String memberId,
             @RequestParam(required = false) String status,
             @RequestParam(required = false) String keyword,
             @RequestParam(required = false) String category,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "10") int size) {
         return ResponseEntity.ok(ApiResponse.success("공동구매 목록 조회 성공",
-                groupPurchaseService.list(status, keyword, category, page, size)));
+                groupPurchaseService.list(memberId, status, keyword, category, page, size)));
     }
 
     @Operation(summary = "공동구매 생성")
@@ -53,11 +56,12 @@ public class GroupPurchaseController {
 
     @Operation(summary = "공동구매 참여")
     @PostMapping("/{gpId}/join")
-    public ResponseEntity<ApiResponse<Void>> join(@AuthenticationPrincipal String memberId,
+    public ResponseEntity<ApiResponse<GroupPurchaseJoinResponse>> join(@AuthenticationPrincipal String memberId,
                                                    @PathVariable String gpId,
-                                                   @RequestParam(defaultValue = "1") int quantity) {
-        groupPurchaseService.join(memberId, gpId, quantity);
-        return ResponseEntity.ok(ApiResponse.success());
+                                                   @RequestParam int quantity,
+                                                   @RequestBody(required = false) GroupPurchaseJoinRequest request) {
+        return ResponseEntity.ok(ApiResponse.success("공동구매 참여가 완료되었습니다.",
+                groupPurchaseService.join(memberId, gpId, quantity, request)));
     }
 
     @Operation(summary = "공동구매 이미지 업로드")

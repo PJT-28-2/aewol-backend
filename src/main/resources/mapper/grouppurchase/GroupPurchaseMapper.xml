@@ -49,8 +49,16 @@
     </update>
 
     <insert id="insertParticipant" parameterType="map" useGeneratedKeys="true" keyProperty="participantId" keyColumn="participant_id">
-        INSERT INTO group_purchase_participant (gp_id, member_id, purchase_quantity)
-        VALUES (#{gpId}, #{memberId}, #{quantity})
+        INSERT INTO group_purchase_participant
+            (gp_id, member_id, purchase_quantity, recipient_name, recipient_phone, zip_code, address, address_detail,
+             paid_amount, payment_status, paid_at, txn_id)
+        VALUES
+            (#{gpId}, #{memberId}, #{quantity}, #{recipientName}, #{recipientPhone}, #{zipCode}, #{address}, #{addressDetail},
+             #{paidAmount}, #{paymentStatus}, #{paidAt}, #{txnId})
     </insert>
+
+    <select id="findParticipant" resultType="map">
+        SELECT * FROM group_purchase_participant WHERE gp_id = #{gpId} AND member_id = #{memberId}
+    </select>
 
 </mapper>
