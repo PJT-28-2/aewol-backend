@@ -211,4 +211,39 @@ class EmergencyControllerTest {
 
         assertTrue(violations.isEmpty());
     }
+
+    private Set<ConstraintViolation<EmergencyController>> validateGetDetailParams(Object[] args) throws Exception {
+        Validator baseValidator = Validation.buildDefaultValidatorFactory().getValidator();
+        ExecutableValidator validator = baseValidator.forExecutables();
+        EmergencyController controller = new EmergencyController(emergencyService);
+        Method method = EmergencyController.class.getMethod("getDetail", Long.class);
+        return validator.validateParameters(controller, method, args);
+    }
+
+    @Test
+    @DisplayName("hospitalId가 0이면 ConstraintViolation이 발생한다")
+    void should_violateConstraint_when_hospitalIdIsZero() throws Exception {
+        Set<ConstraintViolation<EmergencyController>> violations =
+                validateGetDetailParams(new Object[]{0L});
+
+        assertFalse(violations.isEmpty());
+    }
+
+    @Test
+    @DisplayName("hospitalId가 음수이면 ConstraintViolation이 발생한다")
+    void should_violateConstraint_when_hospitalIdIsNegative() throws Exception {
+        Set<ConstraintViolation<EmergencyController>> violations =
+                validateGetDetailParams(new Object[]{-1L});
+
+        assertFalse(violations.isEmpty());
+    }
+
+    @Test
+    @DisplayName("hospitalId가 1 이상이면 ConstraintViolation이 발생하지 않는다")
+    void should_haveNoViolation_when_hospitalIdIsPositive() throws Exception {
+        Set<ConstraintViolation<EmergencyController>> violations =
+                validateGetDetailParams(new Object[]{1L});
+
+        assertTrue(violations.isEmpty());
+    }
 }

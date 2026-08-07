@@ -27,6 +27,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyDouble;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -133,5 +134,25 @@ class EmergencyServiceImplTest {
                 () -> emergencyService.getDetail(999L));
 
         assertEquals(HttpStatus.NOT_FOUND, exception.getStatus());
+    }
+
+    @Test
+    @DisplayName("hospitalId가 0이면 400 BusinessException을 던지고 mapper를 호출하지 않는다")
+    void should_throwBadRequest_when_hospitalIdIsZero() {
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> emergencyService.getDetail(0L));
+
+        assertEquals(HttpStatus.BAD_REQUEST, exception.getStatus());
+        verifyNoInteractions(emergencyMapper);
+    }
+
+    @Test
+    @DisplayName("hospitalId가 음수이면 400 BusinessException을 던지고 mapper를 호출하지 않는다")
+    void should_throwBadRequest_when_hospitalIdIsNegative() {
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> emergencyService.getDetail(-1L));
+
+        assertEquals(HttpStatus.BAD_REQUEST, exception.getStatus());
+        verifyNoInteractions(emergencyMapper);
     }
 }
