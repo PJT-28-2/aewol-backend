@@ -19,8 +19,8 @@ SELECT
     seed.`target_amount`,
     seed.`raised_amount`,
     seed.`participant_count`,
-    DATE_SUB(CURRENT_TIMESTAMP, INTERVAL 30 DAY),
-    DATE_ADD(CURRENT_TIMESTAMP, INTERVAL 180 DAY),
+    CURRENT_TIMESTAMP - INTERVAL '30' DAY,
+    CURRENT_TIMESTAMP + INTERVAL '180' DAY,
     seed.`is_recommended`,
     1,
     seed.`display_order`
