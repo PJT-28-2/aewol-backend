@@ -9,7 +9,7 @@ public interface DonationService {
     DonationBalanceResponse donate(String memberId, DonationRequest request);
     DonationBalanceResponse withdraw(String memberId, DonationWithdrawRequest request);
     DonationSettingsResponse saveSettings(String memberId, DonationSettingRequest request);
-    List<Map<String, Object>> getHistory(String memberId);
+    List<DonationHistoryResponse> getHistory(String memberId);
     int processDailyRoundUps();
     int processMonthlyAutoDonations(String yearMonth);
 }
