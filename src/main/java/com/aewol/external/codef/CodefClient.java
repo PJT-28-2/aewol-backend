@@ -5,6 +5,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.core.env.Environment;
+import org.springframework.core.env.Profiles;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
@@ -28,6 +30,7 @@ public class CodefClient {
 
     private final RestTemplate codefRestTemplate;
     private final RedisTemplate<String, String> redisTemplate;
+    private final Environment environment;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     // develop 병합으로 공용 restTemplate()에 @Primary가 붙으면서, 필드명을 빈 이름과
@@ -35,9 +38,11 @@ public class CodefClient {
     // (Spring은 후보가 여러 개일 때 이름 매칭보다 @Primary를 우선한다). GeminiVisionClient가
     // 이미 쓰고 있는 것과 같은 방식으로 @Qualifier를 명시한다.
     public CodefClient(@Qualifier("codefRestTemplate") RestTemplate codefRestTemplate,
-                        RedisTemplate<String, String> redisTemplate) {
+                        RedisTemplate<String, String> redisTemplate,
+                        Environment environment) {
         this.codefRestTemplate = codefRestTemplate;
         this.redisTemplate = redisTemplate;
+        this.environment = environment;
     }
 
     @Value("${external.codef.client-id:}")
@@ -143,14 +148,29 @@ public class CodefClient {
             throw new BusinessException(HttpStatus.BAD_GATEWAY, "1원 인증 요청에 실패했어요. 다시 시도해주세요");
         }
 
-        // 테스트 편의용 — 데모 환경엔 실제 입금 알림이 없어서 DB 조회 없이 바로 확인할 수 있게 로그로 남김
-        log.info("[TEST] 1원인증 입금자명 = {}", authCode);
+        // 운영 로그에 실제 인증 값(authCode)을 남기면, 로그 열람 권한만 있어도 실제
+        // 입금 확인 없이 인증을 통과시킬 수 있다(CodeRabbit 지적, 2026-08-07).
+        // [TEST] 접두사만으로는 로그 레벨/환경을 제한하지 못하므로, local/test
+        // 프로필에서만 실제 값을 남기고 운영에서는 계좌 식별 정보(마스킹)만 남긴다.
+        if (environment.acceptsProfiles(Profiles.of("local", "test"))) {
+            log.info("[TEST] 1원인증 입금자명 = {}", authCode);
+        } else {
+            log.info("1원인증 요청 완료 - bankCode: {}, account: {}", bankCode, maskAccountNumber(accountNumber));
+        }
         return authCode;
     }
 
     // ------------------------------------------------------------------
     // 내부 구현
     // ------------------------------------------------------------------
+
+    /** 운영 로그용 계좌번호 마스킹 — 뒤 4자리만 남긴다 */
+    private static String maskAccountNumber(String accountNumber) {
+        if (accountNumber == null || accountNumber.length() <= 4) {
+            return "****";
+        }
+        return "*".repeat(accountNumber.length() - 4) + accountNumber.substring(accountNumber.length() - 4);
+    }
 
     @SuppressWarnings("unchecked")
     private Map<String, Object> callCodef(String path, Map<String, Object> body) {
