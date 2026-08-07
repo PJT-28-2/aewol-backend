@@ -11,10 +11,12 @@ import com.aewol.domain.grouppurchase.service.GroupPurchaseService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import javax.validation.Valid;
+import javax.validation.constraints.Positive;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 import java.util.Map;
@@ -23,6 +25,7 @@ import java.util.Map;
 @RestController
 @RequestMapping("/api/group-purchase")
 @RequiredArgsConstructor
+@Validated
 public class GroupPurchaseController {
 
     private final GroupPurchaseService groupPurchaseService;
@@ -58,8 +61,8 @@ public class GroupPurchaseController {
     @PostMapping("/{gpId}/join")
     public ResponseEntity<ApiResponse<GroupPurchaseJoinResponse>> join(@AuthenticationPrincipal String memberId,
                                                    @PathVariable String gpId,
-                                                   @RequestParam int quantity,
-                                                   @RequestBody(required = false) GroupPurchaseJoinRequest request) {
+                                                   @RequestParam @Positive int quantity,
+                                                   @Valid @RequestBody GroupPurchaseJoinRequest request) {
         return ResponseEntity.ok(ApiResponse.success("공동구매 참여가 완료되었습니다.",
                 groupPurchaseService.join(memberId, gpId, quantity, request)));
     }

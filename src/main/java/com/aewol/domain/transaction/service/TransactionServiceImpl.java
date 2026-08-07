@@ -43,7 +43,11 @@ public class TransactionServiceImpl implements TransactionService {
         if (balance.compareTo(request.getAmount()) < 0) {
             throw new BusinessException("잔액이 부족합니다.");
         }
-        walletMapper.updateBalance(walletId, balance.subtract(request.getAmount()));
+        // balance 조회 후 절대값을 저장하면 동시 결제에서 갱신이 유실될 수 있어,
+        // balance - amount와 balance >= amount 조건을 하나의 원자적 UPDATE로 수행한다.
+        if (walletMapper.deductBalance(walletId, request.getAmount()) == 0) {
+            throw new BusinessException("잔액이 부족합니다.");
+        }
 
         // 거래 기록 생성 — txn_id는 AUTO_INCREMENT 생성 키
         Map<String, Object> txn = new HashMap<>();

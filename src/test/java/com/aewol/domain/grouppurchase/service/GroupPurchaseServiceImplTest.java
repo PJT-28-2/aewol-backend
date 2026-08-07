@@ -28,6 +28,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.web.multipart.MultipartFile;
@@ -264,6 +265,24 @@ class GroupPurchaseServiceImplTest {
     }
 
     @Test
+    @DisplayName("참여 수량이 0 이하이면 계산 전에 예외가 발생한다")
+    void should_throwException_when_quantityIsNotPositive() {
+        GroupPurchaseServiceImpl service = service();
+
+        BusinessException zeroException = assertThrows(BusinessException.class,
+                () -> service.join("member-1", "1", 0, joinRequest()));
+        assertEquals("참여 수량은 1 이상이어야 합니다.", zeroException.getMessage());
+
+        BusinessException negativeException = assertThrows(BusinessException.class,
+                () -> service.join("member-1", "1", -3, joinRequest()));
+        assertEquals("참여 수량은 1 이상이어야 합니다.", negativeException.getMessage());
+
+        verifyNoInteractions(groupPurchaseMapper);
+        verifyNoInteractions(walletMapper);
+        verifyNoInteractions(transactionMapper);
+    }
+
+    @Test
     @DisplayName("공동구매 참여에 성공하면 지갑에서 차감하고 거래내역을 생성한 뒤 참여 정보를 반환한다")
     void should_returnJoinResponse_when_joinSucceeds() {
         GroupPurchaseServiceImpl service = service();
@@ -284,11 +303,13 @@ class GroupPurchaseServiceImplTest {
         wallet.put("member_id", "member-1");
         wallet.put("balance", new BigDecimal("100000"));
         when(walletMapper.findByMemberId("member-1")).thenReturn(wallet);
+        when(walletMapper.deductBalance("wallet-1", new BigDecimal("50000"))).thenReturn(1);
         doAnswer(invocation -> {
             Map<String, Object> txn = invocation.getArgument(0);
             txn.put("txnId", 777L);
             return null;
         }).when(transactionMapper).insert(anyMap());
+        when(groupPurchaseMapper.updateQuantity("1", 2)).thenReturn(1);
 
         GroupPurchaseJoinResponse result = service.join("member-1", "1", 2, joinRequest());
 
@@ -307,7 +328,7 @@ class GroupPurchaseServiceImplTest {
         assertEquals(LocalDateTime.of(2026, 8, 7, 10, 0), result.getPaidAt());
         assertEquals(LocalDateTime.of(2026, 8, 7, 10, 0), result.getJoinedAt());
 
-        verify(walletMapper).updateBalance("wallet-1", new BigDecimal("50000"));
+        verify(walletMapper).deductBalance("wallet-1", new BigDecimal("50000"));
 
         ArgumentCaptor<Map<String, Object>> txnCaptor = ArgumentCaptor.forClass(Map.class);
         verify(transactionMapper).insert(txnCaptor.capture());
@@ -340,6 +361,7 @@ class GroupPurchaseServiceImplTest {
 
         when(groupPurchaseMapper.findById("1")).thenReturn(gpRow, updatedGpRow);
         when(groupPurchaseMapper.findParticipant("1", "member-1")).thenReturn(null, savedParticipantRow);
+        when(groupPurchaseMapper.updateQuantity("1", 1)).thenReturn(1);
 
         GroupPurchaseJoinResponse result = service.join("member-1", "1", 1, joinRequest());
 
@@ -350,6 +372,32 @@ class GroupPurchaseServiceImplTest {
         assertNull(captor.getValue().get("paidAmount"));
         verifyNoInteractions(walletMapper);
         verifyNoInteractions(transactionMapper);
+    }
+
+    @Test
+    @DisplayName("조건부 수량 예약이 실패(목표 초과 또는 마감)하면 409로 거절한다")
+    void should_throwException_when_quantityReservationAffectsNoRows() {
+        GroupPurchaseServiceImpl service = service();
+        when(groupPurchaseMapper.findById("1")).thenReturn(savedRow());
+        when(groupPurchaseMapper.findParticipant("1", "member-1")).thenReturn(null);
+
+        Map<String, Object> wallet = new HashMap<>();
+        wallet.put("wallet_id", "wallet-1");
+        wallet.put("balance", new BigDecimal("1000000"));
+        when(walletMapper.findByMemberId("member-1")).thenReturn(wallet);
+        when(walletMapper.deductBalance("wallet-1", new BigDecimal("125000"))).thenReturn(1);
+        doAnswer(invocation -> {
+            Map<String, Object> txn = invocation.getArgument(0);
+            txn.put("txnId", 1L);
+            return null;
+        }).when(transactionMapper).insert(anyMap());
+        // 목표 수량 초과 또는 마감으로 조건부 UPDATE의 WHERE 절을 만족하는 행이 없는 상황(영향 행 수 0)을 재현한다.
+        when(groupPurchaseMapper.updateQuantity("1", 5)).thenReturn(0);
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.join("member-1", "1", 5, joinRequest()));
+
+        assertEquals("목표 수량을 초과했거나 마감된 공동구매입니다.", exception.getMessage());
     }
 
     @Test
@@ -368,7 +416,31 @@ class GroupPurchaseServiceImplTest {
                 () -> service.join("member-1", "1", 2, joinRequest()));
 
         assertEquals("잔액이 부족합니다.", exception.getMessage());
-        verify(walletMapper, never()).updateBalance(any(), any());
+        verify(walletMapper, never()).deductBalance(any(), any());
+        verifyNoInteractions(transactionMapper);
+        verify(groupPurchaseMapper, never()).insertParticipant(any());
+        verify(groupPurchaseMapper, never()).updateQuantity(any(), anyInt());
+    }
+
+    @Test
+    @DisplayName("사전 잔액 확인은 통과했지만 동시 결제로 원자적 차감이 실패하면(영향 행 0) 잔액 부족으로 처리한다")
+    void should_throwException_when_deductBalanceAffectsNoRows() {
+        GroupPurchaseServiceImpl service = service();
+        when(groupPurchaseMapper.findById("1")).thenReturn(savedRow());
+        when(groupPurchaseMapper.findParticipant("1", "member-1")).thenReturn(null);
+
+        Map<String, Object> wallet = new HashMap<>();
+        wallet.put("wallet_id", "wallet-1");
+        // 앱에서 읽은 잔액(사전 체크)은 충분하지만, 동시에 다른 결제가 먼저 반영되어
+        // 실제 원자적 UPDATE 시점엔 잔액이 부족한 상황(lost update 방지)을 재현한다.
+        wallet.put("balance", new BigDecimal("100000"));
+        when(walletMapper.findByMemberId("member-1")).thenReturn(wallet);
+        when(walletMapper.deductBalance("wallet-1", new BigDecimal("50000"))).thenReturn(0);
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.join("member-1", "1", 2, joinRequest()));
+
+        assertEquals("잔액이 부족합니다.", exception.getMessage());
         verifyNoInteractions(transactionMapper);
         verify(groupPurchaseMapper, never()).insertParticipant(any());
         verify(groupPurchaseMapper, never()).updateQuantity(any(), anyInt());
@@ -400,6 +472,36 @@ class GroupPurchaseServiceImplTest {
 
         assertEquals("이미 참여한 공동구매입니다.", exception.getMessage());
         verify(groupPurchaseMapper, never()).insertParticipant(any());
+        verify(groupPurchaseMapper, never()).updateQuantity(any(), anyInt());
+    }
+
+    @Test
+    @DisplayName("동시 요청으로 조회 시점엔 미참여였지만 DB 유니크 제약을 위반하면 409로 변환한다")
+    void should_convertToConflict_when_duplicateKeyViolatedOnConcurrentJoin() {
+        GroupPurchaseServiceImpl service = service();
+        when(groupPurchaseMapper.findById("1")).thenReturn(savedRow());
+        // findParticipant는 레이스 컨디션으로 조회 시점엔 null(미참여)을 반환하지만,
+        // 동시에 들어온 다른 요청이 먼저 커밋되어 실제 insert는 유니크 제약을 위반한다.
+        when(groupPurchaseMapper.findParticipant("1", "member-1")).thenReturn(null);
+
+        Map<String, Object> wallet = new HashMap<>();
+        wallet.put("wallet_id", "wallet-1");
+        wallet.put("balance", new BigDecimal("100000"));
+        when(walletMapper.findByMemberId("member-1")).thenReturn(wallet);
+        when(walletMapper.deductBalance("wallet-1", new BigDecimal("50000"))).thenReturn(1);
+        doAnswer(invocation -> {
+            Map<String, Object> txn = invocation.getArgument(0);
+            txn.put("txnId", 1L);
+            return null;
+        }).when(transactionMapper).insert(anyMap());
+
+        doThrow(new DuplicateKeyException("Duplicate entry for key 'uq_gpp_gp_member'"))
+                .when(groupPurchaseMapper).insertParticipant(anyMap());
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.join("member-1", "1", 2, joinRequest()));
+
+        assertEquals("이미 참여한 공동구매입니다.", exception.getMessage());
         verify(groupPurchaseMapper, never()).updateQuantity(any(), anyInt());
     }
 

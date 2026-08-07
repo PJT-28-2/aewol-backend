@@ -13,6 +13,7 @@ import com.aewol.domain.grouppurchase.mapper.GroupPurchaseMapper;
 import com.aewol.domain.transaction.mapper.TransactionMapper;
 import com.aewol.domain.wallet.mapper.WalletMapper;
 import lombok.RequiredArgsConstructor;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
@@ -107,6 +108,10 @@ public class GroupPurchaseServiceImpl implements GroupPurchaseService {
     @Override
     @Transactional
     public GroupPurchaseJoinResponse join(String memberId, String gpId, int quantity, GroupPurchaseJoinRequest request) {
+        if (quantity <= 0) {
+            throw new BusinessException("참여 수량은 1 이상이어야 합니다.");
+        }
+
         Map<String, Object> gp = groupPurchaseMapper.findById(gpId);
         if (gp == null) {
             throw BusinessException.notFound("공동구매를 찾을 수 없습니다.");
@@ -131,17 +136,26 @@ public class GroupPurchaseServiceImpl implements GroupPurchaseService {
         participant.put("gpId", gpId);
         participant.put("memberId", memberId);
         participant.put("quantity", quantity);
-        participant.put("recipientName", request == null ? null : request.getRecipientName());
-        participant.put("recipientPhone", request == null ? null : request.getRecipientPhone());
-        participant.put("zipCode", request == null ? null : request.getZipCode());
-        participant.put("address", request == null ? null : request.getAddress());
-        participant.put("addressDetail", request == null ? null : request.getAddressDetail());
+        participant.put("recipientName", request.getRecipientName());
+        participant.put("recipientPhone", request.getRecipientPhone());
+        participant.put("zipCode", request.getZipCode());
+        participant.put("address", request.getAddress());
+        participant.put("addressDetail", request.getAddressDetail());
         participant.put("paidAmount", paidAmount);
         participant.put("paymentStatus", paymentStatus);
         participant.put("paidAt", paidAt);
         participant.put("txnId", txnId);
-        groupPurchaseMapper.insertParticipant(participant);
-        groupPurchaseMapper.updateQuantity(gpId, quantity);
+        try {
+            groupPurchaseMapper.insertParticipant(participant);
+        } catch (DuplicateKeyException e) {
+            // findParticipant 조회 후 insert는 원자적이지 않아, 동시 요청이 같은 시점에 둘 다 미참여로 판단할 수 있다.
+            // (gp_id, member_id) UNIQUE 제약(V9)이 최종 방어선이며, 위반 시 지갑 차감·거래내역까지 트랜잭션 전체가 롤백된다.
+            throw BusinessException.conflict("이미 참여한 공동구매입니다.");
+        }
+        int reserved = groupPurchaseMapper.updateQuantity(gpId, quantity);
+        if (reserved == 0) {
+            throw BusinessException.conflict("목표 수량을 초과했거나 마감된 공동구매입니다.");
+        }
 
         Map<String, Object> savedParticipant = groupPurchaseMapper.findParticipant(gpId, memberId);
         Map<String, Object> updatedGp = groupPurchaseMapper.findById(gpId);
@@ -175,7 +189,11 @@ public class GroupPurchaseServiceImpl implements GroupPurchaseService {
         if (balance.compareTo(amount) < 0) {
             throw new BusinessException("잔액이 부족합니다.");
         }
-        walletMapper.updateBalance(walletId, balance.subtract(amount));
+        // balance 조회 후 절대값을 저장하면 동시 결제에서 갱신이 유실될 수 있어,
+        // balance - amount와 balance >= amount 조건을 하나의 원자적 UPDATE로 수행한다.
+        if (walletMapper.deductBalance(walletId, amount) == 0) {
+            throw new BusinessException("잔액이 부족합니다.");
+        }
 
         Map<String, Object> txn = new HashMap<>();
         txn.put("walletId", walletId);
