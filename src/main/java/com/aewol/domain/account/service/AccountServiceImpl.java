@@ -156,7 +156,27 @@ public class AccountServiceImpl implements AccountService {
     @Override
     @Transactional
     public void disconnectAccount(String accountId) {
+        Map<String, Object> account = accountMapper.findByAccountId(accountId);
+        if (account == null) {
+            throw BusinessException.notFound("연동된 계좌를 찾을 수 없어요");
+        }
+        boolean wasPrimary = toBool(account.get("is_primary"));
+        String memberId = String.valueOf(account.get("member_id"));
+
+        // is_primary도 같이 0으로 내려감(updateStatus의 CASE WHEN, 2026-08-07 수정)
         accountMapper.updateStatus(accountId, "INACTIVE");
+
+        // 대표 계좌를 해제한 거라면, 남은 ACTIVE 계좌 중 하나를 새 대표로 자동 승격한다
+        // — 안 그러면 다른 ACTIVE 계좌가 있는데도 대표 계좌가 0개인 상태가 남는다
+        // (CodeRabbit 지적, 2026-08-07). 남은 계좌가 없으면(전부 해제) 승격할 대상이
+        // 없으니 그대로 대표 계좌 0개로 둔다 — 다음 계좌를 연동할 때 다시 지정하면 된다.
+        if (wasPrimary) {
+            List<Map<String, Object>> remaining = accountMapper.findByMemberId(memberId);
+            if (!remaining.isEmpty()) {
+                String nextPrimaryAccountId = String.valueOf(remaining.get(0).get("account_id"));
+                accountMapper.setPrimary(nextPrimaryAccountId);
+            }
+        }
     }
 
     @Override

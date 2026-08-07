@@ -9,6 +9,7 @@ import com.aewol.domain.account.mapper.AccountMapper;
 import com.aewol.domain.account.mapper.AccountVerificationMapper;
 import com.aewol.external.codef.CodefClient;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -105,6 +106,58 @@ class AccountServiceImplTest {
 
         assertEquals(org.springframework.http.HttpStatus.CONFLICT, ex.getStatus());
         verify(accountMapper, never()).clearPrimaryByMemberId(any());
+    }
+
+    @Test
+    @DisplayName("대표 계좌를 해제하면 남은 ACTIVE 계좌 중 하나를 새 대표로 자동 승격한다")
+    void should_promoteAnotherAccount_when_disconnectingPrimaryWithRemainingActiveAccounts() {
+        String otherAccountId = "2";
+        when(accountMapper.findByAccountId(ACCOUNT_ID))
+                .thenReturn(accountRow(ACCOUNT_ID, MEMBER_ID, "ACTIVE", true));
+        when(accountMapper.findByMemberId(MEMBER_ID))
+                .thenReturn(List.of(accountRow(otherAccountId, MEMBER_ID, "ACTIVE", false)));
+
+        service.disconnectAccount(ACCOUNT_ID);
+
+        verify(accountMapper).updateStatus(ACCOUNT_ID, "INACTIVE");
+        verify(accountMapper).setPrimary(otherAccountId);
+    }
+
+    @Test
+    @DisplayName("대표 계좌가 아닌 계좌를 해제하면 대표 승격 로직을 타지 않는다")
+    void should_notPromote_when_disconnectingNonPrimaryAccount() {
+        when(accountMapper.findByAccountId(ACCOUNT_ID))
+                .thenReturn(accountRow(ACCOUNT_ID, MEMBER_ID, "ACTIVE", false));
+
+        service.disconnectAccount(ACCOUNT_ID);
+
+        verify(accountMapper).updateStatus(ACCOUNT_ID, "INACTIVE");
+        verify(accountMapper, never()).findByMemberId(any());
+        verify(accountMapper, never()).setPrimary(any());
+    }
+
+    @Test
+    @DisplayName("대표 계좌를 해제했는데 남은 ACTIVE 계좌가 없으면 대표 계좌 0개로 둔다")
+    void should_leaveNoPrimary_when_disconnectingPrimaryWithNoRemainingAccounts() {
+        when(accountMapper.findByAccountId(ACCOUNT_ID))
+                .thenReturn(accountRow(ACCOUNT_ID, MEMBER_ID, "ACTIVE", true));
+        when(accountMapper.findByMemberId(MEMBER_ID)).thenReturn(List.of());
+
+        service.disconnectAccount(ACCOUNT_ID);
+
+        verify(accountMapper, never()).setPrimary(any());
+    }
+
+    @Test
+    @DisplayName("존재하지 않는 계좌를 해제하려 하면 404 예외를 던진다")
+    void should_throwNotFound_when_disconnectingNonexistentAccount() {
+        when(accountMapper.findByAccountId(ACCOUNT_ID)).thenReturn(null);
+
+        BusinessException ex = assertThrows(BusinessException.class,
+                () -> service.disconnectAccount(ACCOUNT_ID));
+
+        assertEquals(org.springframework.http.HttpStatus.NOT_FOUND, ex.getStatus());
+        verify(accountMapper, never()).updateStatus(any(), any());
     }
 
     private AccountPrimaryRequest request(boolean isPrimary) {
