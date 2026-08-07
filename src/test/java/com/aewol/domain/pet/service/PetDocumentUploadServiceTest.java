@@ -39,7 +39,7 @@ class PetDocumentUploadServiceTest {
     void should_registerDocument_when_ownerUploadsFirstTime() throws IOException {
         givenOwner();
         MockMultipartFile file = jpeg();
-        when(petDocumentMapper.findByPetIdAndType("pet-1", "VACCINATION")).thenReturn(null);
+        when(petDocumentMapper.findByPetIdAndTypeForUpdate("pet-1", "VACCINATION")).thenReturn(null);
         when(fileUtil.upload(file, "pet-documents", "jpg")).thenReturn("/uploads/pet-documents/new.jpg");
         PetDocumentResponse response = service.uploadVaccinationDocument("member-1", "pet-1", file,
                 LocalDate.of(2026, 8, 1));
@@ -53,7 +53,7 @@ class PetDocumentUploadServiceTest {
     void should_updateDocument_when_ownerReuploads() throws IOException {
         givenOwner();
         MockMultipartFile file = jpeg();
-        when(petDocumentMapper.findByPetIdAndType("pet-1", "VACCINATION"))
+        when(petDocumentMapper.findByPetIdAndTypeForUpdate("pet-1", "VACCINATION"))
                 .thenReturn(document(7L, "/uploads/pet-documents/old.pdf"));
         when(fileUtil.upload(file, "pet-documents", "jpg")).thenReturn("/uploads/pet-documents/new.jpg");
 
@@ -68,7 +68,7 @@ class PetDocumentUploadServiceTest {
     void should_replaceDocumentInformation_when_ownerReuploads() throws IOException {
         givenOwner();
         MockMultipartFile file = new MockMultipartFile("file", "certificate.pdf", "application/pdf", "pdf".getBytes());
-        when(petDocumentMapper.findByPetIdAndType("pet-1", "VACCINATION"))
+        when(petDocumentMapper.findByPetIdAndTypeForUpdate("pet-1", "VACCINATION"))
                 .thenReturn(document(7L, "/uploads/pet-documents/old.jpg"));
         when(fileUtil.upload(file, "pet-documents", "pdf")).thenReturn("/uploads/pet-documents/new.pdf");
         LocalDate issuedDate = LocalDate.of(2026, 7, 31);
@@ -158,7 +158,7 @@ class PetDocumentUploadServiceTest {
     void should_keepExistingDocument_when_databaseUpdateFails() throws IOException {
         givenOwner();
         MockMultipartFile file = jpeg();
-        when(petDocumentMapper.findByPetIdAndType("pet-1", "VACCINATION"))
+        when(petDocumentMapper.findByPetIdAndTypeForUpdate("pet-1", "VACCINATION"))
                 .thenReturn(document(7L, "/uploads/pet-documents/old.pdf"));
         when(fileUtil.upload(file, "pet-documents", "jpg")).thenReturn("/uploads/pet-documents/new.jpg");
         doThrow(new RuntimeException("database error")).when(petDocumentMapper).update(anyMap());

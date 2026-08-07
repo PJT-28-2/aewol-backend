@@ -15,4 +15,6 @@ public interface PetService {
     void deactivatePet(String memberId, String petId);
     PetDocumentResponse uploadVaccinationDocument(String memberId, String petId,
                                                    MultipartFile file, LocalDate issuedDate);
+    List<PetDocumentResponse> getPetDocuments(String memberId, String petId);
+    void deletePetDocument(String memberId, String petId, String docId);
 }
