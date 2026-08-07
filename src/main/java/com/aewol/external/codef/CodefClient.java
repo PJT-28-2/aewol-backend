@@ -65,11 +65,28 @@ public class CodefClient {
     // 이체의 입금자명으로 사용하고, 응답 authCode도 같은 값을 그대로 돌려준다(CODEF
     // 개발가이드 "기타 계좌 인증(1원 이체) API" 문서 예시 참고). 실제 돈이 오가는 진짜
     // 1원 인증이라는 성격은 그대로 유지되면서 길이는 항상 4자로 고정된다(2026-08-06).
-    private static final List<String> DEPOSITOR_NAME_POOL = List.of(
-            "포근애월", "노란구름", "파란하늘", "하얀토끼", "푸른바다",
-            "달콤사탕", "따뜻담요", "동그란해", "폭신베개", "몽글구름"
+    //
+    // 후보 10개 + java.util.Random은 brute-force 범위가 너무 좁다(CodeRabbit 지적,
+    // 2026-08-07). 2음절 수식어 x 2음절 명사 조합으로 뽑아서 4자 고정은 유지하면서
+    // 후보 수를 늘린다(18 x 21 = 378가지). 예측 가능한 PRNG도 실제 인증 값 생성에
+    // 쓰기엔 부적절해서 SecureRandom으로 교체한다.
+    private static final List<String> DEPOSITOR_NAME_MODIFIERS = List.of(
+            "노란", "파란", "하얀", "푸른", "포근", "달콤", "따뜻", "몽글",
+            "폭신", "상큼", "촉촉", "살랑", "반짝", "몽실", "산뜻", "새콤",
+            "뽀송", "몰랑"
     );
-    private static final java.util.Random RANDOM = new java.util.Random();
+    private static final List<String> DEPOSITOR_NAME_NOUNS = List.of(
+            "구름", "하늘", "토끼", "바다", "사탕", "담요", "베개", "나무",
+            "바람", "햇살", "별빛", "노을", "이슬", "파도", "나비", "참새",
+            "우산", "모래", "눈꽃", "단풍", "새싹"
+    );
+    private static final java.security.SecureRandom RANDOM = new java.security.SecureRandom();
+
+    private static String randomDepositorName() {
+        String modifier = DEPOSITOR_NAME_MODIFIERS.get(RANDOM.nextInt(DEPOSITOR_NAME_MODIFIERS.size()));
+        String noun = DEPOSITOR_NAME_NOUNS.get(RANDOM.nextInt(DEPOSITOR_NAME_NOUNS.size()));
+        return modifier + noun;
+    }
 
     /**
      * CODEF 계좌 인증(1원 이체) 요청.
@@ -89,7 +106,7 @@ public class CodefClient {
      */
     public String requestAccountTransferAuth(String bankCode, String accountNumber) {
         String organization = "0" + bankCode;
-        String depositorName = DEPOSITOR_NAME_POOL.get(RANDOM.nextInt(DEPOSITOR_NAME_POOL.size()));
+        String depositorName = randomDepositorName();
 
         Map<String, Object> body = Map.of(
                 "organization", organization,
