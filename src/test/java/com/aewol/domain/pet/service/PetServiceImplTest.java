@@ -78,7 +78,8 @@ class PetServiceImplTest {
 
         service.updatePet("member-1", "pet-1", request);
 
-        verify(petMapper).update(argThat(row -> "pet-1".equals(row.get("petId"))));
+        verify(petMapper).update(argThat(row ->
+                "pet-1".equals(row.get("petId")) && !row.containsKey("regNumber")));
     }
 
     @Test

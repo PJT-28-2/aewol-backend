@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.aewol.domain.pet.mapper.PetRegistrationMapper">
+    <select id="findByRegNumber" resultType="map">
+        SELECT doc_id, pet_id, reg_number
+        FROM pet_registration
+        WHERE reg_number = #{regNumber}
+        LIMIT 1
+    </select>
+
+    <insert id="insert" parameterType="map">
+        INSERT INTO pet_registration
+            (doc_id, pet_id, reg_number, name, breed, gender, neutered, birth_date,
+             rfid_cd, rfid_gubun, org_nm, office_tel, apr_gbn_nm, reg_tm, apr_tm, last_synced_at)
+        VALUES
+            (#{docId}, #{petId}, #{regNumber}, #{name}, #{breed}, #{gender}, #{neutered}, #{birthDate},
+             #{rfidCd}, #{rfidGubun}, #{orgNm}, #{officeTel}, #{aprGbnNm},
+             #{regTm}, #{aprTm}, NOW())
+    </insert>
+
+    <update id="update" parameterType="map">
+        UPDATE pet_registration
+        SET reg_number = #{regNumber}, name = #{name}, breed = #{breed}, gender = #{gender},
+            neutered = #{neutered}, birth_date = #{birthDate}, rfid_cd = #{rfidCd},
+            rfid_gubun = #{rfidGubun}, org_nm = #{orgNm}, office_tel = #{officeTel},
+            apr_gbn_nm = #{aprGbnNm}, reg_tm = #{regTm}, apr_tm = #{aprTm}, last_synced_at = NOW()
+        WHERE doc_id = #{docId} AND pet_id = #{petId}
+    </update>
+</mapper>

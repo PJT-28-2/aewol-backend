@@ -13,4 +13,7 @@ public interface PetMapper {
     void insert(Map<String, Object> pet);
     void update(Map<String, Object> pet);
     int deactivate(@Param("petId") String petId, @Param("memberId") String memberId);
+    int updateRegistrationNumber(@Param("petId") String petId,
+                                 @Param("memberId") String memberId,
+                                 @Param("regNumber") String regNumber);
 }
