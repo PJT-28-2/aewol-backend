@@ -59,6 +59,8 @@ external:
     service-key: ${GOV24_SERVICE_KEY:}
   apms:
     service-key: ${APMS_SERVICE_KEY:}
+  animal-hospital:
+    service-key: ${ANIMAL_HOSPITAL_SERVICE_KEY:}
 
 # File
 file:
