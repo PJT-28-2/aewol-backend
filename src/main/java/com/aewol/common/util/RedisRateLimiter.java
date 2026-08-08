@@ -1,9 +1,11 @@
 package com.aewol.common.util;
 
+import com.aewol.common.exception.BusinessException;
 import java.util.List;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.data.redis.core.script.RedisScript;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
 
 /**
@@ -37,9 +39,19 @@ public class RedisRateLimiter {
     /**
      * key의 카운터를 원자적으로 1 증가시키고, 최초 증가(count == 1)일 때만 ttlSeconds로
      * 만료 시간을 건다. 증가 후 카운터 값을 반환한다.
+     *
+     * Lua 스크립트의 INCR이 정상 실행되면 결과는 항상 1 이상이라 null이 나올 수 없다.
+     * null이면 스크립트 실행 자체를 신뢰할 수 없는 상황(연결 문제 등)이라는 뜻인데,
+     * 이걸 0으로 취급해서 그냥 통과시키면 호출부(CodefClient, AccountServiceImpl)가
+     * 전부 "아직 한도 미만"으로 판단해버려 요청 제한이 무력화된다(CodeRabbit 지적,
+     * 2026-08-07). 그래서 결과를 신뢰할 수 없을 땐 통과시키지 않고 예외로 요청을 거부한다.
      */
     public long incrementWithExpiry(String key, long ttlSeconds) {
         Long count = redisTemplate.execute(incrementAndExpireScript, List.of(key), String.valueOf(ttlSeconds));
-        return count != null ? count : 0L;
+        if (count == null) {
+            throw new BusinessException(HttpStatus.SERVICE_UNAVAILABLE,
+                    "요청 제한 확인에 실패했어요. 잠시 후 다시 시도해주세요");
+        }
+        return count;
     }
 }

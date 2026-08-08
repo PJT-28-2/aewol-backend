@@ -1,11 +1,13 @@
 package com.aewol.common.util;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.aewol.common.exception.BusinessException;
 import java.util.List;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -14,6 +16,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.core.script.RedisScript;
+import org.springframework.http.HttpStatus;
 
 /**
  * INCR와 EXPIRE를 따로 호출하면 그 사이 인스턴스가 죽었을 때 TTL 없는 카운터가 영구히
@@ -48,8 +51,8 @@ class RedisRateLimiterTest {
     }
 
     @Test
-    @DisplayName("Redis 실행 결과가 null이면 0을 반환한다")
-    void should_returnZero_whenRedisReturnsNull() {
+    @DisplayName("Redis 실행 결과가 null이면(정상 INCR은 항상 1 이상이라 신뢰할 수 없는 상황) 0으로 통과시키지 않고 예외를 던져 요청을 거부한다")
+    void should_throwException_whenRedisReturnsNull() {
         when(redisTemplate.execute(
                 (RedisScript<Long>) org.mockito.ArgumentMatchers.any(),
                 anyList(),
@@ -57,8 +60,9 @@ class RedisRateLimiterTest {
                 .thenReturn(null);
 
         RedisRateLimiter limiter = new RedisRateLimiter(redisTemplate);
-        long result = limiter.incrementWithExpiry("another-key", 60);
 
-        assertEquals(0L, result);
+        BusinessException ex = assertThrows(BusinessException.class,
+                () -> limiter.incrementWithExpiry("another-key", 60));
+        assertEquals(HttpStatus.SERVICE_UNAVAILABLE, ex.getStatus());
     }
 }
