@@ -169,12 +169,21 @@ public class AccountServiceImpl implements AccountService {
         String bankCode = (String) verification.get("bank_code");
         String accountNumber = (String) verification.get("account_number");
 
+        // setPrimaryAccount만 기존 대표 계좌를 내리고 있어서, 이미 대표 계좌가 있는
+        // 회원이 isPrimary=true로 새 계좌를 등록하면 대표 계좌가 2개가 될 수 있었다
+        // (CodeRabbit 지적, 2026-08-08). 등록 경로도 같은 순서(기존 대표를 먼저 내리고
+        // 새로 지정)를 따르게 한다.
+        boolean makePrimary = Boolean.TRUE.equals(request.getIsPrimary());
+        if (makePrimary) {
+            accountMapper.clearPrimaryByMemberId(memberId);
+        }
+
         Map<String, Object> account = new HashMap<>();
         account.put("memberId", memberId);
         account.put("bankCode", bankCode);
         account.put("accountNumber", accountNumber);
         account.put("accountNumberHash", sha256(accountNumber));
-        account.put("isPrimary", request.getIsPrimary() != null && request.getIsPrimary() ? 1 : 0);
+        account.put("isPrimary", makePrimary ? 1 : 0);
         accountMapper.insert(account); // account_id AUTO_INCREMENT로 채워짐
 
         // useGeneratedKeys가 정상 동작하면 account_id가 채워진다. 못 채우면 아래에서

@@ -3,6 +3,8 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 import com.aewol.common.exception.BusinessException;
 import com.aewol.domain.account.dto.AccountPrimaryRequest;
+import com.aewol.domain.account.dto.AccountRegisterRequest;
+import com.aewol.domain.account.dto.AccountResponse;
 import com.aewol.domain.account.dto.DepositConfirmRequest;
 import com.aewol.domain.account.dto.DepositConfirmResponse;
 import com.aewol.domain.account.mapper.AccountMapper;
