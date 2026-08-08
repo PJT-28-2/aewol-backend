@@ -9,13 +9,18 @@ import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestTemplate;
+
 import java.net.URI;
 import java.net.URLDecoder;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
+/**
+ * 공공데이터포털 동물등록정보 조회 API(1543061/animalInfoSrvc_v3) 클라이언트.
+ */
 @Slf4j
 @Component
 @RequiredArgsConstructor
@@ -32,18 +37,40 @@ public class ApmsClient {
     @Value("${external.apms.base-url:https://apis.data.go.kr/1543061/animalInfoSrvc_v3/animalInfo_v3}")
     private String baseUrl;
 
+    public boolean isConfigured() {
+        return serviceKey != null && !serviceKey.isBlank();
+    }
+
     /**
-     * 동물등록번호 조회 (APMS 공공 API)
+     * 동물등록정보 동기화에서 사용하는 조회 메서드.
+     * 설정이 없거나 등록정보가 일치하지 않으면 빈 결과를 반환한다.
+     */
+    public Optional<Map<String, Object>> findRegistration(String regNumber, String ownerName) {
+        if (!isConfigured()) {
+            log.warn("APMS service-key가 설정되지 않아 조회를 건너뜁니다.");
+            return Optional.empty();
+        }
+
+        try {
+            return Optional.ofNullable(verifyRegistration(regNumber, ownerName, null));
+        } catch (BusinessException e) {
+            if (e.getStatus() == HttpStatus.BAD_REQUEST) {
+                return Optional.empty();
+            }
+            throw e;
+        }
+    }
+
+    /**
+     * 동물등록번호와 소유자 정보로 등록정보를 검증한다.
      */
     @SuppressWarnings("unchecked")
     public Map<String, Object> verifyRegistration(String regNumber, String ownerName, String ownerBirth) {
-        if (serviceKey == null || serviceKey.isBlank()) {
+        if (!isConfigured()) {
             throw new BusinessException(HttpStatus.INTERNAL_SERVER_ERROR, "동물등록 조회 서비스가 설정되지 않았습니다.");
         }
 
         try {
-            // Encoding/Decoding 키 어느 쪽이 설정돼도 한 번만 인코딩된 URI를 만든다.
-            // URI 오버로드를 사용해 RestTemplate의 URL 템플릿 재인코딩을 방지한다.
             String raw = restTemplate.getForObject(
                     buildRequestUri(regNumber, ownerName, ownerBirth), String.class);
             Map<String, Object> root = objectMapper.readValue(raw, Map.class);
@@ -111,8 +138,6 @@ public class ApmsClient {
 
     private String normalizeServiceKey(String key) {
         String trimmed = key.trim();
-        // 공공데이터포털 화면에 URL Encoding 키만 표시되는 경우가 있다. %2B, %2F,
-        // %3D 등이 포함된 키만 한 번 디코딩하고, 원본 Base64 키의 '+'는 그대로 둔다.
         return trimmed.contains("%")
                 ? URLDecoder.decode(trimmed, StandardCharsets.UTF_8)
                 : trimmed;
