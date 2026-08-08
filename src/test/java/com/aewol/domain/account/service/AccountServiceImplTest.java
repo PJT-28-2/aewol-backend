@@ -238,6 +238,3 @@ private static final String ACCOUNT_ID = "1";
         return row;
     }
 }
-
-
-이거 맞아?
