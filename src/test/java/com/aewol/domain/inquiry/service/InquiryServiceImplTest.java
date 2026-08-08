@@ -20,6 +20,7 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.mock.web.MockMultipartFile;
+import org.springframework.web.multipart.MultipartFile;
 
 @ExtendWith(MockitoExtension.class)
 class InquiryServiceImplTest {
@@ -71,7 +72,7 @@ class InquiryServiceImplTest {
     @Test
     @DisplayName("첨부파일이 3개를 초과하면 400 예외를 던지고 업로드를 시도하지 않는다")
     void should_throwBadRequest_when_moreThanThreeAttachments() {
-        List<MockMultipartFile> files = List.of(
+        List<MultipartFile> files = List.of(
                 new MockMultipartFile("attachments", "a.jpg", "image/jpeg", new byte[]{1}),
                 new MockMultipartFile("attachments", "b.jpg", "image/jpeg", new byte[]{1}),
                 new MockMultipartFile("attachments", "c.jpg", "image/jpeg", new byte[]{1}),
