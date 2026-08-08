@@ -7,6 +7,14 @@
         SELECT * FROM member WHERE member_id = #{memberId}
     </select>
 
+    <select id="findAuthStateById" resultType="map">
+        SELECT is_active,
+               role,
+               UNIX_TIMESTAMP(withdrawn_at) AS withdrawn_at_epoch
+        FROM member
+        WHERE member_id = #{memberId}
+    </select>
+
     <select id="findByEmail" resultType="map">
         SELECT * FROM member WHERE email = #{email}
     </select>
@@ -79,6 +87,7 @@
     </insert>
 
     <update id="restoreLocalMember" parameterType="map">
+        <!-- 복구 후에도 마지막 탈퇴 시각을 토큰 발급 시각과 비교할 수 있도록 유지한다. -->
         UPDATE member
         SET password = #{password},
             name = #{name},
@@ -87,7 +96,6 @@
             provider_id = NULL,
             email_verified = 'Y',
             is_active = 1,
-            withdrawn_at = NULL,
             zip_code = #{zipCode},
             address = #{address},
             address_detail = #{addressDetail},

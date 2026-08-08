@@ -66,8 +66,6 @@ class AuthServiceImplEmailVerificationTest {
         authService = new AuthServiceImpl(
                 memberMapper, walletMapper, notificationSettingMapper, jwtUtil, passwordEncoder,
                 redisTemplate, emailService, kakaoAuthClient, authCredentialStore);
-        lenient().when(authCredentialStore.storeRefreshIfEpochUnchanged(anyString(), any(), anyString()))
-                .thenReturn(true);
     }
 
     @Test

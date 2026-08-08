@@ -101,7 +101,7 @@ public class MemberServiceImpl implements MemberService {
             @Override
             public void afterCommit() {
                 try {
-                    authCredentialStore.advanceEpochAndDeleteRefresh(memberId);
+                    authCredentialStore.deleteRefresh(memberId);
                 } catch (RuntimeException e) {
                     // DB 탈퇴는 이미 확정됐으므로 성공 응답을 유지한다. 비활성 상태 검사가 기존 credential을 차단한다.
                     log.warn("회원탈퇴 후 인증 credential 정리에 실패했습니다. TTL 만료를 기다립니다.", e);

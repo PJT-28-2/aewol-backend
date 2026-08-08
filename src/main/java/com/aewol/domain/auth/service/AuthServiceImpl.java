@@ -14,6 +14,7 @@ import com.aewol.domain.notification.mapper.NotificationSettingMapper;
 import com.aewol.domain.wallet.mapper.WalletMapper;
 import com.aewol.external.kakao.KakaoAuthClient;
 import com.aewol.external.smtp.EmailService;
+import io.jsonwebtoken.Claims;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.core.RedisTemplate;
@@ -26,6 +27,7 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
+import java.util.Date;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -182,19 +184,8 @@ public class AuthServiceImpl implements AuthService {
             throw new BusinessException(HttpStatus.FORBIDDEN, "이메일 인증이 필요합니다.");
         }
 
-        // 실제 로그인 credential 검증 뒤에만 인증 세대를 원자적으로 조회하거나 생성한다.
-        String authEpoch = authCredentialStore.getOrCreateEpochForLogin(memberId);
-        // 세대 snapshot 이후 회원 상태와 비밀번호를 재검증해 탈퇴·복구를 가로지른 로그인을 차단한다.
-        member = memberMapper.findActiveByEmail(request.getEmail());
-        if (member == null
-                || !memberId.equals(String.valueOf(member.get("member_id")))
-                || member.get("password") == null
-                || !passwordEncoder.matches(request.getPassword(), (String) member.get("password"))) {
-            throw BusinessException.unauthorized("이메일 또는 비밀번호가 잘못되었습니다.");
-        }
-
         String role = (String) member.get("role");
-        return generateTokens(memberId, role, authEpoch);
+        return generateTokens(memberId, role);
     }
 
     @Override
@@ -214,7 +205,6 @@ public class AuthServiceImpl implements AuthService {
         Map<String, Object> existingMember = memberMapper.findActiveKakaoByIdentity(email, kakaoId);
 
         String memberId;
-        String authEpoch;
         if (existingMember == null) {
             // 탈퇴한 동일 카카오 계정이나 이메일이 있으면 토큰 발급과 신규 계정 생성을 모두 막는다.
             if (memberMapper.existsInactiveByKakaoIdentity(email, kakaoId)
@@ -243,20 +233,11 @@ public class AuthServiceImpl implements AuthService {
             wallet.put("walletType", "MAIN");
             wallet.put("balance", 0);
             walletMapper.insert(wallet);
-            authEpoch = authCredentialStore.getOrCreateEpochForLogin(memberId);
         } else {
             memberId = String.valueOf(existingMember.get("member_id"));
-            // 카카오 credential 확인이 끝난 뒤 로그인 경로에서만 인증 세대를 생성할 수 있다.
-            authEpoch = authCredentialStore.getOrCreateEpochForLogin(memberId);
-            // 세대 snapshot 이후에도 동일 활성 KAKAO 회원인지 다시 확인한다.
-            Map<String, Object> confirmedMember = memberMapper.findActiveKakaoByIdentity(email, kakaoId);
-            if (confirmedMember == null
-                    || !memberId.equals(String.valueOf(confirmedMember.get("member_id")))) {
-                throw BusinessException.unauthorized("카카오 로그인에 실패했습니다.");
-            }
         }
 
-        return generateTokens(memberId, "USER", authEpoch);
+        return generateTokens(memberId, "USER");
     }
 
     @Override
@@ -265,22 +246,17 @@ public class AuthServiceImpl implements AuthService {
             throw BusinessException.unauthorized("유효하지 않은 리프레시 토큰입니다.");
         }
 
-        String memberId = jwtUtil.getSubject(refreshToken);
-        String authEpoch = authCredentialStore.getEpoch(memberId);
-        if (authEpoch == null) {
-            throw BusinessException.unauthorized("리프레시 토큰이 만료되었습니다.");
-        }
-
-        Map<String, Object> member = memberMapper.findById(memberId);
-        if (member == null || !isActive(member.get("is_active"))) {
+        Claims claims = jwtUtil.parseClaims(refreshToken);
+        String memberId = claims.getSubject();
+        Map<String, Object> member = memberMapper.findAuthStateById(memberId);
+        if (!canUseToken(member, claims.getIssuedAt())) {
             throw BusinessException.unauthorized("리프레시 토큰이 만료되었습니다.");
         }
         String role = (String) member.get("role");
-        String accessToken = jwtUtil.generateAccessToken(memberId, role, authEpoch);
+        String accessToken = jwtUtil.generateAccessToken(memberId, role);
         String newRefreshToken = jwtUtil.generateRefreshToken(memberId);
-        // 세대와 presented token 검증부터 새 Refresh 저장까지 Lua 한 번으로 처리해 복구와의 TOCTOU를 제거한다.
         if (!authCredentialStore.rotateRefreshAtomically(
-                memberId, authEpoch, refreshToken, newRefreshToken)) {
+                memberId, refreshToken, newRefreshToken)) {
             throw BusinessException.unauthorized("리프레시 토큰이 만료되었습니다.");
         }
         return tokenResponse(accessToken, newRefreshToken);
@@ -342,8 +318,6 @@ public class AuthServiceImpl implements AuthService {
         }
 
         Long memberId = numberValue(inactiveMember, "member_id", "memberId").longValue();
-        // 과거 Access/Refresh credential을 Redis에서 먼저 폐기하지 못하면 DB 복구도 진행하지 않는다.
-        authCredentialStore.advanceEpochAndDeleteRefresh(String.valueOf(memberId));
         Map<String, Object> restored = memberValues(request, encodedPassword);
         restored.put("memberId", memberId);
         try {
@@ -452,16 +426,24 @@ public class AuthServiceImpl implements AuthService {
         return value instanceof Number && ((Number) value).intValue() == 1;
     }
 
-    private TokenResponse generateTokens(String memberId, String role, String authEpoch) {
-        String accessToken = jwtUtil.generateAccessToken(memberId, role, authEpoch);
+    private TokenResponse generateTokens(String memberId, String role) {
+        String accessToken = jwtUtil.generateAccessToken(memberId, role);
         String refreshToken = jwtUtil.generateRefreshToken(memberId);
-
-        // 최초 snapshot과 현재 세대가 같을 때만 Refresh credential을 저장한다.
-        if (!authCredentialStore.storeRefreshIfEpochUnchanged(memberId, authEpoch, refreshToken)) {
-            throw BusinessException.unauthorized("인증 상태가 변경되었습니다. 다시 로그인해 주세요.");
-        }
+        authCredentialStore.storeRefresh(memberId, refreshToken);
 
         return tokenResponse(accessToken, refreshToken);
+    }
+
+    private boolean canUseToken(Map<String, Object> member, Date issuedAt) {
+        if (member == null || !isActive(member.get("is_active")) || issuedAt == null) {
+            return false;
+        }
+        Object withdrawnAtEpoch = member.get("withdrawn_at_epoch");
+        if (withdrawnAtEpoch == null) {
+            return true;
+        }
+        // 마지막 탈퇴 시각과 같거나 이전에 발급된 Refresh Token은 복구 후에도 거절한다.
+        return issuedAt.getTime() / 1000L > ((Number) withdrawnAtEpoch).longValue();
     }
 
     private TokenResponse tokenResponse(String accessToken, String refreshToken) {

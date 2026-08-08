@@ -69,8 +69,6 @@ class AuthServiceImplSignupTest {
         authService = new AuthServiceImpl(memberMapper, walletMapper, notificationSettingMapper,
                 jwtUtil, passwordEncoder, redisTemplate, emailService, kakaoAuthClient, authCredentialStore);
         when(redisTemplate.opsForValue()).thenReturn(valueOperations);
-        lenient().when(authCredentialStore.storeRefreshIfEpochUnchanged(anyString(), any(), anyString()))
-                .thenReturn(true);
         TransactionSynchronizationManager.initSynchronization();
     }
 
@@ -109,9 +107,8 @@ class AuthServiceImplSignupTest {
                 && Boolean.TRUE.equals(setting.get("familyShareEnabled"))
                 && Boolean.TRUE.equals(setting.get("communityEnabled"))
                 && Boolean.TRUE.equals(setting.get("marketingEnabled"))));
-        verify(jwtUtil, never()).generateAccessToken(anyString(), anyString(), anyString());
+        verify(jwtUtil, never()).generateAccessToken(anyString(), anyString());
         verify(jwtUtil, never()).generateRefreshToken(anyString());
-        verify(authCredentialStore, never()).getOrCreateEpochForLogin(anyString());
     }
 
     @Test
@@ -168,7 +165,6 @@ class AuthServiceImplSignupTest {
 
         assertEquals(9L, response.getUserId());
         verify(memberMapper).findLatestInactiveByEmailForUpdate(EMAIL);
-        verify(authCredentialStore).advanceEpochAndDeleteRefresh("9");
         verify(memberMapper).restoreLocalMember(argThat(member -> "encoded".equals(member.get("password"))
                 && "Y".equals(member.get("emailVerified")) && Long.valueOf(9L).equals(member.get("memberId"))));
         verify(walletMapper, never()).insert(any());
@@ -177,20 +173,19 @@ class AuthServiceImplSignupTest {
     }
 
     @Test
-    void recoveryStopsBeforeDbActivationWhenCredentialCleanupFails() {
+    void recoveryDoesNotDependOnRedisCredentialCleanup() {
         stubCompletedVerification();
         when(passwordEncoder.encode(anyString())).thenReturn("encoded");
         when(memberMapper.existsActiveByEmail(EMAIL)).thenReturn(false);
         when(memberMapper.findLatestInactiveByEmailForUpdate(EMAIL))
                 .thenReturn(inactive("LOCAL", 9L, true));
-        doThrow(new RuntimeException("redis unavailable"))
-                .when(authCredentialStore).advanceEpochAndDeleteRefresh("9");
+        when(memberMapper.restoreLocalMember(any())).thenReturn(1);
 
-        assertThrows(RuntimeException.class, () -> authService.signup(request(false)));
+        SignupResponse response = authService.signup(request(false));
 
-        verify(memberMapper, never()).restoreLocalMember(any());
-        verify(walletMapper, never()).insert(any());
-        verify(notificationSettingMapper, never()).upsertForRecovery(any(Long.class), any(Boolean.class));
+        assertEquals(9L, response.getUserId());
+        verify(memberMapper).restoreLocalMember(any());
+        verify(notificationSettingMapper).upsertForRecovery(9L, false);
     }
 
     @Test

@@ -33,14 +33,10 @@ public class JwtUtil {
         this.secretKey = Keys.hmacShaKeyFor(secret.getBytes(StandardCharsets.UTF_8));
     }
 
-    public String generateAccessToken(String memberId, String role, String authEpoch) {
-        if (authEpoch == null || authEpoch.isBlank()) {
-            throw new IllegalArgumentException("Access Token 발급에는 인증 세대가 필요합니다.");
-        }
+    public String generateAccessToken(String memberId, String role) {
         var builder = Jwts.builder()
                 .subject(memberId)
                 .claim("role", role)
-                .claim("authEpoch", authEpoch)
                 .issuedAt(new Date())
                 .expiration(new Date(System.currentTimeMillis() + accessTokenExpiry));
         return builder.signWith(secretKey).compact();

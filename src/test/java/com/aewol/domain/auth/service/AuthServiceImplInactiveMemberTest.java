@@ -8,6 +8,8 @@ import com.aewol.domain.notification.mapper.NotificationSettingMapper;
 import com.aewol.domain.wallet.mapper.WalletMapper;
 import com.aewol.external.kakao.KakaoAuthClient;
 import com.aewol.external.smtp.EmailService;
+import io.jsonwebtoken.Claims;
+import java.util.Date;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
@@ -50,12 +52,6 @@ class AuthServiceImplInactiveMemberTest {
     void setUp() {
         service = new AuthServiceImpl(memberMapper, walletMapper, notificationSettingMapper,
                 jwtUtil, passwordEncoder, redisTemplate, emailService, kakaoAuthClient, authCredentialStore);
-        lenient().when(authCredentialStore.storeRefreshIfEpochUnchanged(
-                org.mockito.ArgumentMatchers.anyString(),
-                org.mockito.ArgumentMatchers.anyString(),
-                org.mockito.ArgumentMatchers.anyString())).thenReturn(true);
-        lenient().when(authCredentialStore.getOrCreateEpochForLogin(
-                org.mockito.ArgumentMatchers.anyString())).thenReturn("epoch-1");
     }
 
     @Test
@@ -100,7 +96,7 @@ class AuthServiceImplInactiveMemberTest {
         verify(memberMapper, never()).existsInactiveByKakaoIdentity(
                 org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.anyString());
         verify(memberMapper, never()).insert(org.mockito.ArgumentMatchers.any());
-        verify(jwtUtil).generateAccessToken("7", "USER", "epoch-1");
+        verify(jwtUtil).generateAccessToken("7", "USER");
         verify(jwtUtil).generateRefreshToken("7");
     }
 
@@ -162,7 +158,7 @@ class AuthServiceImplInactiveMemberTest {
                 "KAKAO".equals(member.get("provider")) && "kakao-id".equals(member.get("providerId"))));
         verify(walletMapper).insert(org.mockito.ArgumentMatchers.argThat(wallet ->
                 "11".equals(wallet.get("memberId")) && "MAIN".equals(wallet.get("walletType"))));
-        verify(jwtUtil).generateAccessToken("11", "USER", "epoch-1");
+        verify(jwtUtil).generateAccessToken("11", "USER");
         verify(jwtUtil).generateRefreshToken("11");
     }
 
@@ -235,7 +231,7 @@ class AuthServiceImplInactiveMemberTest {
     }
 
     @Test
-    void localLoginEpochChangeBeforeCredentialStoreRejectsIssuance() {
+    void localLoginStoresRefreshAndReturnsTokens() {
         LoginRequest request = new LoginRequest();
         ReflectionTestUtils.setField(request, "email", "member@example.com");
         ReflectionTestUtils.setField(request, "password", "password");
@@ -245,21 +241,18 @@ class AuthServiceImplInactiveMemberTest {
         active.put("email_verified", "Y");
         active.put("role", "USER");
         when(memberMapper.findActiveByEmail("member@example.com")).thenReturn(active);
-        when(authCredentialStore.getOrCreateEpochForLogin("7")).thenReturn("epoch-1");
         when(passwordEncoder.matches("password", "encoded")).thenReturn(true);
-        when(jwtUtil.generateAccessToken("7", "USER", "epoch-1")).thenReturn("access-token");
+        when(jwtUtil.generateAccessToken("7", "USER")).thenReturn("access-token");
         when(jwtUtil.generateRefreshToken("7")).thenReturn("refresh-token");
-        when(authCredentialStore.storeRefreshIfEpochUnchanged("7", "epoch-1", "refresh-token"))
-                .thenReturn(false);
 
-        assertThrows(BusinessException.class, () -> service.login(request));
+        service.login(request);
 
-        verify(memberMapper, times(2)).findActiveByEmail("member@example.com");
-        verify(authCredentialStore).getOrCreateEpochForLogin("7");
+        verify(memberMapper).findActiveByEmail("member@example.com");
+        verify(authCredentialStore).storeRefresh("7", "refresh-token");
     }
 
     @Test
-    void localReloginAfterEpochLossCreatesNewEpochAndIssuesOnlyMatchingTokens() {
+    void localReloginIssuesNewTokenPair() {
         LoginRequest request = new LoginRequest();
         ReflectionTestUtils.setField(request, "email", "member@example.com");
         ReflectionTestUtils.setField(request, "password", "password");
@@ -269,63 +262,57 @@ class AuthServiceImplInactiveMemberTest {
         active.put("email_verified", "Y");
         when(memberMapper.findActiveByEmail("member@example.com")).thenReturn(active);
         when(passwordEncoder.matches("password", "encoded")).thenReturn(true);
-        when(authCredentialStore.getOrCreateEpochForLogin("7")).thenReturn("epoch-2");
-        when(jwtUtil.generateAccessToken("7", "USER", "epoch-2")).thenReturn("a2");
+        when(jwtUtil.generateAccessToken("7", "USER")).thenReturn("a2");
         when(jwtUtil.generateRefreshToken("7")).thenReturn("r2");
-        when(authCredentialStore.storeRefreshIfEpochUnchanged("7", "epoch-2", "r2"))
-                .thenReturn(true);
 
         service.login(request);
 
-        verify(jwtUtil).generateAccessToken("7", "USER", "epoch-2");
-        verify(jwtUtil, never()).generateAccessToken("7", "USER", "epoch-1");
-        verify(authCredentialStore).storeRefreshIfEpochUnchanged("7", "epoch-2", "r2");
+        verify(jwtUtil).generateAccessToken("7", "USER");
+        verify(authCredentialStore).storeRefresh("7", "r2");
     }
 
     @Test
-    void refreshWithoutEpochFailsAndNeverCreatesCredentialGeneration() {
+    void refreshWithoutIssuedAtFailsClosed() {
         when(jwtUtil.isTokenValid("r1")).thenReturn(true);
-        when(jwtUtil.getSubject("r1")).thenReturn("member-1");
-        when(authCredentialStore.getEpoch("member-1")).thenReturn(null);
+        Claims claims = refreshClaims(null);
+        when(jwtUtil.parseClaims("r1")).thenReturn(claims);
+        when(memberMapper.findAuthStateById("member-1")).thenReturn(member(1));
 
         assertThrows(BusinessException.class, () -> service.refresh("r1"));
 
-        verify(authCredentialStore, never()).getOrCreateEpochForLogin(
-                org.mockito.ArgumentMatchers.anyString());
         verify(jwtUtil, never()).generateAccessToken(
-                org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyString(),
-                org.mockito.ArgumentMatchers.anyString());
+                org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyString());
         verify(jwtUtil, never()).generateRefreshToken(org.mockito.ArgumentMatchers.anyString());
         verify(authCredentialStore, never()).rotateRefreshAtomically(
                 org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyString(),
-                org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyString());
+                org.mockito.ArgumentMatchers.anyString());
     }
 
     @Test
-    void refreshUsesAtomicEpochAndTokenRotation() {
+    void refreshUsesAtomicTokenRotation() {
         when(jwtUtil.isTokenValid("r1")).thenReturn(true);
-        when(jwtUtil.getSubject("r1")).thenReturn("member-1");
-        when(authCredentialStore.getEpoch("member-1")).thenReturn("epoch-2");
-        when(memberMapper.findById("member-1")).thenReturn(member(1));
-        when(jwtUtil.generateAccessToken("member-1", "USER", "epoch-2")).thenReturn("a2");
+        Claims claims = refreshClaims(new Date(1_001_000L));
+        when(jwtUtil.parseClaims("r1")).thenReturn(claims);
+        when(memberMapper.findAuthStateById("member-1")).thenReturn(member(1, 1_000L));
+        when(jwtUtil.generateAccessToken("member-1", "USER")).thenReturn("a2");
         when(jwtUtil.generateRefreshToken("member-1")).thenReturn("r2");
-        when(authCredentialStore.rotateRefreshAtomically("member-1", "epoch-2", "r1", "r2"))
+        when(authCredentialStore.rotateRefreshAtomically("member-1", "r1", "r2"))
                 .thenReturn(true);
 
         service.refresh("r1");
 
-        verify(authCredentialStore).rotateRefreshAtomically("member-1", "epoch-2", "r1", "r2");
+        verify(authCredentialStore).rotateRefreshAtomically("member-1", "r1", "r2");
     }
 
     @Test
-    void refreshEpochRaceReturnsNoTokenPair() {
+    void reusedRefreshReturnsNoTokenPair() {
         when(jwtUtil.isTokenValid("r1")).thenReturn(true);
-        when(jwtUtil.getSubject("r1")).thenReturn("member-1");
-        when(authCredentialStore.getEpoch("member-1")).thenReturn("epoch-1");
-        when(memberMapper.findById("member-1")).thenReturn(member(1));
-        when(jwtUtil.generateAccessToken("member-1", "USER", "epoch-1")).thenReturn("a2");
+        Claims claims = refreshClaims(new Date(1_001_000L));
+        when(jwtUtil.parseClaims("r1")).thenReturn(claims);
+        when(memberMapper.findAuthStateById("member-1")).thenReturn(member(1, 1_000L));
+        when(jwtUtil.generateAccessToken("member-1", "USER")).thenReturn("a2");
         when(jwtUtil.generateRefreshToken("member-1")).thenReturn("r2");
-        when(authCredentialStore.rotateRefreshAtomically("member-1", "epoch-1", "r1", "r2"))
+        when(authCredentialStore.rotateRefreshAtomically("member-1", "r1", "r2"))
                 .thenReturn(false);
 
         assertThrows(BusinessException.class, () -> service.refresh("r1"));
@@ -334,20 +321,19 @@ class AuthServiceImplInactiveMemberTest {
     @Test
     void refreshRejectsInactiveMemberWithoutRotatingToken() {
         when(jwtUtil.isTokenValid("refresh-token")).thenReturn(true);
-        when(jwtUtil.getSubject("refresh-token")).thenReturn("member-1");
-        when(authCredentialStore.getEpoch("member-1")).thenReturn("epoch-1");
-        when(memberMapper.findById("member-1")).thenReturn(member(0));
+        Claims claims = refreshClaims(new Date(1_001_000L));
+        when(jwtUtil.parseClaims("refresh-token")).thenReturn(claims);
+        when(memberMapper.findAuthStateById("member-1")).thenReturn(member(0, 1_000L));
 
         BusinessException exception = assertThrows(BusinessException.class,
                 () -> service.refresh("refresh-token"));
 
         assertEquals(401, exception.getStatus().value());
         verify(authCredentialStore, never()).rotateRefreshAtomically(
-                org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.nullable(String.class),
-                org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyString());
-        verify(jwtUtil, never()).generateAccessToken(
                 org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyString(),
                 org.mockito.ArgumentMatchers.anyString());
+        verify(jwtUtil, never()).generateAccessToken(
+                org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyString());
         verify(jwtUtil, never()).generateRefreshToken(org.mockito.ArgumentMatchers.anyString());
         verify(valueOperations, never()).set(
                 org.mockito.ArgumentMatchers.anyString(),
@@ -359,18 +345,17 @@ class AuthServiceImplInactiveMemberTest {
     @Test
     void refreshRejectsMissingMemberWithoutRotatingToken() {
         when(jwtUtil.isTokenValid("refresh-token")).thenReturn(true);
-        when(jwtUtil.getSubject("refresh-token")).thenReturn("member-1");
-        when(authCredentialStore.getEpoch("member-1")).thenReturn("epoch-1");
-        when(memberMapper.findById("member-1")).thenReturn(null);
+        Claims claims = refreshClaims(new Date(1_001_000L));
+        when(jwtUtil.parseClaims("refresh-token")).thenReturn(claims);
+        when(memberMapper.findAuthStateById("member-1")).thenReturn(null);
 
         assertThrows(BusinessException.class, () -> service.refresh("refresh-token"));
 
         verify(authCredentialStore, never()).rotateRefreshAtomically(
-                org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.nullable(String.class),
-                org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyString());
-        verify(jwtUtil, never()).generateAccessToken(
                 org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyString(),
                 org.mockito.ArgumentMatchers.anyString());
+        verify(jwtUtil, never()).generateAccessToken(
+                org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyString());
         verify(jwtUtil, never()).generateRefreshToken(org.mockito.ArgumentMatchers.anyString());
         verify(valueOperations, never()).set(
                 org.mockito.ArgumentMatchers.anyString(),
@@ -394,7 +379,7 @@ class AuthServiceImplInactiveMemberTest {
     }
 
     private void stubTokenGeneration(String memberId) {
-        when(jwtUtil.generateAccessToken(memberId, "USER", "epoch-1")).thenReturn("access-token");
+        when(jwtUtil.generateAccessToken(memberId, "USER")).thenReturn("access-token");
         when(jwtUtil.generateRefreshToken(memberId)).thenReturn("refresh-token");
     }
 
@@ -402,8 +387,7 @@ class AuthServiceImplInactiveMemberTest {
         verify(memberMapper, never()).insert(org.mockito.ArgumentMatchers.any());
         verify(walletMapper, never()).insert(org.mockito.ArgumentMatchers.any());
         verify(jwtUtil, never()).generateAccessToken(
-                org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyString(),
-                org.mockito.ArgumentMatchers.anyString());
+                org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyString());
         verify(jwtUtil, never()).generateRefreshToken(org.mockito.ArgumentMatchers.anyString());
         verify(redisTemplate, never()).opsForValue();
     }
@@ -413,5 +397,34 @@ class AuthServiceImplInactiveMemberTest {
         member.put("is_active", active);
         member.put("role", "USER");
         return member;
+    }
+
+    @Test
+    void recoveredMemberRejectsRefreshIssuedAtOrBeforeWithdrawal() {
+        when(jwtUtil.isTokenValid("old-refresh")).thenReturn(true);
+        Claims before = refreshClaims(new Date(999_000L));
+        Claims equal = refreshClaims(new Date(1_000_000L));
+        when(jwtUtil.parseClaims("old-refresh")).thenReturn(before, equal);
+        when(memberMapper.findAuthStateById("member-1")).thenReturn(member(1, 1_000L));
+
+        assertThrows(BusinessException.class, () -> service.refresh("old-refresh"));
+        assertThrows(BusinessException.class, () -> service.refresh("old-refresh"));
+
+        verify(authCredentialStore, never()).rotateRefreshAtomically(
+                org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyString(),
+                org.mockito.ArgumentMatchers.anyString());
+    }
+
+    private Map<String, Object> member(int active, Long withdrawnAtEpoch) {
+        Map<String, Object> member = member(active);
+        member.put("withdrawn_at_epoch", withdrawnAtEpoch);
+        return member;
+    }
+
+    private Claims refreshClaims(Date issuedAt) {
+        Claims claims = org.mockito.Mockito.mock(Claims.class);
+        when(claims.getSubject()).thenReturn("member-1");
+        when(claims.getIssuedAt()).thenReturn(issuedAt);
+        return claims;
     }
 }

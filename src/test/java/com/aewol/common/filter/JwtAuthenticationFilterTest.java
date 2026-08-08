@@ -1,16 +1,17 @@
 package com.aewol.common.filter;
 
 import com.aewol.common.util.JwtUtil;
-import com.aewol.domain.auth.service.AuthCredentialStore;
 import com.aewol.domain.member.mapper.MemberMapper;
 import io.jsonwebtoken.Claims;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.Map;
 import javax.servlet.FilterChain;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
-import org.springframework.dao.DataAccessResourceFailureException;
-import org.springframework.data.redis.RedisConnectionFailureException;
 import org.springframework.security.core.context.SecurityContextHolder;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -18,17 +19,16 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
-import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 class JwtAuthenticationFilterTest {
 
+    private static final long WITHDRAWN_AT = 1_000L;
     private final JwtUtil jwtUtil = mock(JwtUtil.class);
     private final MemberMapper memberMapper = mock(MemberMapper.class);
-    private final AuthCredentialStore authCredentialStore = mock(AuthCredentialStore.class);
-    private final JwtAuthenticationFilter filter =
-            new JwtAuthenticationFilter(jwtUtil, memberMapper, authCredentialStore);
+    private final JwtAuthenticationFilter filter = new JwtAuthenticationFilter(jwtUtil, memberMapper);
 
     @AfterEach
     void clearContext() {
@@ -36,25 +36,19 @@ class JwtAuthenticationFilterTest {
     }
 
     @Test
-    void activeMemberIsAuthenticated() throws Exception {
-        Claims claims = claims("member-1", "USER", "epoch-1");
-        when(jwtUtil.isTokenValid("access-token")).thenReturn(true);
-        when(jwtUtil.parseClaims("access-token")).thenReturn(claims);
-        when(memberMapper.existsActiveById("member-1")).thenReturn(true);
-        when(authCredentialStore.getEpoch("member-1")).thenReturn("epoch-1");
+    void activeMemberWithoutWithdrawalHistoryIsAuthenticated() throws Exception {
+        stubToken(new Date(900_000L));
+        when(memberMapper.findAuthStateById("member-1")).thenReturn(member(true, null));
 
         filter.doFilter(request(), new MockHttpServletResponse(), mock(FilterChain.class));
 
         assertEquals("member-1", SecurityContextHolder.getContext().getAuthentication().getPrincipal());
-        verify(memberMapper).existsActiveById("member-1");
     }
 
     @Test
-    void inactiveMemberWithValidAccessTokenIsNotAuthenticated() throws Exception {
-        Claims claims = claims("member-1", "USER");
-        when(jwtUtil.isTokenValid("access-token")).thenReturn(true);
-        when(jwtUtil.parseClaims("access-token")).thenReturn(claims);
-        when(memberMapper.existsActiveById("member-1")).thenReturn(false);
+    void inactiveMemberIsNotAuthenticated() throws Exception {
+        stubToken(new Date(1_100_000L));
+        when(memberMapper.findAuthStateById("member-1")).thenReturn(member(false, WITHDRAWN_AT));
 
         filter.doFilter(request(), new MockHttpServletResponse(), mock(FilterChain.class));
 
@@ -62,140 +56,98 @@ class JwtAuthenticationFilterTest {
     }
 
     @Test
-    void dbFailureLeavesContextEmptySkipsChainAndPropagatesServerError() throws Exception {
-        Claims claims = claims("member-1", "USER");
+    void recoveredMemberRejectsTokenIssuedBeforeWithdrawal() throws Exception {
+        assertAuthenticationForRecoveredMember(999L, false);
+    }
+
+    @Test
+    void recoveredMemberRejectsTokenIssuedAtWithdrawal() throws Exception {
+        assertAuthenticationForRecoveredMember(WITHDRAWN_AT, false);
+    }
+
+    @Test
+    void recoveredMemberAcceptsTokenIssuedAfterWithdrawal() throws Exception {
+        assertAuthenticationForRecoveredMember(1_001L, true);
+    }
+
+    @Test
+    void missingIssuedAtFailsClosed() throws Exception {
+        stubToken(null);
+        when(memberMapper.findAuthStateById("member-1")).thenReturn(member(true, null));
+
+        filter.doFilter(request(), new MockHttpServletResponse(), mock(FilterChain.class));
+
+        assertNull(SecurityContextHolder.getContext().getAuthentication());
+    }
+
+    @Test
+    void missingMemberFailsClosed() throws Exception {
+        stubToken(new Date(1_100_000L));
+        when(memberMapper.findAuthStateById("member-1")).thenReturn(null);
+
+        filter.doFilter(request(), new MockHttpServletResponse(), mock(FilterChain.class));
+
+        assertNull(SecurityContextHolder.getContext().getAuthentication());
+    }
+
+    @Test
+    void dbFailureStopsChainAndPropagates() throws Exception {
+        stubToken(new Date(1_100_000L));
         FilterChain chain = mock(FilterChain.class);
-        when(jwtUtil.isTokenValid("access-token")).thenReturn(true);
-        when(jwtUtil.parseClaims("access-token")).thenReturn(claims);
-        when(memberMapper.existsActiveById("member-1"))
+        when(memberMapper.findAuthStateById("member-1"))
                 .thenThrow(new DataAccessResourceFailureException("db unavailable"));
 
         assertThrows(DataAccessResourceFailureException.class,
                 () -> filter.doFilter(request(), new MockHttpServletResponse(), chain));
-
-        assertNull(SecurityContextHolder.getContext().getAuthentication());
         verify(chain, never()).doFilter(
                 org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any());
     }
 
     @Test
-    void refreshEndpointSkipsAccessTokenAuthentication() throws Exception {
+    void refreshEndpointSkipsAccessAuthentication() throws Exception {
         MockHttpServletRequest request = new MockHttpServletRequest("POST", "/api/auth/refresh");
         request.addHeader("Authorization", "Bearer refresh-token");
         FilterChain chain = mock(FilterChain.class);
 
         filter.doFilter(request, new MockHttpServletResponse(), chain);
 
-        assertNull(SecurityContextHolder.getContext().getAuthentication());
-        verify(chain).doFilter(
-                org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any());
-        verifyNoInteractions(jwtUtil, memberMapper, authCredentialStore);
+        verify(chain).doFilter(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any());
+        verifyNoInteractions(jwtUtil, memberMapper);
     }
 
-    @Test
-    void currentEpochRequiresExactTokenClaim() throws Exception {
-        Claims claims = claims("member-1", "USER", "epoch-1");
-        when(jwtUtil.isTokenValid("access-token")).thenReturn(true);
-        when(jwtUtil.parseClaims("access-token")).thenReturn(claims);
-        when(memberMapper.existsActiveById("member-1")).thenReturn(true);
-        when(authCredentialStore.getEpoch("member-1")).thenReturn("epoch-2");
+    private void assertAuthenticationForRecoveredMember(long issuedAtEpoch, boolean expected)
+            throws Exception {
+        stubToken(new Date(issuedAtEpoch * 1_000L));
+        when(memberMapper.findAuthStateById("member-1")).thenReturn(member(true, WITHDRAWN_AT));
 
         filter.doFilter(request(), new MockHttpServletResponse(), mock(FilterChain.class));
 
-        assertNull(SecurityContextHolder.getContext().getAuthentication());
-    }
-
-    @Test
-    void matchingEpochAuthenticatesAndMissingClaimDoesNot() throws Exception {
-        Claims missingEpoch = claims("member-1", "USER");
-        Claims matchingEpoch = claims("member-1", "USER", "epoch-2");
-        when(jwtUtil.isTokenValid("access-token")).thenReturn(true);
-        when(memberMapper.existsActiveById("member-1")).thenReturn(true);
-        when(authCredentialStore.getEpoch("member-1")).thenReturn("epoch-2");
-        when(jwtUtil.parseClaims("access-token"))
-                .thenReturn(missingEpoch, matchingEpoch);
-
-        filter.doFilter(request(), new MockHttpServletResponse(), mock(FilterChain.class));
-        assertNull(SecurityContextHolder.getContext().getAuthentication());
-
-        filter.doFilter(request(), new MockHttpServletResponse(), mock(FilterChain.class));
-        assertEquals("member-1", SecurityContextHolder.getContext().getAuthentication().getPrincipal());
-    }
-
-    @Test
-    void missingRedisEpochRejectsClaimedAndLegacyTokens() throws Exception {
-        Claims claimed = claims("member-1", "USER", "epoch-1");
-        Claims legacy = claims("member-1", "USER");
-        when(jwtUtil.isTokenValid("access-token")).thenReturn(true);
-        when(memberMapper.existsActiveById("member-1")).thenReturn(true);
-        when(authCredentialStore.getEpoch("member-1")).thenReturn(null);
-        when(jwtUtil.parseClaims("access-token"))
-                .thenReturn(claimed, legacy);
-
-        filter.doFilter(request(), new MockHttpServletResponse(), mock(FilterChain.class));
-        assertNull(SecurityContextHolder.getContext().getAuthentication());
-        filter.doFilter(request(), new MockHttpServletResponse(), mock(FilterChain.class));
-        assertNull(SecurityContextHolder.getContext().getAuthentication());
-    }
-
-    @Test
-    void redisFailureIsFailClosedAndStopsChain() throws Exception {
-        Claims claims = claims("member-1", "USER", "epoch-1");
-        FilterChain chain = mock(FilterChain.class);
-        when(jwtUtil.isTokenValid("access-token")).thenReturn(true);
-        when(jwtUtil.parseClaims("access-token")).thenReturn(claims);
-        when(memberMapper.existsActiveById("member-1")).thenReturn(true);
-        when(authCredentialStore.getEpoch("member-1"))
-                .thenThrow(new RedisConnectionFailureException("unavailable"));
-
-        assertThrows(RedisConnectionFailureException.class,
-                () -> filter.doFilter(request(), new MockHttpServletResponse(), chain));
-
-        assertNull(SecurityContextHolder.getContext().getAuthentication());
-        verify(chain, never()).doFilter(
-                org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any());
-    }
-
-    @Test
-    void accessBearerSchemeIsCaseInsensitiveButMalformedValuesAreIgnored() throws Exception {
-        Claims claims = claims("member-1", "USER", "epoch-1");
-        when(jwtUtil.isTokenValid("access-token")).thenReturn(true);
-        when(jwtUtil.parseClaims("access-token")).thenReturn(claims);
-        when(memberMapper.existsActiveById("member-1")).thenReturn(true);
-        when(authCredentialStore.getEpoch("member-1")).thenReturn("epoch-1");
-        for (String scheme : new String[]{"Bearer", "bearer", "BEARER", "BeArEr"}) {
-            SecurityContextHolder.clearContext();
-            filter.doFilter(request(scheme + " access-token"),
-                    new MockHttpServletResponse(), mock(FilterChain.class));
+        if (expected) {
             assertEquals("member-1", SecurityContextHolder.getContext().getAuthentication().getPrincipal());
-        }
-
-        for (String header : new String[]{"Bearer", "BearerToken value", "Basic value", "Bearer  value"}) {
-            SecurityContextHolder.clearContext();
-            filter.doFilter(request(header), new MockHttpServletResponse(), mock(FilterChain.class));
+        } else {
             assertNull(SecurityContextHolder.getContext().getAuthentication());
         }
     }
 
-    private MockHttpServletRequest request() {
-        return request("Bearer access-token");
-    }
-
-    private MockHttpServletRequest request(String authorization) {
-        MockHttpServletRequest request = new MockHttpServletRequest();
-        request.addHeader("Authorization", authorization);
-        return request;
-    }
-
-    private Claims claims(String memberId, String role) {
-        return claims(memberId, role, null);
-    }
-
-    private Claims claims(String memberId, String role, String authEpoch) {
+    private void stubToken(Date issuedAt) {
         Claims claims = mock(Claims.class);
-        when(claims.getSubject()).thenReturn(memberId);
-        when(claims.get("role", String.class)).thenReturn(role);
-        when(claims.get("authEpoch", String.class)).thenReturn(authEpoch);
-        return claims;
+        when(claims.getSubject()).thenReturn("member-1");
+        when(claims.get("role", String.class)).thenReturn("USER");
+        when(claims.getIssuedAt()).thenReturn(issuedAt);
+        when(jwtUtil.isTokenValid("access-token")).thenReturn(true);
+        when(jwtUtil.parseClaims("access-token")).thenReturn(claims);
+    }
+
+    private Map<String, Object> member(boolean active, Long withdrawnAtEpoch) {
+        Map<String, Object> member = new HashMap<>();
+        member.put("is_active", active ? 1 : 0);
+        member.put("withdrawn_at_epoch", withdrawnAtEpoch);
+        return member;
+    }
+
+    private MockHttpServletRequest request() {
+        MockHttpServletRequest request = new MockHttpServletRequest();
+        request.addHeader("Authorization", "Bearer access-token");
+        return request;
     }
 }

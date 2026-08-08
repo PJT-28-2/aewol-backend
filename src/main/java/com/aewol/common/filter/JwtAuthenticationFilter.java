@@ -1,7 +1,6 @@
 package com.aewol.common.filter;
 
 import com.aewol.common.util.JwtUtil;
-import com.aewol.domain.auth.service.AuthCredentialStore;
 import com.aewol.domain.member.mapper.MemberMapper;
 import io.jsonwebtoken.Claims;
 import javax.servlet.FilterChain;
@@ -19,7 +18,9 @@ import org.springframework.util.StringUtils;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
+import java.util.Date;
 import java.util.List;
+import java.util.Map;
 
 @Slf4j
 @Component
@@ -28,7 +29,6 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
     private final JwtUtil jwtUtil;
     private final MemberMapper memberMapper;
-    private final AuthCredentialStore authCredentialStore;
 
     @Override
     protected boolean shouldNotFilter(HttpServletRequest request) {
@@ -47,42 +47,48 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             Claims claims = jwtUtil.parseClaims(token);
             String memberId = claims.getSubject();
             String role = claims.get("role", String.class);
-            String tokenEpoch = claims.get("authEpoch", String.class);
-
-            // 서명된 기존 Access Token이라도 현재 회원이 비활성이면 보호 API 인증을 허용하지 않는다.
-            boolean active;
+            Map<String, Object> authState;
             try {
-                active = memberMapper.existsActiveById(memberId);
+                authState = memberMapper.findAuthStateById(memberId);
             } catch (DataAccessException e) {
                 log.error("인증 과정에서 회원 활성 상태를 확인하지 못했습니다.", e);
                 throw e;
             }
 
-            if (!active) {
+            if (!canAuthenticate(authState, claims.getIssuedAt())) {
                 filterChain.doFilter(request, response);
                 return;
             }
 
-            String currentEpoch;
-            try {
-                currentEpoch = authCredentialStore.getEpoch(memberId);
-            } catch (RuntimeException e) {
-                log.error("인증 과정에서 인증 세대를 확인하지 못했습니다.", e);
-                throw e;
-            }
-
-            if (currentEpoch != null && tokenEpoch != null && currentEpoch.equals(tokenEpoch)) {
-                UsernamePasswordAuthenticationToken authentication =
-                        new UsernamePasswordAuthenticationToken(
-                                memberId,
-                                null,
-                                List.of(new SimpleGrantedAuthority("ROLE_" + role))
-                        );
-                SecurityContextHolder.getContext().setAuthentication(authentication);
-            }
+            UsernamePasswordAuthenticationToken authentication =
+                    new UsernamePasswordAuthenticationToken(
+                            memberId,
+                            null,
+                            List.of(new SimpleGrantedAuthority("ROLE_" + role))
+                    );
+            SecurityContextHolder.getContext().setAuthentication(authentication);
         }
 
         filterChain.doFilter(request, response);
+    }
+
+    private boolean canAuthenticate(Map<String, Object> authState, Date issuedAt) {
+        if (authState == null || !isActive(authState.get("is_active")) || issuedAt == null) {
+            return false;
+        }
+        Object withdrawnAtEpoch = authState.get("withdrawn_at_epoch");
+        if (withdrawnAtEpoch == null) {
+            return true;
+        }
+        // 마지막 탈퇴 시각과 같거나 이전에 발급된 토큰은 복구 후에도 다시 사용할 수 없다.
+        return issuedAt.getTime() / 1000L > ((Number) withdrawnAtEpoch).longValue();
+    }
+
+    private boolean isActive(Object value) {
+        if (value instanceof Boolean) {
+            return (Boolean) value;
+        }
+        return value instanceof Number && ((Number) value).intValue() == 1;
     }
 
     private String resolveToken(HttpServletRequest request) {

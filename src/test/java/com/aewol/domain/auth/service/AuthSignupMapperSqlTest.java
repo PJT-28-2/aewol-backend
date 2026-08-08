@@ -24,6 +24,10 @@ class AuthSignupMapperSqlTest {
         assertTrue(!deactivateSql.contains("DELETE"));
         assertTrue(!deactivateSql.contains("wallet"));
 
+        String restoreSql = statement(memberSql, "<update id=\"restoreLocalMember\"", "</update>");
+        assertTrue(restoreSql.contains("is_active = 1"));
+        assertTrue(!restoreSql.contains("withdrawn_at = NULL"));
+
         String activeKakaoSql = statement(
                 memberSql, "<select id=\"findActiveKakaoByIdentity\"", "</select>");
         String inactiveKakaoSql = statement(

@@ -13,6 +13,9 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.jsonwebtoken.Claims;
 import java.nio.charset.StandardCharsets;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.Map;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -147,20 +150,25 @@ class UserWithdrawalSecurityTest {
         Claims claims = mock(Claims.class);
         when(claims.getSubject()).thenReturn("member-1");
         when(claims.get("role", String.class)).thenReturn("USER");
-        when(claims.get("authEpoch", String.class)).thenReturn("epoch-1");
+        when(claims.getIssuedAt()).thenReturn(new Date(2_000_000L));
         when(jwtUtil.isTokenValid("access-token")).thenReturn(true);
         when(jwtUtil.parseClaims("access-token")).thenReturn(claims);
-        when(authCredentialStore.getEpoch("member-1")).thenReturn("epoch-1");
         if (activeResults.length == 1) {
-            when(memberMapper.existsActiveById("member-1")).thenReturn(activeResults[0]);
+            when(memberMapper.findAuthStateById("member-1")).thenReturn(authState(activeResults[0]));
         } else {
-            Boolean first = activeResults[0];
-            Boolean[] remaining = new Boolean[activeResults.length - 1];
+            Map<String, Object> first = authState(activeResults[0]);
+            Map<String, Object>[] remaining = new Map[activeResults.length - 1];
             for (int i = 1; i < activeResults.length; i++) {
-                remaining[i - 1] = activeResults[i];
+                remaining[i - 1] = authState(activeResults[i]);
             }
-            when(memberMapper.existsActiveById("member-1")).thenReturn(first, remaining);
+            when(memberMapper.findAuthStateById("member-1")).thenReturn(first, remaining);
         }
+    }
+
+    private Map<String, Object> authState(boolean active) {
+        Map<String, Object> state = new HashMap<>();
+        state.put("is_active", active ? 1 : 0);
+        return state;
     }
 
     @Configuration
@@ -189,9 +197,8 @@ class UserWithdrawalSecurityTest {
         }
 
         @Bean
-        JwtAuthenticationFilter jwtAuthenticationFilter(
-                JwtUtil jwtUtil, MemberMapper memberMapper, AuthCredentialStore authCredentialStore) {
-            return new JwtAuthenticationFilter(jwtUtil, memberMapper, authCredentialStore);
+        JwtAuthenticationFilter jwtAuthenticationFilter(JwtUtil jwtUtil, MemberMapper memberMapper) {
+            return new JwtAuthenticationFilter(jwtUtil, memberMapper);
         }
 
         @Bean

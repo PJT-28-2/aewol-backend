@@ -189,9 +189,8 @@ class AuthControllerRefreshTest {
         }
 
         @Bean
-        JwtAuthenticationFilter jwtAuthenticationFilter(
-                JwtUtil jwtUtil, MemberMapper memberMapper, AuthCredentialStore authCredentialStore) {
-            return new JwtAuthenticationFilter(jwtUtil, memberMapper, authCredentialStore);
+        JwtAuthenticationFilter jwtAuthenticationFilter(JwtUtil jwtUtil, MemberMapper memberMapper) {
+            return new JwtAuthenticationFilter(jwtUtil, memberMapper);
         }
 
         @Bean
