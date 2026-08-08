@@ -9,6 +9,8 @@ import com.aewol.domain.grouppurchase.dto.GroupPurchaseJoinResponse;
 import com.aewol.domain.grouppurchase.dto.GroupPurchaseListItemResponse;
 import com.aewol.domain.grouppurchase.dto.GroupPurchaseListResponse;
 import com.aewol.domain.grouppurchase.dto.GroupPurchaseResponse;
+import com.aewol.domain.grouppurchase.dto.GroupPurchaseStatusParticipantResponse;
+import com.aewol.domain.grouppurchase.dto.GroupPurchaseStatusResponse;
 import com.aewol.domain.grouppurchase.mapper.GroupPurchaseMapper;
 import com.aewol.domain.transaction.mapper.TransactionMapper;
 import com.aewol.domain.wallet.mapper.WalletMapper;
@@ -103,6 +105,42 @@ public class GroupPurchaseServiceImpl implements GroupPurchaseService {
         Map<String, Object> gp = groupPurchaseMapper.findById(gpId);
         if (gp == null) throw BusinessException.notFound("공동구매를 찾을 수 없습니다.");
         return toResponse(gp);
+    }
+
+    @Override
+    public GroupPurchaseStatusResponse getStatus(String memberId, String gpId) {
+        Map<String, Object> gp = groupPurchaseMapper.findById(gpId);
+        if (gp == null) {
+            throw BusinessException.notFound("공동구매를 찾을 수 없습니다.");
+        }
+
+        LocalDateTime deadline = toLocalDateTime(gp.get("deadline"));
+        Integer currentQuantity = toInt(gp.get("current_quantity"));
+        Integer targetQuantity = toInt(gp.get("target_quantity"));
+
+        // 작성자는 참여자로 join하지 않으므로 findParticipant가 null일 수 있고, 이 경우 participantInfo 없이 게시글 정보만 내려준다.
+        Map<String, Object> participant = groupPurchaseMapper.findParticipant(gpId, memberId);
+        GroupPurchaseStatusParticipantResponse participantInfo = participant == null ? null
+                : GroupPurchaseStatusParticipantResponse.builder()
+                        .participantId(toLong(participant.get("participant_id")))
+                        .purchaseQuantity(toInt(participant.get("purchase_quantity")))
+                        .paidAmount(toDecimal(participant.get("paid_amount")))
+                        .paymentStatus((String) participant.get("payment_status"))
+                        .paidAt(toLocalDateTime(participant.get("paid_at")))
+                        .build();
+
+        return GroupPurchaseStatusResponse.builder()
+                .memberId(String.valueOf(gp.get("member_id")))
+                .productName((String) gp.get("product_name"))
+                .status(toWaitStatus((String) gp.get("status"), deadline, currentQuantity, targetQuantity))
+                .currentQuantity(currentQuantity)
+                .targetQuantity(targetQuantity)
+                .deadline(deadline)
+                .unitPrice(toDecimal(gp.get("unit_price")))
+                .groupPrice(toDecimal(gp.get("group_price")))
+                .participantInfo(participantInfo)
+                .noticeMessage("목표 인원이 모두 모이면 공동구매가 최종 확정됩니다.")
+                .build();
     }
 
     @Override
@@ -291,6 +329,26 @@ public class GroupPurchaseServiceImpl implements GroupPurchaseService {
         int current = currentQuantity == null ? 0 : currentQuantity;
         int target = targetQuantity == null ? 0 : targetQuantity;
         return current >= target ? "마감(성공)" : "마감(미달)";
+    }
+
+    /**
+     * 상태 화면 전용 waiting/confirmed/cancelled 값을 계산한다.
+     * 목표 수량 달성은 마감 전이라도 즉시 확정으로 보고(초과 참여는 updateQuantity에서 이미 막혀 있음),
+     * 취소된 공동구매와 마감 후 미달성은 모두 cancelled로 묶는다(별도 "실패" 상태가 명세에 없음).
+     */
+    private static String toWaitStatus(String dbStatus, LocalDateTime deadline, Integer currentQuantity, Integer targetQuantity) {
+        if ("CANCELLED".equals(dbStatus)) {
+            return "cancelled";
+        }
+        int current = currentQuantity == null ? 0 : currentQuantity;
+        int target = targetQuantity == null ? 0 : targetQuantity;
+        if (current >= target) {
+            return "confirmed";
+        }
+        if (deadline != null && deadline.isBefore(LocalDateTime.now())) {
+            return "cancelled";
+        }
+        return "waiting";
     }
 
     private static String toDDay(LocalDateTime deadline) {
