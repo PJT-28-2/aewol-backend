@@ -6,8 +6,12 @@ import org.junit.jupiter.api.Test;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 class JwtUtilIssuedAtTest {
 
@@ -28,6 +32,9 @@ class JwtUtilIssuedAtTest {
 
         assertEquals("member-1", claims.getSubject());
         assertEquals("USER", claims.get("role", String.class));
+        assertEquals("ACCESS", claims.get("tokenType", String.class));
+        assertTrue(jwtUtil.isAccessToken(claims));
+        assertFalse(jwtUtil.isRefreshToken(claims));
         assertNotNull(claims.getIssuedAt());
         assertNull(claims.get("authEpoch"));
     }
@@ -37,6 +44,24 @@ class JwtUtilIssuedAtTest {
         Claims claims = jwtUtil.parseClaims(jwtUtil.generateRefreshToken("member-1"));
 
         assertEquals("member-1", claims.getSubject());
+        assertEquals("REFRESH", claims.get("tokenType", String.class));
+        assertTrue(jwtUtil.isRefreshToken(claims));
+        assertFalse(jwtUtil.isAccessToken(claims));
         assertNotNull(claims.getIssuedAt());
+    }
+
+    @Test
+    void missingEmptyAndUnknownTokenTypesFailClosed() {
+        Claims claims = mock(Claims.class);
+        when(claims.get("tokenType", String.class)).thenReturn(null, "", "UNKNOWN");
+
+        assertFalse(jwtUtil.isAccessToken(claims));
+        assertFalse(jwtUtil.isAccessToken(claims));
+        assertFalse(jwtUtil.isAccessToken(claims));
+
+        when(claims.get("tokenType", String.class)).thenReturn(null, "", "UNKNOWN");
+        assertFalse(jwtUtil.isRefreshToken(claims));
+        assertFalse(jwtUtil.isRefreshToken(claims));
+        assertFalse(jwtUtil.isRefreshToken(claims));
     }
 }

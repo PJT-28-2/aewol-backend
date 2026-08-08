@@ -153,6 +153,7 @@ class UserWithdrawalSecurityTest {
         when(claims.getIssuedAt()).thenReturn(new Date(2_000_000L));
         when(jwtUtil.isTokenValid("access-token")).thenReturn(true);
         when(jwtUtil.parseClaims("access-token")).thenReturn(claims);
+        when(jwtUtil.isAccessToken(claims)).thenReturn(true);
         if (activeResults.length == 1) {
             when(memberMapper.findAuthStateById("member-1")).thenReturn(authState(activeResults[0]));
         } else {

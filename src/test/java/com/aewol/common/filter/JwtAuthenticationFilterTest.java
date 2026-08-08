@@ -91,6 +91,36 @@ class JwtAuthenticationFilterTest {
     }
 
     @Test
+    void refreshTokenDoesNotCreateAuthentication() throws Exception {
+        stubRejectedToken("refresh-token");
+
+        filter.doFilter(request("refresh-token"), new MockHttpServletResponse(), mock(FilterChain.class));
+
+        assertNull(SecurityContextHolder.getContext().getAuthentication());
+        verifyNoInteractions(memberMapper);
+    }
+
+    @Test
+    void tokenWithoutTypeDoesNotCreateAuthentication() throws Exception {
+        stubRejectedToken("legacy-token");
+
+        filter.doFilter(request("legacy-token"), new MockHttpServletResponse(), mock(FilterChain.class));
+
+        assertNull(SecurityContextHolder.getContext().getAuthentication());
+        verifyNoInteractions(memberMapper);
+    }
+
+    @Test
+    void unknownTokenTypeDoesNotCreateAuthentication() throws Exception {
+        stubRejectedToken("unknown-token");
+
+        filter.doFilter(request("unknown-token"), new MockHttpServletResponse(), mock(FilterChain.class));
+
+        assertNull(SecurityContextHolder.getContext().getAuthentication());
+        verifyNoInteractions(memberMapper);
+    }
+
+    @Test
     void dbFailureStopsChainAndPropagates() throws Exception {
         stubToken(new Date(1_100_000L));
         FilterChain chain = mock(FilterChain.class);
@@ -136,6 +166,14 @@ class JwtAuthenticationFilterTest {
         when(claims.getIssuedAt()).thenReturn(issuedAt);
         when(jwtUtil.isTokenValid("access-token")).thenReturn(true);
         when(jwtUtil.parseClaims("access-token")).thenReturn(claims);
+        when(jwtUtil.isAccessToken(claims)).thenReturn(true);
+    }
+
+    private void stubRejectedToken(String token) {
+        Claims claims = mock(Claims.class);
+        when(jwtUtil.isTokenValid(token)).thenReturn(true);
+        when(jwtUtil.parseClaims(token)).thenReturn(claims);
+        when(jwtUtil.isAccessToken(claims)).thenReturn(false);
     }
 
     private Map<String, Object> member(boolean active, Long withdrawnAtEpoch) {
@@ -146,8 +184,12 @@ class JwtAuthenticationFilterTest {
     }
 
     private MockHttpServletRequest request() {
+        return request("access-token");
+    }
+
+    private MockHttpServletRequest request(String token) {
         MockHttpServletRequest request = new MockHttpServletRequest();
-        request.addHeader("Authorization", "Bearer access-token");
+        request.addHeader("Authorization", "Bearer " + token);
         return request;
     }
 }

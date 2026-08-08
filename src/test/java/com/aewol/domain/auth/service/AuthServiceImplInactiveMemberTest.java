@@ -415,6 +415,21 @@ class AuthServiceImplInactiveMemberTest {
                 org.mockito.ArgumentMatchers.anyString());
     }
 
+    @Test
+    void accessTokenCannotBeUsedForRefresh() {
+        assertWrongTokenTypeFailsBeforeRefreshWork("access-token");
+    }
+
+    @Test
+    void tokenWithoutTypeCannotBeUsedForRefresh() {
+        assertWrongTokenTypeFailsBeforeRefreshWork("legacy-token");
+    }
+
+    @Test
+    void unknownTokenTypeCannotBeUsedForRefresh() {
+        assertWrongTokenTypeFailsBeforeRefreshWork("unknown-token");
+    }
+
     private Map<String, Object> member(int active, Long withdrawnAtEpoch) {
         Map<String, Object> member = member(active);
         member.put("withdrawn_at_epoch", withdrawnAtEpoch);
@@ -425,6 +440,24 @@ class AuthServiceImplInactiveMemberTest {
         Claims claims = org.mockito.Mockito.mock(Claims.class);
         when(claims.getSubject()).thenReturn("member-1");
         when(claims.getIssuedAt()).thenReturn(issuedAt);
+        when(jwtUtil.isRefreshToken(claims)).thenReturn(true);
         return claims;
+    }
+
+    private void assertWrongTokenTypeFailsBeforeRefreshWork(String token) {
+        Claims claims = org.mockito.Mockito.mock(Claims.class);
+        when(jwtUtil.isTokenValid(token)).thenReturn(true);
+        when(jwtUtil.parseClaims(token)).thenReturn(claims);
+        when(jwtUtil.isRefreshToken(claims)).thenReturn(false);
+
+        assertThrows(BusinessException.class, () -> service.refresh(token));
+
+        verify(memberMapper, never()).findAuthStateById(org.mockito.ArgumentMatchers.anyString());
+        verify(jwtUtil, never()).generateAccessToken(
+                org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyString());
+        verify(jwtUtil, never()).generateRefreshToken(org.mockito.ArgumentMatchers.anyString());
+        verify(authCredentialStore, never()).rotateRefreshAtomically(
+                org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyString(),
+                org.mockito.ArgumentMatchers.anyString());
     }
 }

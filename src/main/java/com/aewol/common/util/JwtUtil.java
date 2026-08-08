@@ -17,6 +17,10 @@ import java.util.Date;
 @Component
 public class JwtUtil {
 
+    private static final String TOKEN_TYPE_CLAIM = "tokenType";
+    private static final String ACCESS_TOKEN_TYPE = "ACCESS";
+    private static final String REFRESH_TOKEN_TYPE = "REFRESH";
+
     @Value("${jwt.secret}")
     private String secret;
 
@@ -37,6 +41,7 @@ public class JwtUtil {
         var builder = Jwts.builder()
                 .subject(memberId)
                 .claim("role", role)
+                .claim(TOKEN_TYPE_CLAIM, ACCESS_TOKEN_TYPE)
                 .issuedAt(new Date())
                 .expiration(new Date(System.currentTimeMillis() + accessTokenExpiry));
         return builder.signWith(secretKey).compact();
@@ -45,6 +50,7 @@ public class JwtUtil {
     public String generateRefreshToken(String memberId) {
         return Jwts.builder()
                 .subject(memberId)
+                .claim(TOKEN_TYPE_CLAIM, REFRESH_TOKEN_TYPE)
                 .issuedAt(new Date())
                 .expiration(new Date(System.currentTimeMillis() + refreshTokenExpiry))
                 .signWith(secretKey)
@@ -61,6 +67,14 @@ public class JwtUtil {
 
     public String getSubject(String token) {
         return parseClaims(token).getSubject();
+    }
+
+    public boolean isAccessToken(Claims claims) {
+        return ACCESS_TOKEN_TYPE.equals(claims.get(TOKEN_TYPE_CLAIM, String.class));
+    }
+
+    public boolean isRefreshToken(Claims claims) {
+        return REFRESH_TOKEN_TYPE.equals(claims.get(TOKEN_TYPE_CLAIM, String.class));
     }
 
     public boolean isTokenValid(String token) {

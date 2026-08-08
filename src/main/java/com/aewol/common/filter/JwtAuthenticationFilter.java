@@ -45,6 +45,10 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
         if (token != null && jwtUtil.isTokenValid(token)) {
             Claims claims = jwtUtil.parseClaims(token);
+            if (!jwtUtil.isAccessToken(claims)) {
+                filterChain.doFilter(request, response);
+                return;
+            }
             String memberId = claims.getSubject();
             String role = claims.get("role", String.class);
             Map<String, Object> authState;

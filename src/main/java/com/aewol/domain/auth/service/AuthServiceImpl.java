@@ -247,6 +247,9 @@ public class AuthServiceImpl implements AuthService {
         }
 
         Claims claims = jwtUtil.parseClaims(refreshToken);
+        if (!jwtUtil.isRefreshToken(claims)) {
+            throw BusinessException.unauthorized("유효하지 않은 리프레시 토큰입니다.");
+        }
         String memberId = claims.getSubject();
         Map<String, Object> member = memberMapper.findAuthStateById(memberId);
         if (!canUseToken(member, claims.getIssuedAt())) {
