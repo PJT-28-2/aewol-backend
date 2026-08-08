@@ -156,7 +156,12 @@ public class AccountServiceImpl implements AccountService {
     @Override
     @Transactional
     public void disconnectAccount(String accountId) {
-        Map<String, Object> account = accountMapper.findByAccountId(accountId);
+        // 잠금 없이 읽으면(findByAccountId) 이 트랜잭션이 is_primary를 읽은 뒤 다른
+        // 트랜잭션이 같은 계좌를 대표로 설정해도 그 변경을 못 보고 그대로 진행해서,
+        // 활성 계좌가 있는데도 대표 계좌가 0개로 남을 수 있다(CodeRabbit 지적,
+        // 2026-08-08). FOR UPDATE로 행을 잠가서 이 트랜잭션이 끝날 때까지 다른
+        // 트랜잭션의 동시 수정을 막는다.
+        Map<String, Object> account = accountMapper.findByAccountIdForUpdate(accountId);
         if (account == null) {
             throw BusinessException.notFound("연동된 계좌를 찾을 수 없어요");
         }
@@ -174,7 +179,18 @@ public class AccountServiceImpl implements AccountService {
             List<Map<String, Object>> remaining = accountMapper.findByMemberId(memberId);
             if (!remaining.isEmpty()) {
                 String nextPrimaryAccountId = String.valueOf(remaining.get(0).get("account_id"));
-                accountMapper.setPrimary(nextPrimaryAccountId);
+                // 후보 계좌도 잠금 없이 선택하면, 선택 직후 다른 트랜잭션이 이 계좌를
+                // 연동 해제할 수 있다 — FOR UPDATE로 다시 잠가서 이 트랜잭션이 끝날
+                // 때까지 다른 트랜잭션의 동시 수정을 막는다(CodeRabbit 지적, 2026-08-08).
+                accountMapper.findByAccountIdForUpdate(nextPrimaryAccountId);
+                int updated = accountMapper.setPrimary(nextPrimaryAccountId);
+                if (updated != 1) {
+                    // setPrimary의 WHERE status='ACTIVE' 조건에 걸려 갱신되지 않으면(예:
+                    // 잠그기 직전 이미 연동 해제됨), 대표 계좌 0개 상태가 그대로 커밋되지
+                    // 않도록 트랜잭션 전체를 롤백한다(@Transactional이라 여기서 던지면
+                    // 위의 updateStatus도 함께 롤백된다).
+                    throw new BusinessException(HttpStatus.CONFLICT, "대표 계좌 승격에 실패했어요. 다시 시도해주세요");
+                }
             }
         }
     }

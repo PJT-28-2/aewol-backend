@@ -112,21 +112,57 @@ class AccountServiceImplTest {
     @DisplayName("대표 계좌를 해제하면 남은 ACTIVE 계좌 중 하나를 새 대표로 자동 승격한다")
     void should_promoteAnotherAccount_when_disconnectingPrimaryWithRemainingActiveAccounts() {
         String otherAccountId = "2";
-        when(accountMapper.findByAccountId(ACCOUNT_ID))
+        when(accountMapper.findByAccountIdForUpdate(ACCOUNT_ID))
                 .thenReturn(accountRow(ACCOUNT_ID, MEMBER_ID, "ACTIVE", true));
         when(accountMapper.findByMemberId(MEMBER_ID))
                 .thenReturn(List.of(accountRow(otherAccountId, MEMBER_ID, "ACTIVE", false)));
+        when(accountMapper.setPrimary(otherAccountId)).thenReturn(1);
 
         service.disconnectAccount(ACCOUNT_ID);
 
         verify(accountMapper).updateStatus(ACCOUNT_ID, "INACTIVE");
+        verify(accountMapper).findByAccountIdForUpdate(otherAccountId);
         verify(accountMapper).setPrimary(otherAccountId);
+    }
+
+    @Test
+    @DisplayName("승격 후보 계좌를 잠근 뒤에도 setPrimary 영향 행이 0이면(동시에 연동 해제됨) 예외를 던지고 롤백한다")
+    void should_throwConflict_when_candidateDisconnectedConcurrentlyBeforePromotion() {
+        // findByMemberId로 후보를 고른 시점엔 ACTIVE였지만, findByAccountIdForUpdate로
+        // 잠그기 직전 다른 트랜잭션이 그 계좌를 연동 해제해서 setPrimary의
+        // WHERE status='ACTIVE' 조건에 안 걸리는 상황을 재현한다(CodeRabbit 지적, 2026-08-08).
+        String otherAccountId = "2";
+        when(accountMapper.findByAccountIdForUpdate(ACCOUNT_ID))
+                .thenReturn(accountRow(ACCOUNT_ID, MEMBER_ID, "ACTIVE", true));
+        when(accountMapper.findByMemberId(MEMBER_ID))
+                .thenReturn(List.of(accountRow(otherAccountId, MEMBER_ID, "ACTIVE", false)));
+        when(accountMapper.setPrimary(otherAccountId)).thenReturn(0);
+
+        BusinessException ex = assertThrows(BusinessException.class,
+                () -> service.disconnectAccount(ACCOUNT_ID));
+
+        assertEquals(org.springframework.http.HttpStatus.CONFLICT, ex.getStatus());
+    }
+
+    @Test
+    @DisplayName("disconnectAccount는 잠금 없는 findByAccountId가 아니라 FOR UPDATE로 행을 잠그는 findByAccountIdForUpdate를 사용한다")
+    void should_useLockingRead_notPlainFindByAccountId_whenDisconnecting() {
+        // Mockito로는 실제 동시성 재현이 불가능해서, 서비스가 잠금 없는 findByAccountId를
+        // 절대 호출하지 않는다는 걸로 회귀를 방지한다(기존 confirm의
+        // should_useLockingRead_notPlainFindById와 같은 패턴).
+        when(accountMapper.findByAccountIdForUpdate(ACCOUNT_ID))
+                .thenReturn(accountRow(ACCOUNT_ID, MEMBER_ID, "ACTIVE", false));
+
+        service.disconnectAccount(ACCOUNT_ID);
+
+        verify(accountMapper).findByAccountIdForUpdate(ACCOUNT_ID);
+        verify(accountMapper, never()).findByAccountId(any());
     }
 
     @Test
     @DisplayName("대표 계좌가 아닌 계좌를 해제하면 대표 승격 로직을 타지 않는다")
     void should_notPromote_when_disconnectingNonPrimaryAccount() {
-        when(accountMapper.findByAccountId(ACCOUNT_ID))
+        when(accountMapper.findByAccountIdForUpdate(ACCOUNT_ID))
                 .thenReturn(accountRow(ACCOUNT_ID, MEMBER_ID, "ACTIVE", false));
 
         service.disconnectAccount(ACCOUNT_ID);
@@ -139,7 +175,7 @@ class AccountServiceImplTest {
     @Test
     @DisplayName("대표 계좌를 해제했는데 남은 ACTIVE 계좌가 없으면 대표 계좌 0개로 둔다")
     void should_leaveNoPrimary_when_disconnectingPrimaryWithNoRemainingAccounts() {
-        when(accountMapper.findByAccountId(ACCOUNT_ID))
+        when(accountMapper.findByAccountIdForUpdate(ACCOUNT_ID))
                 .thenReturn(accountRow(ACCOUNT_ID, MEMBER_ID, "ACTIVE", true));
         when(accountMapper.findByMemberId(MEMBER_ID)).thenReturn(List.of());
 
@@ -151,7 +187,7 @@ class AccountServiceImplTest {
     @Test
     @DisplayName("존재하지 않는 계좌를 해제하려 하면 404 예외를 던진다")
     void should_throwNotFound_when_disconnectingNonexistentAccount() {
-        when(accountMapper.findByAccountId(ACCOUNT_ID)).thenReturn(null);
+        when(accountMapper.findByAccountIdForUpdate(ACCOUNT_ID)).thenReturn(null);
 
         BusinessException ex = assertThrows(BusinessException.class,
                 () -> service.disconnectAccount(ACCOUNT_ID));

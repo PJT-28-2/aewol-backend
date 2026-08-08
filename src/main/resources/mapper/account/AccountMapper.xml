@@ -24,6 +24,17 @@
         WHERE la.account_id = #{accountId}
     </select>
 
+    <!-- disconnectAccount 전용 잠금 조회. 연동 해제 대상 계좌와, 대표 승격 후보 계좌
+         모두 이 쿼리로 행을 잠근 뒤 처리해서 동시성 문제를 막는다(CodeRabbit 지적,
+         2026-08-08). -->
+    <select id="findByAccountIdForUpdate" resultType="map">
+        SELECT la.*, bm.bank_name
+        FROM linked_account la
+        JOIN bank_master bm ON bm.bank_code = la.bank_code
+        WHERE la.account_id = #{accountId}
+        FOR UPDATE
+    </select>
+
     <!-- INACTIVE로 바뀌는 계좌가 대표 계좌였으면 is_primary도 같이 내린다. 안 내리면
          연동 해제 후에도 DB엔 대표 표시가 남아있어서, 나중에 대표 계좌 설정 로직이
          "이미 대표가 있다"고 잘못 판단할 여지가 생긴다(2026-08-07 코드리뷰 지적). -->
