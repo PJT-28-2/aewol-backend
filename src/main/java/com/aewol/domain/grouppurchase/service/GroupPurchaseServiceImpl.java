@@ -149,7 +149,7 @@ public class GroupPurchaseServiceImpl implements GroupPurchaseService {
             groupPurchaseMapper.insertParticipant(participant);
         } catch (DuplicateKeyException e) {
             // findParticipant 조회 후 insert는 원자적이지 않아, 동시 요청이 같은 시점에 둘 다 미참여로 판단할 수 있다.
-            // (gp_id, member_id) UNIQUE 제약(V9)이 최종 방어선이며, 위반 시 지갑 차감·거래내역까지 트랜잭션 전체가 롤백된다.
+            // (gp_id, member_id) UNIQUE 제약(V13)이 최종 방어선이며, 위반 시 지갑 차감·거래내역까지 트랜잭션 전체가 롤백된다.
             throw BusinessException.conflict("이미 참여한 공동구매입니다.");
         }
         int reserved = groupPurchaseMapper.updateQuantity(gpId, quantity);
