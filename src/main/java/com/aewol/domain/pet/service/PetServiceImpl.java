@@ -8,6 +8,7 @@ import com.aewol.domain.pet.dto.PetResponse;
 import com.aewol.domain.pet.mapper.PetDocumentMapper;
 import com.aewol.domain.pet.mapper.PetMapper;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -21,11 +22,13 @@ import java.util.*;
 import java.util.stream.Collectors;
 
 @Service
+@Slf4j
 @RequiredArgsConstructor
 public class PetServiceImpl implements PetService {
 
     private static final String VACCINATION = "VACCINATION";
     private static final String DOCUMENT_SUB_DIR = "pet-documents";
+    private static final int MAX_DOCUMENT_NAME_LENGTH = 100;
     private static final Map<String, Set<String>> ALLOWED_FILE_TYPES = Map.of(
             "image/jpeg", Set.of("jpg", "jpeg"),
             "image/png", Set.of("png"),
@@ -97,7 +100,9 @@ public class PetServiceImpl implements PetService {
     @Transactional
     public void deactivatePet(String memberId, String petId) {
         assertOwner(memberId, petId);
-        petMapper.deactivate(petId);
+        if (petMapper.deactivate(petId, memberId) != 1) {
+            throw BusinessException.notFound("반려동물을 찾을 수 없습니다.");
+        }
     }
 
     @Override
@@ -106,7 +111,8 @@ public class PetServiceImpl implements PetService {
                                                           MultipartFile file, LocalDate issuedDate) {
         assertOwner(memberId, petId);
         String storageExtension = validateDocument(file);
-        Map<String, Object> existing = petDocumentMapper.findByPetIdAndType(petId, VACCINATION);
+        String originalFilename = extractOriginalFilename(file);
+        Map<String, Object> existing = petDocumentMapper.findByPetIdAndTypeForUpdate(petId, VACCINATION);
         String newFileUrl;
         try {
             newFileUrl = fileUtil.upload(file, DOCUMENT_SUB_DIR, storageExtension);
@@ -116,7 +122,7 @@ public class PetServiceImpl implements PetService {
 
         Map<String, Object> document = new HashMap<>();
         document.put("petId", petId);
-        document.put("docName", "접종증명서");
+        document.put("docName", originalFilename);
         document.put("docType", VACCINATION);
         document.put("fileUrl", newFileUrl);
         document.put("issuedDate", issuedDate);
@@ -138,6 +144,29 @@ public class PetServiceImpl implements PetService {
         return toDocumentResponse(document);
     }
 
+    @Override
+    @Transactional(readOnly = true)
+    public List<PetDocumentResponse> getPetDocuments(String memberId, String petId) {
+        assertOwner(memberId, petId);
+        return petDocumentMapper.findByPetId(petId).stream()
+                .map(this::toDocumentResponse)
+                .collect(Collectors.toList());
+    }
+
+    @Override
+    @Transactional
+    public void deletePetDocument(String memberId, String petId, String docId) {
+        assertOwner(memberId, petId);
+        Map<String, Object> document = petDocumentMapper.findByIdAndPetIdForUpdate(docId, petId);
+        if (document == null) {
+            throw BusinessException.notFound("문서를 찾을 수 없습니다.");
+        }
+        if (petDocumentMapper.deleteByIdAndPetId(docId, petId) != 1) {
+            throw BusinessException.notFound("문서를 찾을 수 없습니다.");
+        }
+        arrangeDeletedFileCleanup((String) value(document, "file_url", "fileUrl"));
+    }
+
     private String validateDocument(MultipartFile file) {
         if (file == null || file.isEmpty()) {
             throw new BusinessException("업로드할 파일이 없습니다.");
@@ -152,6 +181,24 @@ public class PetServiceImpl implements PetService {
             throw new BusinessException("JPEG, PNG, PDF 파일만 업로드할 수 있습니다.");
         }
         return "image/jpeg".equals(contentType) ? "jpg" : extension;
+    }
+
+    private String extractOriginalFilename(MultipartFile file) {
+        String originalFilename = file.getOriginalFilename();
+        if (originalFilename == null) {
+            throw new BusinessException("파일명이 올바르지 않습니다.");
+        }
+
+        String normalized = originalFilename.replace('\\', '/');
+        String filename = normalized.substring(normalized.lastIndexOf('/') + 1).trim();
+        if (filename.isBlank() || filename.equals(".") || filename.equals("..")
+                || filename.chars().anyMatch(Character::isISOControl)) {
+            throw new BusinessException("파일명이 올바르지 않습니다.");
+        }
+        if (filename.length() > MAX_DOCUMENT_NAME_LENGTH) {
+            throw new BusinessException("파일명은 100자 이하만 사용할 수 있습니다.");
+        }
+        return filename;
     }
 
     private void arrangeFileCleanup(String newFileUrl, String oldFileUrl) {
@@ -172,24 +219,48 @@ public class PetServiceImpl implements PetService {
         }
     }
 
+    private void arrangeDeletedFileCleanup(String fileUrl) {
+        if (fileUrl == null || fileUrl.isBlank()) return;
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    deleteQuietly(fileUrl);
+                }
+            });
+        } else {
+            deleteQuietly(fileUrl);
+        }
+    }
+
     private void deleteQuietly(String fileUrl) {
         try {
             fileUtil.delete(fileUrl);
-        } catch (IOException ignored) {
-            // 파일 정리 실패가 이미 반영된 DB 트랜잭션을 되돌리지는 않는다.
+        } catch (IOException e) {
+            // 파일시스템은 DB 트랜잭션에 참여하지 않으므로 실패를 숨기지 않고 후속 정리가
+            // 가능하도록 파일 URL과 예외를 남긴다. 영속 재시도는 별도 이슈에서 처리한다.
+            log.warn("반려동물 문서 파일 삭제 실패 - fileUrl: {}", fileUrl, e);
         }
     }
 
     private PetDocumentResponse toDocumentResponse(Map<String, Object> document) {
-        Object issuedDate = document.get("issuedDate");
-        Object docId = document.get("docId");
+        Object issuedDate = value(document, "issued_date", "issuedDate");
+        Object docId = value(document, "doc_id", "docId");
         return PetDocumentResponse.builder()
                 .docId(docId == null ? null : String.valueOf(docId))
-                .petId(String.valueOf(document.get("petId")))
-                .docType(String.valueOf(document.get("docType")))
-                .fileUrl((String) document.get("fileUrl"))
+                .petId(String.valueOf(value(document, "pet_id", "petId")))
+                .docName((String) value(document, "doc_name", "docName"))
+                .docType(String.valueOf(value(document, "doc_type", "docType")))
+                .fileUrl((String) value(document, "file_url", "fileUrl"))
                 .issuedDate(issuedDate == null ? null : issuedDate.toString())
                 .build();
+    }
+
+    private static Object value(Map<String, Object> map, String... keys) {
+        for (String key : keys) {
+            if (map.containsKey(key)) return map.get(key);
+        }
+        return null;
     }
 
     private void assertOwner(String memberId, String petId) {

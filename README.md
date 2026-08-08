@@ -188,6 +188,7 @@ PR은 `feature/{기능명}` → `develop` → `main` 순서로 병합합니다.
 | 공동양육 | GET | `/api/share/pets` | 소유·공유 반려동물 조회 |
 | 공동양육 | GET | `/api/share/{petId}/members` | 공동양육 멤버 조회 |
 | 응급병원 | GET | `/api/emergency/hospitals` | 주변 응급 병원 검색 |
+| 응급병원 | GET | `/api/emergency/hospitals/{hospitalId}` | 병원 상세 조회 |
 | 지원사업 | GET | `/api/support/matched?petId=` | 반려동물 조건별 지원사업 매칭 |
 | 기부 | GET | `/api/donation` | 저금통·캠페인·설정 통합 조회 |
 | 기부 | POST | `/api/donation` | 저금통 잔액 기부 |
