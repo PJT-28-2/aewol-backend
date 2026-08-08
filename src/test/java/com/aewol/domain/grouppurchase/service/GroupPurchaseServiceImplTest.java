@@ -401,6 +401,37 @@ class GroupPurchaseServiceImplTest {
     }
 
     @Test
+    @DisplayName("취소된 공동구매는 마감 전이어도 참여를 시도하면 409로 거절한다")
+    void should_throwConflict_when_groupPurchaseIsCancelled() {
+        GroupPurchaseServiceImpl service = service();
+        Map<String, Object> cancelledGp = savedRow();
+        cancelledGp.put("status", "CANCELLED");
+        cancelledGp.put("deadline", LocalDateTime.now().plusDays(3));
+        when(groupPurchaseMapper.findById("1")).thenReturn(cancelledGp);
+        when(groupPurchaseMapper.findParticipant("1", "member-1")).thenReturn(null);
+
+        Map<String, Object> wallet = new HashMap<>();
+        wallet.put("wallet_id", "wallet-1");
+        wallet.put("balance", new BigDecimal("1000000"));
+        when(walletMapper.findByMemberId("member-1")).thenReturn(wallet);
+        when(walletMapper.deductBalance("wallet-1", new BigDecimal("25000"))).thenReturn(1);
+        doAnswer(invocation -> {
+            Map<String, Object> txn = invocation.getArgument(0);
+            txn.put("txnId", 1L);
+            return null;
+        }).when(transactionMapper).insert(anyMap());
+        // status = 'CANCELLED'는 updateQuantity의 WHERE 절에서 제외되므로,
+        // 마감 전·목표 미달 상태여도 조건부 UPDATE의 영향 행 수는 0이어야 한다.
+        when(groupPurchaseMapper.updateQuantity("1", 1)).thenReturn(0);
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.join("member-1", "1", 1, joinRequest()));
+
+        assertEquals(org.springframework.http.HttpStatus.CONFLICT, exception.getStatus());
+        assertEquals("목표 수량을 초과했거나 마감된 공동구매입니다.", exception.getMessage());
+    }
+
+    @Test
     @DisplayName("지갑 잔액이 부족하면 참여 없이 예외가 발생한다")
     void should_throwException_when_walletBalanceInsufficient() {
         GroupPurchaseServiceImpl service = service();
