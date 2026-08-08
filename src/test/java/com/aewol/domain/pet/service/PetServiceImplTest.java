@@ -102,17 +102,18 @@ class PetServiceImplTest {
                 () -> service.deactivatePet("member-2", "pet-1"));
 
         assertEquals(HttpStatus.FORBIDDEN, exception.getStatus());
-        verify(petMapper, never()).deactivate(anyString());
+        verify(petMapper, never()).deactivate(anyString(), anyString());
     }
 
     @Test
     void should_deactivatePet_when_memberOwnsPet() {
         PetServiceImpl service = service();
         when(petMapper.findById("pet-1")).thenReturn(pet("member-1"));
+        when(petMapper.deactivate("pet-1", "member-1")).thenReturn(1);
 
         service.deactivatePet("member-1", "pet-1");
 
-        verify(petMapper).deactivate("pet-1");
+        verify(petMapper).deactivate("pet-1", "member-1");
     }
 
     @Test
@@ -124,7 +125,19 @@ class PetServiceImplTest {
                 () -> service.deactivatePet("member-1", "pet-404"));
 
         assertEquals(HttpStatus.NOT_FOUND, exception.getStatus());
-        verify(petMapper, never()).deactivate(anyString());
+        verify(petMapper, never()).deactivate(anyString(), anyString());
+    }
+
+    @Test
+    void should_throwNotFound_when_petIsAlreadyDeactivatedConcurrently() {
+        PetServiceImpl service = service();
+        when(petMapper.findById("pet-1")).thenReturn(pet("member-1"));
+        when(petMapper.deactivate("pet-1", "member-1")).thenReturn(0);
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.deactivatePet("member-1", "pet-1"));
+
+        assertEquals(HttpStatus.NOT_FOUND, exception.getStatus());
     }
 
     private static Map<String, Object> pet(String ownerId) {

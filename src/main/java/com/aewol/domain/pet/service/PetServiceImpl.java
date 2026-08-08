@@ -100,7 +100,9 @@ public class PetServiceImpl implements PetService {
     @Transactional
     public void deactivatePet(String memberId, String petId) {
         assertOwner(memberId, petId);
-        petMapper.deactivate(petId);
+        if (petMapper.deactivate(petId, memberId) != 1) {
+            throw BusinessException.notFound("반려동물을 찾을 수 없습니다.");
+        }
     }
 
     @Override

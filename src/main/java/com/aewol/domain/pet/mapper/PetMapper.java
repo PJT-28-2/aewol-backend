@@ -12,5 +12,5 @@ public interface PetMapper {
     List<Map<String, Object>> findByMemberId(@Param("memberId") String memberId);
     void insert(Map<String, Object> pet);
     void update(Map<String, Object> pet);
-    void deactivate(@Param("petId") String petId);
+    int deactivate(@Param("petId") String petId, @Param("memberId") String memberId);
 }
