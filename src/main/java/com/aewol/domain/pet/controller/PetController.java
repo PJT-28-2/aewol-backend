@@ -78,4 +78,22 @@ public class PetController {
                 .body(ApiResponse.created(
                         petService.uploadVaccinationDocument(memberId, petId, file, issuedDate)));
     }
+
+    @Operation(summary = "반려동물 문서 목록 조회")
+    @GetMapping("/{petId}/documents")
+    public ResponseEntity<ApiResponse<List<PetDocumentResponse>>> getPetDocuments(
+            @AuthenticationPrincipal String memberId,
+            @PathVariable String petId) {
+        return ResponseEntity.ok(ApiResponse.success(petService.getPetDocuments(memberId, petId)));
+    }
+
+    @Operation(summary = "반려동물 문서 삭제")
+    @DeleteMapping("/{petId}/documents/{docId}")
+    public ResponseEntity<ApiResponse<Void>> deletePetDocument(
+            @AuthenticationPrincipal String memberId,
+            @PathVariable String petId,
+            @PathVariable String docId) {
+        petService.deletePetDocument(memberId, petId, docId);
+        return ResponseEntity.ok(ApiResponse.success());
+    }
 }

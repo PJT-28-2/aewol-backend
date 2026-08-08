@@ -30,6 +30,8 @@ public interface DonationMapper {
     void insertHistory(Map<String, Object> history);
     int increaseCampaignResult(@Param("campaignId") String campaignId, @Param("amount") BigDecimal amount);
     List<Map<String, Object>> findHistoryByWalletId(@Param("walletId") String walletId);
+    Map<String, Object> findWithdrawalByIdempotencyKey(@Param("memberId") String memberId,
+                                                        @Param("idempotencyKey") String idempotencyKey);
     void insertWalletTransaction(Map<String, Object> transaction);
     List<Map<String, Object>> findTodayRoundUpCandidates();
     int insertRoundUp(Map<String, Object> roundUp);

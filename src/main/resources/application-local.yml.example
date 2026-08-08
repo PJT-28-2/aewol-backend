@@ -64,7 +64,8 @@ external:
   apms:
     service-key: ${APMS_SERVICE_KEY:}
   animal-hospital:
-    service-key: ${ANIMAL_HOSPITAL_SERVICE_KEY:}
+    service-key: ${ANIMAL_HOSPITAL_SERVICE_KEY}
+
 
 file:
   upload-dir: ./uploads

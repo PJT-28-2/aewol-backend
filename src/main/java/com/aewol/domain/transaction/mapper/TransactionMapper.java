@@ -11,5 +11,6 @@ public interface TransactionMapper {
     List<Map<String, Object>> findByWalletId(@Param("walletId") String walletId,
                                               @Param("category") String category,
                                               @Param("petId") String petId);
+    List<Map<String, Object>> findRecentByWalletId(@Param("walletId") String walletId);
     void insert(Map<String, Object> transaction);
 }

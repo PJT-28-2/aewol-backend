@@ -18,4 +18,10 @@
         ORDER BY distance_km
     </select>
 
+    <select id="findById" resultType="map">
+        SELECT *
+        FROM emergency_hospital
+        WHERE hospital_id = #{hospitalId}
+    </select>
+
 </mapper>
