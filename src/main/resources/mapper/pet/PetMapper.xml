@@ -19,17 +19,16 @@
     <!-- pet_id는 BIGINT AUTO_INCREMENT -->
     <insert id="insert" parameterType="map" useGeneratedKeys="true" keyProperty="petId" keyColumn="pet_id">
         INSERT INTO pet (member_id, name, species, breed, birth_date, gender,
-                        weight, neutered, reg_number, medical_history)
+                        weight, neutered, medical_history)
         VALUES (#{memberId}, #{name}, #{species}, #{breed}, #{birthDate}, #{gender},
-                #{weight}, #{neutered}, #{regNumber}, #{medicalHistory})
+                #{weight}, #{neutered}, #{medicalHistory})
     </insert>
 
     <update id="update" parameterType="map">
         UPDATE pet
         SET name = #{name}, species = #{species}, breed = #{breed},
             birth_date = #{birthDate}, gender = #{gender}, weight = #{weight},
-            neutered = #{neutered}, reg_number = #{regNumber},
-            medical_history = #{medicalHistory},
+            neutered = #{neutered}, medical_history = #{medicalHistory},
             updated_at = NOW()
         WHERE pet_id = #{petId}
     </update>
@@ -37,6 +36,12 @@
     <update id="deactivate">
         UPDATE pet
         SET is_active = 0, updated_at = NOW()
+        WHERE pet_id = #{petId} AND member_id = #{memberId} AND is_active = 1
+    </update>
+
+    <update id="updateRegistrationNumber">
+        UPDATE pet
+        SET reg_number = #{regNumber}, updated_at = NOW()
         WHERE pet_id = #{petId} AND member_id = #{memberId} AND is_active = 1
     </update>
 

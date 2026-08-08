@@ -4,6 +4,9 @@ import com.aewol.common.response.ApiResponse;
 import com.aewol.domain.pet.dto.PetCreateRequest;
 import com.aewol.domain.pet.dto.PetDocumentResponse;
 import com.aewol.domain.pet.dto.PetResponse;
+import com.aewol.domain.pet.dto.PetRegistrationResponse;
+import com.aewol.domain.pet.dto.PetRegistrationVerifyRequest;
+import com.aewol.domain.pet.service.PetRegistrationService;
 import com.aewol.domain.pet.service.PetService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -27,6 +30,7 @@ import java.util.List;
 public class PetController {
 
     private final PetService petService;
+    private final PetRegistrationService petRegistrationService;
 
     @Operation(summary = "반려동물 등록")
     @PostMapping
@@ -64,6 +68,16 @@ public class PetController {
                                                         @PathVariable String petId) {
         petService.deactivatePet(memberId, petId);
         return ResponseEntity.ok(ApiResponse.success());
+    }
+
+    @Operation(summary = "동물등록번호 검증")
+    @PostMapping("/{petId}/verify")
+    public ResponseEntity<ApiResponse<PetRegistrationResponse>> verifyRegistration(
+            @AuthenticationPrincipal String memberId,
+            @PathVariable String petId,
+            @Valid @RequestBody PetRegistrationVerifyRequest request) {
+        return ResponseEntity.ok(ApiResponse.success(
+                petRegistrationService.verify(memberId, petId, request)));
     }
 
     @Operation(summary = "접종증명서 업로드")

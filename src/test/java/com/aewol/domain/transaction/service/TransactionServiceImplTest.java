@@ -41,6 +41,7 @@ class TransactionServiceImplTest {
         when(walletMapper.findByMemberId("member-1")).thenReturn(map(
                 "wallet_id", "wallet-1", "balance", new BigDecimal("100000")));
         when(walletMapper.findById("wallet-1")).thenReturn(map("member_id", "member-1"));
+        when(walletMapper.deductBalance("wallet-1", new BigDecimal("72000"))).thenReturn(1);
         when(autoTaggingService.categorize("애월동물병원")).thenReturn("HOSPITAL");
         when(transactionMapper.findById(any())).thenAnswer(invocation -> map(
                 "txn_id", 1L, "wallet_id", "wallet-1",
@@ -54,6 +55,42 @@ class TransactionServiceImplTest {
         ArgumentCaptor<Map<String, Object>> captor = ArgumentCaptor.forClass(Map.class);
         verify(transactionMapper).insert(captor.capture());
         assertEquals("pet-1", captor.getValue().get("petId"));
+    }
+
+    @Test
+    @DisplayName("잔액이 부족하면 결제 없이 예외가 발생한다")
+    void should_throwException_when_balanceInsufficient() {
+        TransactionServiceImpl service = service();
+        PaymentRequest request = new PaymentRequest();
+        ReflectionTestUtils.setField(request, "merchantName", "애월동물병원");
+        ReflectionTestUtils.setField(request, "amount", new BigDecimal("72000"));
+        when(walletMapper.findByMemberId("member-1")).thenReturn(map(
+                "wallet_id", "wallet-1", "balance", new BigDecimal("10000")));
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.processPayment("member-1", request));
+
+        assertEquals("잔액이 부족합니다.", exception.getMessage());
+        verify(walletMapper, never()).deductBalance(any(), any());
+        verifyNoInteractions(transactionMapper);
+    }
+
+    @Test
+    @DisplayName("사전 잔액 확인은 통과했지만 동시 결제로 원자적 차감이 실패하면(영향 행 0) 잔액 부족으로 처리한다")
+    void should_throwException_when_deductBalanceAffectsNoRows() {
+        TransactionServiceImpl service = service();
+        PaymentRequest request = new PaymentRequest();
+        ReflectionTestUtils.setField(request, "merchantName", "애월동물병원");
+        ReflectionTestUtils.setField(request, "amount", new BigDecimal("72000"));
+        when(walletMapper.findByMemberId("member-1")).thenReturn(map(
+                "wallet_id", "wallet-1", "balance", new BigDecimal("100000")));
+        when(walletMapper.deductBalance("wallet-1", new BigDecimal("72000"))).thenReturn(0);
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.processPayment("member-1", request));
+
+        assertEquals("잔액이 부족합니다.", exception.getMessage());
+        verifyNoInteractions(transactionMapper);
     }
 
     @Test

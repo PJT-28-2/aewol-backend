@@ -1,9 +1,7 @@
 package com.aewol.external.apms;
 
-import java.net.URI;
-import java.nio.charset.StandardCharsets;
-import java.util.Map;
-import java.util.Optional;
+import com.aewol.common.exception.BusinessException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -11,98 +9,141 @@ import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestTemplate;
-import org.springframework.web.util.UriComponentsBuilder;
-import com.aewol.common.exception.BusinessException;
+
+import java.net.URI;
+import java.net.URLDecoder;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
 
 /**
  * 공공데이터포털 동물등록정보 조회 API(1543061/animalInfoSrvc_v3) 클라이언트.
- *
- * <p>dog_reg_no(동물등록번호) + owner_nm(소유자 성명)으로 등록 정보를 단건 조회한다.
- * 신원 정보만으로 후보를 검색하는 API가 아니라, 등록번호가 필수 파라미터인 상세조회 API다.
- * owner_birth도 대체 파라미터로 쓸 수 있지만 YYMMDD(6자리) 형식이 필요해서(예:
- * "1990-01-01"을 그대로 보내면 INVALID_REQUEST_PARAMETER_ERROR) 포맷 변환 부담을 피하려고
- * owner_nm만 사용한다.
  */
 @Slf4j
 @Component
 @RequiredArgsConstructor
 public class ApmsClient {
 
-    // "1543061/animalInfoSrvc_v3"는 서비스명일 뿐이고, 실제 호출에는 상세기능
-    // 구분코드 "animalInfo_v3"를 마지막에 붙여야 한다. 이게 빠지면 공공데이터포털이
-    // "없는 서비스입니다(NO_OPENAPI_SERVICE_ERROR)"를 반환한다.
-    private static final String BASE_URL = "https://apis.data.go.kr/1543061/animalInfoSrvc_v3/animalInfo_v3";
-    private static final String RESULT_CODE_SUCCESS = "00";
+    private static final List<String> INVALID_REGISTRATION_RESULT_CODES = List.of("03", "10", "11");
 
     private final RestTemplate restTemplate;
+    private final ObjectMapper objectMapper = new ObjectMapper();
 
     @Value("${external.apms.service-key:}")
     private String serviceKey;
+
+    @Value("${external.apms.base-url:https://apis.data.go.kr/1543061/animalInfoSrvc_v3/animalInfo_v3}")
+    private String baseUrl;
 
     public boolean isConfigured() {
         return serviceKey != null && !serviceKey.isBlank();
     }
 
     /**
-     * 동물등록번호 + 소유자 정보로 등록 정보를 단건 조회한다.
-     * 조회 결과가 없으면 {@link Optional#empty()}를 반환한다.
-     *
-     * @return APMS 원본 응답의 item 필드(dogRegNo, rfidCd, rfidGubun, dogNm, birthDt,
-     *         sexNm, kindNm, neuterYn, orgNm, aprGbNm, regTm, aprTm 등 원본 키 그대로)
+     * 동물등록정보 동기화에서 사용하는 조회 메서드.
+     * 설정이 없거나 등록정보가 일치하지 않으면 빈 결과를 반환한다.
      */
-    @SuppressWarnings("unchecked")
     public Optional<Map<String, Object>> findRegistration(String regNumber, String ownerName) {
         if (!isConfigured()) {
             log.warn("APMS service-key가 설정되지 않아 조회를 건너뜁니다.");
             return Optional.empty();
         }
 
-        Map<String, Object> body;
         try {
-            body = restTemplate.getForObject(buildUri(regNumber, ownerName), Map.class);
-        } catch (RestClientException e) {
-            log.error("APMS 동물등록정보 조회 실패 - message={}", e.getMessage());
-            throw new BusinessException(HttpStatus.SERVICE_UNAVAILABLE, "동물등록정보 조회 서비스에 일시적으로 접속할 수 없습니다.");
+            return Optional.ofNullable(verifyRegistration(regNumber, ownerName, null));
+        } catch (BusinessException e) {
+            if (e.getStatus() == HttpStatus.BAD_REQUEST) {
+                return Optional.empty();
+            }
+            throw e;
         }
-        if (body == null) {
-            throw new BusinessException(HttpStatus.SERVICE_UNAVAILABLE, "동물등록정보 조회 서비스가 빈 응답을 반환했습니다.");
-        }
-
-        Object rawResponse = body.get("response");
-        if (!(rawResponse instanceof Map)) {
-            throw new BusinessException(HttpStatus.SERVICE_UNAVAILABLE, "동물등록정보 조회 응답 형식이 올바르지 않습니다.");
-        }
-        Map<String, Object> response = (Map<String, Object>) rawResponse;
-
-        Object rawHeader = response.get("header");
-        Map<String, Object> header = rawHeader instanceof Map ? (Map<String, Object>) rawHeader : null;
-        String resultCode = header == null ? null : String.valueOf(header.get("resultCode"));
-        if (!RESULT_CODE_SUCCESS.equals(resultCode)) {
-            String resultMsg = header == null ? "알 수 없는 오류" : String.valueOf(header.get("resultMsg"));
-            log.warn("APMS 동물등록정보 조회 결과 이상 - resultCode={}, resultMsg={}", resultCode, resultMsg);
-            return Optional.empty();
-        }
-
-        // 조회 결과가 없으면 body가 빈 문자열("")로 내려오는 경우가 있어 Map이 아닐 수 있다.
-        Object rawBody = response.get("body");
-        if (!(rawBody instanceof Map)) {
-            return Optional.empty();
-        }
-        Object item = ((Map<String, Object>) rawBody).get("item");
-        if (!(item instanceof Map)) {
-            return Optional.empty();
-        }
-        return Optional.of((Map<String, Object>) item);
     }
 
-    private URI buildUri(String regNumber, String ownerName) {
-        // serviceKey는 발급 시점에 이미 URL 인코딩된 형태라 재인코딩하면 서명이 깨진다 (Gov24Client와 동일 주의사항).
-        String encoded = UriComponentsBuilder.fromHttpUrl(BASE_URL)
-                .queryParam("dog_reg_no", regNumber)
-                .queryParam("owner_nm", ownerName)
-                .queryParam("_type", "json")
-                .encode(StandardCharsets.UTF_8)
-                .toUriString();
-        return URI.create(encoded + "&serviceKey=" + serviceKey);
+    /**
+     * 동물등록번호와 소유자 정보로 등록정보를 검증한다.
+     */
+    @SuppressWarnings("unchecked")
+    public Map<String, Object> verifyRegistration(String regNumber, String ownerName, String ownerBirth) {
+        if (!isConfigured()) {
+            throw new BusinessException(HttpStatus.INTERNAL_SERVER_ERROR, "동물등록 조회 서비스가 설정되지 않았습니다.");
+        }
+
+        try {
+            String raw = restTemplate.getForObject(
+                    buildRequestUri(regNumber, ownerName, ownerBirth), String.class);
+            Map<String, Object> root = objectMapper.readValue(raw, Map.class);
+            Object responseObject = root.get("response");
+            Map<String, Object> response = responseObject instanceof Map
+                    ? (Map<String, Object>) responseObject
+                    : root;
+            validateHeader((Map<String, Object>) response.get("header"));
+            return extractItem(response.get("body"));
+        } catch (BusinessException e) {
+            throw e;
+        } catch (RestClientException e) {
+            log.error("동물등록 정보조회 API 호출 실패", e);
+            throw new BusinessException(HttpStatus.BAD_GATEWAY, "동물등록정보 조회에 실패했습니다.");
+        } catch (Exception e) {
+            log.error("동물등록 정보조회 응답 처리 실패", e);
+            throw new BusinessException(HttpStatus.BAD_GATEWAY, "동물등록정보 응답을 처리하지 못했습니다.");
+        }
+    }
+
+    URI buildRequestUri(String regNumber, String ownerName, String ownerBirth) {
+        StringBuilder query = new StringBuilder()
+                .append("serviceKey=").append(encode(normalizeServiceKey(serviceKey)))
+                .append("&dog_reg_no=").append(encode(regNumber))
+                .append("&_type=json");
+        if (ownerName != null && !ownerName.isBlank()) {
+            query.append("&owner_nm=").append(encode(ownerName));
+        }
+        if (ownerBirth != null && !ownerBirth.isBlank()) {
+            query.append("&owner_birth=").append(encode(ownerBirth));
+        }
+        return URI.create(baseUrl + "?" + query);
+    }
+
+    void validateHeader(Map<String, Object> header) {
+        if (header == null) return;
+        String resultCode = stringValue(header.get("resultCode"));
+        if (resultCode != null && !"00".equals(resultCode)) {
+            log.warn("동물등록 정보조회 오류 - code: {}, message: {}", resultCode, header.get("resultMsg"));
+            if (INVALID_REGISTRATION_RESULT_CODES.contains(resultCode)) {
+                throw new BusinessException("일치하는 동물등록정보를 찾을 수 없습니다.");
+            }
+            throw new BusinessException(HttpStatus.BAD_GATEWAY, "동물등록정보 조회에 실패했습니다.");
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> extractItem(Object bodyObject) {
+        if (!(bodyObject instanceof Map)) return null;
+        Map<String, Object> body = (Map<String, Object>) bodyObject;
+        if (body.containsKey("dogRegNo") || body.containsKey("regNumber")) return body;
+        Object item = body.get("item");
+        if (item instanceof Map) return (Map<String, Object>) item;
+        if (item instanceof List && !((List<?>) item).isEmpty() && ((List<?>) item).get(0) instanceof Map) {
+            return (Map<String, Object>) ((List<?>) item).get(0);
+        }
+        Object items = body.get("items");
+        if (items instanceof Map) return extractItem(items);
+        return null;
+    }
+
+    private String stringValue(Object value) {
+        return value == null ? null : value.toString();
+    }
+
+    private String normalizeServiceKey(String key) {
+        String trimmed = key.trim();
+        return trimmed.contains("%")
+                ? URLDecoder.decode(trimmed, StandardCharsets.UTF_8)
+                : trimmed;
+    }
+
+    private String encode(String value) {
+        return URLEncoder.encode(value, StandardCharsets.UTF_8);
     }
 }

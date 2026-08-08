@@ -44,13 +44,31 @@
              #{deliveryMethod}, #{deliveryFee}, #{deliveryDate}, #{description}, #{targetQuantity}, #{deadline})
     </insert>
 
+    <!-- 목표 수량 초과·마감 여부·취소 여부를 조건절에 포함한 조건부 원자 UPDATE로 수량을 예약한다.
+         current_quantity/target_quantity/deadline/status를 애플리케이션에서 미리 읽어 비교하면
+         동시 요청 사이에 값이 바뀌어 목표 수량을 초과하거나 취소된 공동구매에 참여할 수 있으므로,
+         반드시 이 WHERE 절 안에서 판정해야 한다.
+         영향받은 행이 0이면(조건 불충족) 호출부에서 참여를 거절해야 한다. -->
     <update id="updateQuantity">
-        UPDATE group_purchase SET current_quantity = current_quantity + #{quantity} WHERE gp_id = #{gpId}
+        UPDATE group_purchase
+        SET current_quantity = current_quantity + #{quantity}
+        WHERE gp_id = #{gpId}
+          AND current_quantity + #{quantity} &lt;= target_quantity
+          AND deadline &gt;= NOW()
+          AND status != 'CANCELLED'
     </update>
 
     <insert id="insertParticipant" parameterType="map" useGeneratedKeys="true" keyProperty="participantId" keyColumn="participant_id">
-        INSERT INTO group_purchase_participant (gp_id, member_id, purchase_quantity)
-        VALUES (#{gpId}, #{memberId}, #{quantity})
+        INSERT INTO group_purchase_participant
+            (gp_id, member_id, purchase_quantity, recipient_name, recipient_phone, zip_code, address, address_detail,
+             paid_amount, payment_status, paid_at, txn_id)
+        VALUES
+            (#{gpId}, #{memberId}, #{quantity}, #{recipientName}, #{recipientPhone}, #{zipCode}, #{address}, #{addressDetail},
+             #{paidAmount}, #{paymentStatus}, #{paidAt}, #{txnId})
     </insert>
+
+    <select id="findParticipant" resultType="map">
+        SELECT * FROM group_purchase_participant WHERE gp_id = #{gpId} AND member_id = #{memberId}
+    </select>
 
 </mapper>
