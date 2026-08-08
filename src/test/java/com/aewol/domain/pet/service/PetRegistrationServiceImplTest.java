@@ -1,0 +1,162 @@
+package com.aewol.domain.pet.service;
+
+import com.aewol.common.exception.BusinessException;
+import com.aewol.domain.pet.dto.PetRegistrationResponse;
+import com.aewol.domain.pet.dto.PetRegistrationVerifyRequest;
+import com.aewol.domain.pet.mapper.PetDocumentMapper;
+import com.aewol.domain.pet.mapper.PetMapper;
+import com.aewol.domain.pet.mapper.PetRegistrationMapper;
+import com.aewol.external.apms.ApmsClient;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.http.HttpStatus;
+
+import java.util.HashMap;
+import java.util.Map;
+
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.*;
+
+@ExtendWith(MockitoExtension.class)
+class PetRegistrationServiceImplTest {
+    @Mock PetMapper petMapper;
+    @Mock PetDocumentMapper petDocumentMapper;
+    @Mock PetRegistrationMapper petRegistrationMapper;
+    @Mock ApmsClient apmsClient;
+
+    private PetRegistrationServiceImpl service;
+
+    @BeforeEach
+    void setUp() {
+        service = new PetRegistrationServiceImpl(
+                petMapper, petDocumentMapper, petRegistrationMapper, apmsClient);
+    }
+
+    @Test
+    void should_saveRegistration_when_ownerInformationMatches() {
+        PetRegistrationVerifyRequest request = request("410000012345678", "홍길동", "1990.01.01");
+        when(petMapper.findById("pet-1")).thenReturn(pet("member-1"));
+        when(apmsClient.verifyRegistration("410000012345678", "홍길동", "19900101"))
+                .thenReturn(registration());
+        when(petDocumentMapper.findByPetIdAndTypeForUpdate("pet-1", "REGISTRATION")).thenReturn(null);
+        doAnswer(invocation -> {
+            invocation.<Map<String, Object>>getArgument(0).put("docId", 31L);
+            return null;
+        }).when(petDocumentMapper).insert(any());
+        when(petMapper.updateRegistrationNumber("pet-1", "member-1", "410000012345678")).thenReturn(1);
+
+        PetRegistrationResponse response = service.verify("member-1", "pet-1", request);
+
+        assertTrue(response.isVerified());
+        assertEquals("31", response.getDocId());
+        assertEquals("몽이", response.getName());
+        assertEquals("MALE", response.getGender());
+        verify(petRegistrationMapper).insert(argThat(row ->
+                "410000012345678".equals(row.get("regNumber")) && Long.valueOf(31L).equals(row.get("docId"))));
+    }
+
+    @Test
+    void should_updateRegistration_when_petWasAlreadyVerified() {
+        PetRegistrationVerifyRequest request = request("410000012345678", "홍길동", null);
+        when(petMapper.findById("pet-1")).thenReturn(pet("member-1"));
+        when(apmsClient.verifyRegistration("410000012345678", "홍길동", null)).thenReturn(registration());
+        when(petDocumentMapper.findByPetIdAndTypeForUpdate("pet-1", "REGISTRATION"))
+                .thenReturn(map("doc_id", 31L));
+        when(petRegistrationMapper.findByRegNumber("410000012345678"))
+                .thenReturn(map("pet_id", "pet-1"));
+        when(petRegistrationMapper.update(any())).thenReturn(1);
+        when(petMapper.updateRegistrationNumber("pet-1", "member-1", "410000012345678")).thenReturn(1);
+
+        service.verify("member-1", "pet-1", request);
+
+        verify(petRegistrationMapper).update(argThat(row -> Long.valueOf(31L).equals(row.get("docId"))));
+        verify(petRegistrationMapper, never()).insert(any());
+    }
+
+    @Test
+    void should_throwForbidden_when_nonOwnerVerifies() {
+        when(petMapper.findById("pet-1")).thenReturn(pet("owner-1"));
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.verify("member-2", "pet-1", request("410000012345678", "홍길동", null)));
+
+        assertEquals(HttpStatus.FORBIDDEN, exception.getStatus());
+        verifyNoInteractions(apmsClient, petDocumentMapper, petRegistrationMapper);
+    }
+
+    @Test
+    void should_throwNotFound_when_petDoesNotExist() {
+        when(petMapper.findById("pet-404")).thenReturn(null);
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.verify("member-1", "pet-404", request("410000012345678", "홍길동", null)));
+
+        assertEquals(HttpStatus.NOT_FOUND, exception.getStatus());
+        verifyNoInteractions(apmsClient, petDocumentMapper, petRegistrationMapper);
+    }
+
+    @Test
+    void should_throwBadRequest_when_ownerInformationIsMissing() {
+        when(petMapper.findById("pet-1")).thenReturn(pet("member-1"));
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.verify("member-1", "pet-1", request("410000012345678", null, null)));
+
+        assertEquals(HttpStatus.BAD_REQUEST, exception.getStatus());
+        verifyNoInteractions(apmsClient);
+    }
+
+    @Test
+    void should_throwBadRequest_when_registrationDoesNotMatchPet() {
+        when(petMapper.findById("pet-1")).thenReturn(pet("member-1"));
+        Map<String, Object> differentPet = registration();
+        differentPet.put("dogNm", "다른동물");
+        when(apmsClient.verifyRegistration("410000012345678", "홍길동", null)).thenReturn(differentPet);
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.verify("member-1", "pet-1", request("410000012345678", "홍길동", null)));
+
+        assertEquals(HttpStatus.BAD_REQUEST, exception.getStatus());
+        verifyNoInteractions(petDocumentMapper, petRegistrationMapper);
+    }
+
+    @Test
+    void should_throwConflict_when_registrationNumberBelongsToAnotherPet() {
+        when(petMapper.findById("pet-1")).thenReturn(pet("member-1"));
+        when(apmsClient.verifyRegistration("410000012345678", "홍길동", null)).thenReturn(registration());
+        when(petRegistrationMapper.findByRegNumber("410000012345678"))
+                .thenReturn(map("pet_id", "pet-2"));
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.verify("member-1", "pet-1", request("410000012345678", "홍길동", null)));
+
+        assertEquals(HttpStatus.CONFLICT, exception.getStatus());
+        verifyNoInteractions(petDocumentMapper);
+    }
+
+    private PetRegistrationVerifyRequest request(String regNumber, String userName, String birthDate) {
+        return new PetRegistrationVerifyRequest(regNumber, userName, birthDate);
+    }
+
+    private Map<String, Object> pet(String memberId) {
+        return map("pet_id", "pet-1", "member_id", memberId, "name", "몽이",
+                "birth_date", "2022-01-01", "gender", "MALE", "is_active", 1);
+    }
+
+    private Map<String, Object> registration() {
+        return map("dogRegNo", "410000012345678", "dogNm", "몽이", "kindNm", "말티즈",
+                "sexNm", "수컷", "neuterYn", "Y", "birthDt", "20220101",
+                "rfidCd", "410000012345678", "rfidGubun", "Y", "orgNm", "제주시",
+                "officeTel", "064-123-4567", "aprGbnNm", "승인", "regTm", "20220801120000");
+    }
+
+    private Map<String, Object> map(Object... values) {
+        Map<String, Object> result = new HashMap<>();
+        for (int i = 0; i < values.length; i += 2) result.put(String.valueOf(values[i]), values[i + 1]);
+        return result;
+    }
+}
