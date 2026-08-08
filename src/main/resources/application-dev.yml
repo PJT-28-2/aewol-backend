@@ -52,6 +52,9 @@ external:
     # 정식 계약 후엔 CODEF_API_BASE_URL=https://api.codef.io 로 교체
     oauth-url: ${CODEF_OAUTH_URL:https://oauth.codef.io/oauth/token}
     api-base-url: ${CODEF_API_BASE_URL:https://development.codef.io}
+  apms:
+    service-key: ${APMS_SERVICE_KEY:}
+    base-url: ${APMS_BASE_URL:https://apis.data.go.kr/1543061/animalInfoSrvc_v3/animalInfo_v3}
   naver:
     client-id: ${NAVER_CLIENT_ID:}
     client-secret: ${NAVER_CLIENT_SECRET:}

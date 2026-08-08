@@ -51,7 +51,6 @@ public class PetServiceImpl implements PetService {
         pet.put("gender", request.getGender());
         pet.put("weight", request.getWeight());
         pet.put("neutered", request.getNeutered());
-        pet.put("regNumber", request.getRegNumber());
         pet.put("medicalHistory", request.getMedicalHistory());
         petMapper.insert(pet); // pet_id AUTO_INCREMENT
 
@@ -91,7 +90,6 @@ public class PetServiceImpl implements PetService {
         pet.put("gender", request.getGender());
         pet.put("weight", request.getWeight());
         pet.put("neutered", request.getNeutered());
-        pet.put("regNumber", request.getRegNumber());
         pet.put("medicalHistory", request.getMedicalHistory());
         petMapper.update(pet);
     }
