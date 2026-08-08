@@ -1,6 +1,7 @@
 package com.aewol.domain.account.service;
 
 import com.aewol.common.exception.BusinessException;
+import com.aewol.domain.account.dto.AccountPrimaryRequest;
 import com.aewol.common.util.RedisRateLimiter;
 import com.aewol.domain.account.dto.AccountRegisterRequest;
 import com.aewol.domain.account.dto.AccountResponse;
@@ -168,12 +169,21 @@ public class AccountServiceImpl implements AccountService {
         String bankCode = (String) verification.get("bank_code");
         String accountNumber = (String) verification.get("account_number");
 
+        // setPrimaryAccount만 기존 대표 계좌를 내리고 있어서, 이미 대표 계좌가 있는
+        // 회원이 isPrimary=true로 새 계좌를 등록하면 대표 계좌가 2개가 될 수 있었다
+        // (CodeRabbit 지적, 2026-08-08). 등록 경로도 같은 순서(기존 대표를 먼저 내리고
+        // 새로 지정)를 따르게 한다.
+        boolean makePrimary = Boolean.TRUE.equals(request.getIsPrimary());
+        if (makePrimary) {
+            accountMapper.clearPrimaryByMemberId(memberId);
+        }
+
         Map<String, Object> account = new HashMap<>();
         account.put("memberId", memberId);
         account.put("bankCode", bankCode);
         account.put("accountNumber", accountNumber);
         account.put("accountNumberHash", sha256(accountNumber));
-        account.put("isPrimary", request.getIsPrimary() != null && request.getIsPrimary() ? 1 : 0);
+        account.put("isPrimary", makePrimary ? 1 : 0);
         accountMapper.insert(account); // account_id AUTO_INCREMENT로 채워짐
 
         // useGeneratedKeys가 정상 동작하면 account_id가 채워진다. 못 채우면 아래에서
@@ -197,8 +207,82 @@ public class AccountServiceImpl implements AccountService {
 
     @Override
     @Transactional
-    public void disconnectAccount(String accountId) {
+    public void disconnectAccount(String memberId, String accountId) {
+        // 잠금 없이 읽으면(findByAccountId) 이 트랜잭션이 is_primary를 읽은 뒤 다른
+        // 트랜잭션이 같은 계좌를 대표로 설정해도 그 변경을 못 보고 그대로 진행해서,
+        // 활성 계좌가 있는데도 대표 계좌가 0개로 남을 수 있다(CodeRabbit 지적,
+        // 2026-08-08). FOR UPDATE로 행을 잠가서 이 트랜잭션이 끝날 때까지 다른
+        // 트랜잭션의 동시 수정을 막는다.
+        Map<String, Object> account = accountMapper.findByAccountIdForUpdate(accountId);
+        // 소유자 검증이 없으면 accountId만 알면 다른 회원의 계좌도 연동 해제할 수 있었다
+        // (CodeRabbit 지적, 2026-08-08). setPrimaryAccount와 같은 방식으로 404 처리한다
+        // — 존재 여부와 소유 여부를 구분해서 알려주지 않기 위해서다.
+        if (account == null || !String.valueOf(account.get("member_id")).equals(memberId)) {
+            throw BusinessException.notFound("연동된 계좌를 찾을 수 없어요");
+        }
+        boolean wasPrimary = toBool(account.get("is_primary"));
+
+        // is_primary도 같이 0으로 내려감(updateStatus의 CASE WHEN, 2026-08-07 수정)
         accountMapper.updateStatus(accountId, "INACTIVE");
+
+        // 대표 계좌를 해제한 거라면, 남은 ACTIVE 계좌 중 하나를 새 대표로 자동 승격한다
+        // — 안 그러면 다른 ACTIVE 계좌가 있는데도 대표 계좌가 0개인 상태가 남는다
+        // (CodeRabbit 지적, 2026-08-07). 남은 계좌가 없으면(전부 해제) 승격할 대상이
+        // 없으니 그대로 대표 계좌 0개로 둔다 — 다음 계좌를 연동할 때 다시 지정하면 된다.
+        if (wasPrimary) {
+            List<Map<String, Object>> remaining = accountMapper.findByMemberId(memberId);
+            if (!remaining.isEmpty()) {
+                String nextPrimaryAccountId = String.valueOf(remaining.get(0).get("account_id"));
+                // 후보 계좌도 잠금 없이 선택하면, 선택 직후 다른 트랜잭션이 이 계좌를
+                // 연동 해제할 수 있다 — FOR UPDATE로 다시 잠가서 이 트랜잭션이 끝날
+                // 때까지 다른 트랜잭션의 동시 수정을 막는다(CodeRabbit 지적, 2026-08-08).
+                accountMapper.findByAccountIdForUpdate(nextPrimaryAccountId);
+                int updated = accountMapper.setPrimary(nextPrimaryAccountId);
+                if (updated != 1) {
+                    // setPrimary의 WHERE status='ACTIVE' 조건에 걸려 갱신되지 않으면(예:
+                    // 잠그기 직전 이미 연동 해제됨), 대표 계좌 0개 상태가 그대로 커밋되지
+                    // 않도록 트랜잭션 전체를 롤백한다(@Transactional이라 여기서 던지면
+                    // 위의 updateStatus도 함께 롤백된다).
+                    throw new BusinessException(HttpStatus.CONFLICT, "대표 계좌 승격에 실패했어요. 다시 시도해주세요");
+                }
+            }
+        }
+    }
+
+    @Override
+    @Transactional
+    public AccountResponse setPrimaryAccount(String memberId, String accountId, AccountPrimaryRequest request) {
+        if (!Boolean.TRUE.equals(request.getIsPrimary())) {
+            // isPrimary=false로 대표 계좌를 "해제"하는 요청은 지원하지 않는다 — 다른
+            // 계좌를 대표로 지정하면 자동으로 해제되므로, 회원당 대표 계좌 0개 상태를
+            // 만들 수 있는 요청 자체를 막는다.
+            throw new BusinessException(HttpStatus.BAD_REQUEST, "isPrimary는 true만 지원해요");
+        }
+
+        Map<String, Object> account = accountMapper.findByAccountId(accountId);
+        if (account == null || !String.valueOf(account.get("member_id")).equals(memberId)) {
+            throw BusinessException.notFound("연동된 계좌를 찾을 수 없어요");
+        }
+        if (!"ACTIVE".equals(account.get("status"))) {
+            throw new BusinessException(HttpStatus.CONFLICT, "연동 해제된 계좌는 대표 계좌로 설정할 수 없어요");
+        }
+
+        // 회원당 대표 계좌는 항상 1개 — 기존 대표를 먼저 내리고 지정한 계좌만 올린다.
+        // 안전한 이유는 "트랜잭션 안이라서"가 아니라, UPDATE ... WHERE 문 자체가
+        // 해당 행에 락을 걸어서 동시에 들어온 다른 요청은 이 트랜잭션이 커밋될 때까지
+        // 대기하기 때문이다(InnoDB 행 잠금, 2026-08-07 코드리뷰 지적으로 주석 정정).
+        accountMapper.clearPrimaryByMemberId(memberId);
+
+        // 위의 findByAccountId 조회 이후, 여기 도달하기 전에 다른 트랜잭션이 같은
+        // 계좌를 연동 해제(INACTIVE)할 수 있다. setPrimary는 status='ACTIVE' 조건부라
+        // 그 경우 영향 행 0을 반환하므로, 방금 한 clearPrimaryByMemberId까지 롤백해서
+        // "대표 계좌 0개" 상태가 커밋되는 걸 막는다(CodeRabbit 지적, 2026-08-07).
+        int updated = accountMapper.setPrimary(accountId);
+        if (updated == 0) {
+            throw new BusinessException(HttpStatus.CONFLICT, "연동 해제된 계좌는 대표 계좌로 설정할 수 없어요");
+        }
+
+        return toAccountResponse(accountMapper.findByAccountId(accountId));
     }
 
     // 연동된 외부 은행 계좌의 실제 잔액은 조회하지 않는다(2026-08-06 결정) — 실시간 조회는

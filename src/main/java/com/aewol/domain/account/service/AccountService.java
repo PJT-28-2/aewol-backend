@@ -1,5 +1,6 @@
 package com.aewol.domain.account.service;
 
+import com.aewol.domain.account.dto.AccountPrimaryRequest;
 import com.aewol.domain.account.dto.AccountRegisterRequest;
 import com.aewol.domain.account.dto.AccountResponse;
 import com.aewol.domain.account.dto.DepositConfirmRequest;
@@ -13,5 +14,6 @@ public interface AccountService {
     DepositConfirmResponse confirmDepositVerification(String memberId, DepositConfirmRequest request);
     AccountResponse registerAccount(String memberId, AccountRegisterRequest request);
     List<AccountResponse> getAccounts(String memberId);
-    void disconnectAccount(String accountId);
+    void disconnectAccount(String memberId, String accountId);
+    AccountResponse setPrimaryAccount(String memberId, String accountId, AccountPrimaryRequest request);
 }
