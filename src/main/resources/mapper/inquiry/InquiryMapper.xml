@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.aewol.domain.inquiry.mapper.InquiryMapper">
+    <!-- V1에서 inquiry_id/attachment_id는 BIGINT AUTO_INCREMENT(V3), inquiry_number는 V4에서 추가된 사용자 노출용 접수번호 -->
+
+    <insert id="insert" parameterType="map" useGeneratedKeys="true" keyProperty="inquiryId" keyColumn="inquiry_id">
+        INSERT INTO inquiry
+            (member_id, category, title, content, reply_email)
+        VALUES
+            (#{memberId}, #{category}, #{title}, #{content}, #{replyEmail})
+    </insert>
+
+    <!-- inquiry_number는 insert로 생성된 inquiry_id(AUTO_INCREMENT라 유일)를 그대로 활용해서 만들기 때문에
+         insert 이후 별도 UPDATE로 채운다 — 삽입 전에는 아직 값을 알 수 없다. -->
+    <update id="updateInquiryNumber">
+        UPDATE inquiry SET inquiry_number = #{inquiryNumber} WHERE inquiry_id = #{inquiryId}
+    </update>
+
+    <insert id="insertAttachment" parameterType="map" useGeneratedKeys="true" keyProperty="attachmentId" keyColumn="attachment_id">
+        INSERT INTO inquiry_attachment
+            (inquiry_id, file_name, file_url, file_size)
+        VALUES
+            (#{inquiryId}, #{fileName}, #{fileUrl}, #{fileSize})
+    </insert>
+
+    <select id="findAttachmentsByInquiryId" resultType="map">
+        SELECT attachment_id, file_name, file_url, file_size
+        FROM inquiry_attachment
+        WHERE inquiry_id = #{inquiryId}
+        ORDER BY attachment_id ASC
+    </select>
+
+    <select id="findByMemberId" resultType="map">
+        SELECT inquiry_id, title, status, created_at
+        FROM inquiry
+        <where>
+            member_id = #{memberId}
+            <if test="status != null and status != ''">
+                AND status = #{status}
+            </if>
+        </where>
+        ORDER BY created_at DESC, inquiry_id DESC
+        LIMIT #{limit} OFFSET #{offset}
+    </select>
+
+    <select id="findByIdAndMemberId" resultType="map">
+        SELECT inquiry_id, inquiry_number, category, title, content, reply_email, status, answer, created_at, answered_at
+        FROM inquiry
+        WHERE inquiry_id = #{inquiryId} AND member_id = #{memberId}
+    </select>
+</mapper>
