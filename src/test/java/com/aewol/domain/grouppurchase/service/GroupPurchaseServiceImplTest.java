@@ -127,6 +127,41 @@ class GroupPurchaseServiceImplTest {
     }
 
     @Test
+    @DisplayName("존재하는 gpId로 조회하면 상세 정보를 반환한다")
+    void should_returnGroupPurchaseDetail_when_gpExists() {
+        GroupPurchaseServiceImpl service = service();
+        when(groupPurchaseMapper.findById("1")).thenReturn(savedRow());
+
+        GroupPurchaseResponse result = service.getDetail("1");
+
+        assertEquals("1", result.getGpId());
+        assertEquals("member-1", result.getMemberId());
+        assertEquals("사료 5kg", result.getProductName());
+        assertEquals("/uploads/group-purchase/product.png", result.getImage());
+        assertEquals(new BigDecimal("30000"), result.getUnitPrice());
+        assertEquals(new BigDecimal("25000"), result.getGroupPrice());
+        assertEquals("택배배송", result.getDeliveryMethod());
+        assertEquals(new BigDecimal("3000"), result.getDeliveryFee());
+        assertEquals(LocalDate.of(2026, 8, 20), result.getDeliveryDate());
+        assertEquals(10, result.getTargetQuantity());
+        assertEquals(0, result.getCurrentQuantity());
+        assertEquals(LocalDateTime.of(2026, 8, 15, 0, 0), result.getDeadline());
+    }
+
+    @Test
+    @DisplayName("존재하지 않는 gpId로 조회하면 예외가 발생한다")
+    void should_throwException_when_gpNotFound_onGetDetail() {
+        GroupPurchaseServiceImpl service = service();
+        when(groupPurchaseMapper.findById("999")).thenReturn(null);
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.getDetail("999"));
+
+        assertEquals(org.springframework.http.HttpStatus.NOT_FOUND, exception.getStatus());
+        assertEquals("공동구매를 찾을 수 없습니다.", exception.getMessage());
+    }
+
+    @Test
     @DisplayName("페이지 크기보다 많은 결과가 있으면 hasNext가 true이고 초과분은 잘라낸다")
     void should_trimAndSetHasNextTrue_when_moreRowsThanPageSizeExist() {
         GroupPurchaseServiceImpl service = service();
