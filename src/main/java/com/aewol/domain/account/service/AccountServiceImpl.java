@@ -2,6 +2,7 @@ package com.aewol.domain.account.service;
 
 import com.aewol.common.exception.BusinessException;
 import com.aewol.domain.account.dto.AccountPrimaryRequest;
+import com.aewol.common.util.RedisRateLimiter;
 import com.aewol.domain.account.dto.AccountRegisterRequest;
 import com.aewol.domain.account.dto.AccountResponse;
 import com.aewol.domain.account.dto.DepositConfirmRequest;
@@ -32,11 +33,25 @@ public class AccountServiceImpl implements AccountService {
     private final AccountVerificationMapper accountVerificationMapper;
     private final CodefClient codefClient;
     private final Environment environment;
+    private final RedisRateLimiter redisRateLimiter;
 
     // 프론트(store.requestDepositAuth의 DEPOSIT_AUTH_TIMEOUT_SECONDS)와 동일한 유효시간.
     // 여기서 안 맞추면 프론트는 아직 타이머가 남았다고 보여주는데 서버는 이미
     // 만료 처리하는 상황이 생길 수 있다.
     private static final long DEPOSIT_AUTH_TIMEOUT_SECONDS = 180;
+
+    // 입금자명 후보 공간을 완성형 한글 음절 4개 조합(11172^4가지)으로 넓혀도(CodeRabbit
+    // 지적), confirm API에 재시도 횟수 제한이 없으면 같은 transactionId로 계속 찍어보는
+    // 무차별 대입이 가능하다. 5번 틀리면 그 이후엔 정답을 넣어도 통과시키지 않는다
+    // (2026-08-07).
+    private static final int MAX_VERIFICATION_ATTEMPTS = 5;
+
+    // confirm 오답 제한이 있어도 "다시 보내기"로 매번 새 transactionId(attempt_count=0)를
+    // 받으면 그 제한이 무력화된다. 그래서 요청(재전송 포함) 자체도 회원 단위로 제한한다
+    // (비즈고 2FA "3분 동안 5회" 참고, 2026-08-07). Redis에 TTL 딸린 카운터로 관리.
+    private static final int MAX_VERIFICATION_REQUESTS = 5;
+    private static final long VERIFICATION_REQUEST_WINDOW_SECONDS = 180;
+    private static final String VERIFICATION_REQUEST_KEY_PREFIX = "deposit-request-attempts:";
 
     @Override
     // CODEF 호출(동기 HTTP)이 끝난 뒤 insert 한 번만 하면 되는 메서드라 @Transactional을
@@ -44,6 +59,8 @@ public class AccountServiceImpl implements AccountService {
     // DB 커넥션을 계속 점유하게 돼서, CODEF가 지연되면 커넥션 풀 고갈로 서비스 전체가
     // 영향을 받을 수 있다(CodeRabbit 지적, 2026-08-06).
     public DepositVerificationResponse requestDepositVerification(String memberId, DepositVerificationRequest request) {
+        enforceRequestRateLimit(memberId);
+
         String transactionId = generateTransactionId();
 
         // CODEF 1원 이체 요청 — CODEF가 랜덤 입금자명(authCode)을 직접 생성해서 돌려준다.
@@ -76,10 +93,28 @@ public class AccountServiceImpl implements AccountService {
         return environment.acceptsProfiles(Profiles.of("local", "test"));
     }
 
+    /**
+     * 회원 단위로 "3분 동안 5회"까지만 1원 인증을 요청(최초 요청 + 다시 보내기 포함)할 수 있게 막는다.
+     * confirm의 오답 5회 제한이 있어도, 재전송으로 매번 새 attempt_count=0을 받을 수 있으면
+     * 그 제한이 무의미해지기 때문에 요청 자체도 같이 제한한다.
+     */
+    private void enforceRequestRateLimit(String memberId) {
+        String key = VERIFICATION_REQUEST_KEY_PREFIX + memberId;
+        // INCR와 최초 증가 시 EXPIRE를 Lua 스크립트로 원자 실행 — 그 사이 인스턴스가 죽어도
+        // TTL 없는 키가 영구히 남지 않는다(CodeRabbit 지적, 2026-08-07).
+        long count = redisRateLimiter.incrementWithExpiry(key, VERIFICATION_REQUEST_WINDOW_SECONDS);
+        if (count > MAX_VERIFICATION_REQUESTS) {
+            throw new BusinessException(HttpStatus.TOO_MANY_REQUESTS, "1원 인증 요청이 너무 많아요. 잠시 후 다시 시도해주세요");
+        }
+    }
+
     @Override
     @Transactional
     public DepositConfirmResponse confirmDepositVerification(String memberId, DepositConfirmRequest request) {
-        Map<String, Object> verification = accountVerificationMapper.findById(request.getTransactionId());
+        // findByIdForUpdate로 행을 잠근 채 한도 검사 -> 값 비교 -> 갱신까지 이 트랜잭션
+        // 안에서 순서대로 끝낸다 — findById(잠금 없음)로 읽으면 동시 요청이 같은
+        // attempt_count를 읽고 모두 한도 미만으로 통과할 수 있다(CodeRabbit 지적, 2026-08-07).
+        Map<String, Object> verification = accountVerificationMapper.findByIdForUpdate(request.getTransactionId());
         if (verification == null || !String.valueOf(verification.get("member_id")).equals(memberId)) {
             throw BusinessException.notFound("1원 인증 요청을 찾을 수 없어요");
         }
@@ -90,10 +125,18 @@ public class AccountServiceImpl implements AccountService {
         if (isExpired(verification.get("requested_at"))) {
             return DepositConfirmResponse.builder().verified(false).reason("EXPIRED").build();
         }
+        if (toInt(verification.get("attempt_count")) >= MAX_VERIFICATION_ATTEMPTS) {
+            // 이미 한도를 넘긴 요청은 이번에 정답을 넣었어도 통과시키지 않는다 —
+            // 그렇지 않으면 한도가 "몇 번 틀렸는지 세기"만 하고 실제 방어 역할을
+            // 못 한다.
+            return DepositConfirmResponse.builder().verified(false).reason("TOO_MANY_ATTEMPTS").build();
+        }
 
         boolean matched = String.valueOf(verification.get("verification_code")).equals(request.getVerificationCode());
         if (matched) {
             accountVerificationMapper.updateStatus(request.getTransactionId(), "VERIFIED");
+        } else {
+            accountVerificationMapper.incrementAttemptCount(request.getTransactionId());
         }
         return DepositConfirmResponse.builder()
                 .verified(matched)
@@ -276,5 +319,10 @@ public class AccountServiceImpl implements AccountService {
         if (value instanceof Boolean) return (Boolean) value;
         if (value instanceof Number) return ((Number) value).intValue() == 1;
         return false;
+    }
+
+    /** attempt_count는 드라이버 설정에 따라 Integer/Long 등으로 반환될 수 있다 */
+    private static int toInt(Object value) {
+        return value instanceof Number ? ((Number) value).intValue() : 0;
     }
 }

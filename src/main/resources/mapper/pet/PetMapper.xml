@@ -4,11 +4,12 @@
     <!-- V1 pet: icon_type/profile_img 컴럼 없음. medical_history는 자유 텍스트(V4) -->
 
     <select id="findById" resultType="map">
-        SELECT * FROM pet WHERE pet_id = #{petId}
+        SELECT * FROM pet WHERE pet_id = #{petId} AND is_active = 1
     </select>
 
     <select id="findByIdAndMemberId" resultType="map">
-        SELECT * FROM pet WHERE pet_id = #{petId} AND member_id = #{memberId}
+        SELECT * FROM pet
+        WHERE pet_id = #{petId} AND member_id = #{memberId} AND is_active = 1
     </select>
 
     <select id="findByMemberId" resultType="map">
@@ -34,7 +35,9 @@
     </update>
 
     <update id="deactivate">
-        UPDATE pet SET is_active = 0, updated_at = NOW() WHERE pet_id = #{petId}
+        UPDATE pet
+        SET is_active = 0, updated_at = NOW()
+        WHERE pet_id = #{petId} AND member_id = #{memberId} AND is_active = 1
     </update>
 
 </mapper>

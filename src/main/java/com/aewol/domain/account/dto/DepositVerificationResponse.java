@@ -9,9 +9,9 @@ import lombok.Getter;
 public class DepositVerificationResponse {
     private String transactionId;
 
-    // CODEF inPrintType=0(4자리 랜덤 숫자)이라 항상 4로 고정된다(2026-08-06). 프론트는
-    // 이 값을 직접 읽지 않고 고정 4칸 입력 UI를 쓰지만, CODEF 쪽 값이 흔들리는 상황을
-    // 대비해 실제 길이를 계약에 남겨둔다.
+    // CODEF inPrintType=9(고객사 직접 입력)로 우리가 고른 완성형 한글 음절 4개를 그대로
+    // 쓰기 때문에 길이가 항상 4다(2026-08-06). 프론트(AccountAuthOneWon.vue)는 이 값을
+    // 그대로 읽어서 입력 칸 개수를 그린다.
     private int depositorNameLength;
 
     // 테스트 편의용 — 프론트는 안 읽음(계약에 없음). 데모 환경엔 실제 입금 알림이 없어서

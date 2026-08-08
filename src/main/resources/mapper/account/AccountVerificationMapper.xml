@@ -16,11 +16,24 @@
         SELECT * FROM account_verification WHERE transaction_id = #{transactionId}
     </select>
 
+    <!-- confirm 동시 요청 경합 방지용(CodeRabbit 지적, 2026-08-07) — 같은 트랜잭션 안에서
+         이 행을 잠근 뒤 한도 검사 -> 값 비교 -> 상태/시도횟수 갱신을 순서대로 수행하면,
+         두 confirm 요청이 동시에 attempt_count=4를 읽고 둘 다 통과하는 걸 막을 수 있다. -->
+    <select id="findByIdForUpdate" resultType="map">
+        SELECT * FROM account_verification WHERE transaction_id = #{transactionId} FOR UPDATE
+    </select>
+
     <update id="updateStatus">
         UPDATE account_verification
         SET status = #{status},
             verified_at = CASE WHEN #{status} = 'VERIFIED' THEN NOW() ELSE verified_at END
         WHERE transaction_id = #{transactionId}
+    </update>
+
+    <!-- 오답일 때마다 호출 — 서비스가 이 값을 읽어서 한도(MAX_VERIFICATION_ATTEMPTS)
+         초과 여부를 판단한다. -->
+    <update id="incrementAttemptCount">
+        UPDATE account_verification SET attempt_count = attempt_count + 1 WHERE transaction_id = #{transactionId}
     </update>
 
     <!-- VERIFIED -> USED 전환에만 쓰는 조건부 UPDATE. status 조건을 WHERE절에 걸어서

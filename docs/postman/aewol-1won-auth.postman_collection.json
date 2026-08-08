@@ -15,7 +15,6 @@
     { "key": "loginPassword", "value": "테스트 계정 비밀번호 입력" },
     { "key": "bankCode", "value": "004", "description": "004=KB. 토스는 bank_master 참고" },
     { "key": "accountNumber", "value": "1234567890" },
-    { "key": "accountHolder", "value": "민주" },
     { "key": "transactionId", "value": "" },
     { "key": "verificationCode", "value": "" }
   ],
@@ -75,7 +74,7 @@
         "url": { "raw": "{{baseUrl}}/api/accounts/verify-deposit", "host": ["{{baseUrl}}"], "path": ["api", "accounts", "verify-deposit"] },
         "body": {
           "mode": "raw",
-          "raw": "{\n  \"bankCode\": \"{{bankCode}}\",\n  \"accountNumber\": \"{{accountNumber}}\",\n  \"accountHolder\": \"{{accountHolder}}\"\n}"
+          "raw": "{\n  \"bankCode\": \"{{bankCode}}\",\n  \"accountNumber\": \"{{accountNumber}}\"\n}"
         }
       }
     },

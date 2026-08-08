@@ -104,10 +104,22 @@ public class DonationServiceImpl implements DonationService {
     @Transactional
     public DonationBalanceResponse withdraw(String memberId, DonationWithdrawRequest request) {
         memberId = requireMemberId(memberId);
-        Map<String, Object> wallet = donationMapper.findMainWalletByMemberId(memberId);
-        if (wallet == null) throw BusinessException.notFound("지갑을 찾을 수 없습니다.");
+        String idempotencyKey = requireIdempotencyKey(request.getIdempotencyKey());
         Map<String, Object> pot = getOrCreatePotForUpdate(memberId);
         String donationWalletId = text(pot, "wallet_id", "walletId");
+
+        Map<String, Object> existing = donationMapper.findWithdrawalByIdempotencyKey(memberId, idempotencyKey);
+        if (existing != null) {
+            if (decimal(existing, "price").compareTo(request.getAmount()) != 0) {
+                throw BusinessException.conflict("동일한 중복 요청 방지 키에 다른 출금 금액을 사용할 수 없습니다.");
+            }
+            return DonationBalanceResponse.builder()
+                    .balance(decimal(pot, "balance"))
+                    .build();
+        }
+
+        Map<String, Object> wallet = donationMapper.findMainWalletByMemberId(memberId);
+        if (wallet == null) throw BusinessException.notFound("지갑을 찾을 수 없습니다.");
         if (donationMapper.decreasePotBalance(donationWalletId, request.getAmount()) != 1) {
             throw new BusinessException("저금통 잔액이 부족합니다.");
         }
@@ -121,6 +133,7 @@ public class DonationServiceImpl implements DonationService {
         transaction.put("donationWalletId", donationWalletId);
         transaction.put("walletId", walletId);
         transaction.put("amount", request.getAmount());
+        transaction.put("idempotencyKey", idempotencyKey);
         donationMapper.insertWalletTransaction(transaction);
 
         Map<String, Object> updatedPot = donationMapper.findPotByMemberId(memberId);
@@ -311,6 +324,16 @@ public class DonationServiceImpl implements DonationService {
     private String requireMemberId(String memberId) {
         if (memberId == null || memberId.isBlank()) throw BusinessException.unauthorized("로그인이 필요합니다.");
         return memberId;
+    }
+
+    private String requireIdempotencyKey(String idempotencyKey) {
+        if (idempotencyKey == null || idempotencyKey.isBlank()) {
+            throw new BusinessException("중복 요청 방지 키를 입력해 주세요.");
+        }
+        if (idempotencyKey.length() > 64) {
+            throw new BusinessException("중복 요청 방지 키는 64자 이하여야 합니다.");
+        }
+        return idempotencyKey;
     }
 
     private static Object value(Map<String, Object> map, String... keys) {
