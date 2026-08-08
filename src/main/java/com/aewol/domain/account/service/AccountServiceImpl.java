@@ -198,18 +198,20 @@ public class AccountServiceImpl implements AccountService {
 
     @Override
     @Transactional
-    public void disconnectAccount(String accountId) {
+    public void disconnectAccount(String memberId, String accountId) {
         // 잠금 없이 읽으면(findByAccountId) 이 트랜잭션이 is_primary를 읽은 뒤 다른
         // 트랜잭션이 같은 계좌를 대표로 설정해도 그 변경을 못 보고 그대로 진행해서,
         // 활성 계좌가 있는데도 대표 계좌가 0개로 남을 수 있다(CodeRabbit 지적,
         // 2026-08-08). FOR UPDATE로 행을 잠가서 이 트랜잭션이 끝날 때까지 다른
         // 트랜잭션의 동시 수정을 막는다.
         Map<String, Object> account = accountMapper.findByAccountIdForUpdate(accountId);
-        if (account == null) {
+        // 소유자 검증이 없으면 accountId만 알면 다른 회원의 계좌도 연동 해제할 수 있었다
+        // (CodeRabbit 지적, 2026-08-08). setPrimaryAccount와 같은 방식으로 404 처리한다
+        // — 존재 여부와 소유 여부를 구분해서 알려주지 않기 위해서다.
+        if (account == null || !String.valueOf(account.get("member_id")).equals(memberId)) {
             throw BusinessException.notFound("연동된 계좌를 찾을 수 없어요");
         }
         boolean wasPrimary = toBool(account.get("is_primary"));
-        String memberId = String.valueOf(account.get("member_id"));
 
         // is_primary도 같이 0으로 내려감(updateStatus의 CASE WHEN, 2026-08-07 수정)
         accountMapper.updateStatus(accountId, "INACTIVE");

@@ -98,7 +98,7 @@ private static final String ACCOUNT_ID = "1";
                 .thenReturn(List.of(accountRow(otherAccountId, MEMBER_ID, "ACTIVE", false)));
         when(accountMapper.setPrimary(otherAccountId)).thenReturn(1);
 
-        service.disconnectAccount(ACCOUNT_ID);
+        service.disconnectAccount(MEMBER_ID, ACCOUNT_ID);
         verify(accountMapper).updateStatus(ACCOUNT_ID, "INACTIVE");
         verify(accountMapper).findByAccountIdForUpdate(otherAccountId);
         verify(accountMapper).setPrimary(otherAccountId);
@@ -117,7 +117,7 @@ private static final String ACCOUNT_ID = "1";
         when(accountMapper.setPrimary(otherAccountId)).thenReturn(0);
 
         BusinessException ex = assertThrows(BusinessException.class,
-                () -> service.disconnectAccount(ACCOUNT_ID));
+                () -> service.disconnectAccount(MEMBER_ID, ACCOUNT_ID));
 
         assertEquals(org.springframework.http.HttpStatus.CONFLICT, ex.getStatus());
     }
@@ -131,7 +131,7 @@ private static final String ACCOUNT_ID = "1";
         when(accountMapper.findByAccountIdForUpdate(ACCOUNT_ID))
                 .thenReturn(accountRow(ACCOUNT_ID, MEMBER_ID, "ACTIVE", false));
 
-        service.disconnectAccount(ACCOUNT_ID);
+        service.disconnectAccount(MEMBER_ID, ACCOUNT_ID);
 
         verify(accountMapper).findByAccountIdForUpdate(ACCOUNT_ID);
         verify(accountMapper, never()).findByAccountId(any());
@@ -142,7 +142,7 @@ private static final String ACCOUNT_ID = "1";
     void should_notPromote_when_disconnectingNonPrimaryAccount() {
         when(accountMapper.findByAccountIdForUpdate(ACCOUNT_ID))
                 .thenReturn(accountRow(ACCOUNT_ID, MEMBER_ID, "ACTIVE", false));
-        service.disconnectAccount(ACCOUNT_ID);
+        service.disconnectAccount(MEMBER_ID, ACCOUNT_ID);
         verify(accountMapper).updateStatus(ACCOUNT_ID, "INACTIVE");
         verify(accountMapper, never()).findByMemberId(any());
         verify(accountMapper, never()).setPrimary(any());
@@ -153,7 +153,7 @@ private static final String ACCOUNT_ID = "1";
         when(accountMapper.findByAccountIdForUpdate(ACCOUNT_ID))
                 .thenReturn(accountRow(ACCOUNT_ID, MEMBER_ID, "ACTIVE", true));
         when(accountMapper.findByMemberId(MEMBER_ID)).thenReturn(List.of());
-        service.disconnectAccount(ACCOUNT_ID);
+        service.disconnectAccount(MEMBER_ID, ACCOUNT_ID);
         verify(accountMapper, never()).setPrimary(any());
     }
     @Test
@@ -162,9 +162,77 @@ private static final String ACCOUNT_ID = "1";
         when(accountMapper.findByAccountIdForUpdate(ACCOUNT_ID)).thenReturn(null);
 
         BusinessException ex = assertThrows(BusinessException.class,
-                () -> service.disconnectAccount(ACCOUNT_ID));
+                () -> service.disconnectAccount(MEMBER_ID, ACCOUNT_ID));
         assertEquals(org.springframework.http.HttpStatus.NOT_FOUND, ex.getStatus());
         verify(accountMapper, never()).updateStatus(any(), any());
+    }
+
+    @Test
+    @DisplayName("다른 회원 소유의 계좌는 연동 해제할 수 없다(소유자 검증 없으면 accountId만으로 남의 계좌를 해제할 수 있었음)")
+    void should_throwNotFound_when_disconnectingAccountOwnedByAnotherMember() {
+        // disconnectAccount가 memberId를 받지 않고 accountId만으로 처리하면, 이 API에
+        // 접근 가능한 아무나 다른 회원의 계좌 ID로 계좌를 비활성화할 수 있었다(CodeRabbit
+        // 지적, 2026-08-08). setPrimaryAccount와 동일하게 소유자가 다르면 404로 막는다.
+        when(accountMapper.findByAccountIdForUpdate(ACCOUNT_ID))
+                .thenReturn(accountRow(ACCOUNT_ID, "9002", "ACTIVE", false));
+
+        BusinessException ex = assertThrows(BusinessException.class,
+                () -> service.disconnectAccount(MEMBER_ID, ACCOUNT_ID));
+
+        assertEquals(org.springframework.http.HttpStatus.NOT_FOUND, ex.getStatus());
+        verify(accountMapper, never()).updateStatus(any(), any());
+    }
+
+    @Test
+    @DisplayName("이미 대표 계좌가 있는 회원이 새 계좌를 isPrimary=true로 등록하면 기존 대표 계좌를 먼저 해제한다")
+    void should_clearExistingPrimary_when_registeringNewAccountAsPrimary() {
+        // setPrimaryAccount만 기존 대표를 내리고 registerAccount는 그대로 insert만 하면,
+        // 이미 대표 계좌가 있는 회원이 새 계좌를 isPrimary=true로 등록할 때 대표 계좌가
+        // 2개가 될 수 있었다(CodeRabbit 지적, 2026-08-08).
+        Map<String, Object> verification = new HashMap<>();
+        verification.put("member_id", MEMBER_ID);
+        verification.put("status", "VERIFIED");
+        verification.put("bank_code", "004");
+        verification.put("account_number", "1234567890");
+        when(accountVerificationMapper.findById(TRANSACTION_ID)).thenReturn(verification);
+        when(accountVerificationMapper.markUsedIfVerified(TRANSACTION_ID)).thenReturn(1);
+        doAnswer(invocation -> {
+            Map<String, Object> arg = invocation.getArgument(0);
+            arg.put("accountId", 99L);
+            return null;
+        }).when(accountMapper).insert(any());
+        when(accountMapper.findByAccountId("99"))
+                .thenReturn(accountRow("99", MEMBER_ID, "ACTIVE", true));
+
+        AccountResponse result = service.registerAccount(MEMBER_ID, new AccountRegisterRequest(TRANSACTION_ID, true));
+
+        assertTrue(result.getIsPrimary());
+        var inOrder = inOrder(accountMapper);
+        inOrder.verify(accountMapper).clearPrimaryByMemberId(MEMBER_ID);
+        inOrder.verify(accountMapper).insert(any());
+    }
+
+    @Test
+    @DisplayName("isPrimary를 안 넣고 계좌를 등록하면 기존 대표 계좌를 건드리지 않는다")
+    void should_notClearPrimary_when_registeringWithoutPrimaryFlag() {
+        Map<String, Object> verification = new HashMap<>();
+        verification.put("member_id", MEMBER_ID);
+        verification.put("status", "VERIFIED");
+        verification.put("bank_code", "004");
+        verification.put("account_number", "1234567890");
+        when(accountVerificationMapper.findById(TRANSACTION_ID)).thenReturn(verification);
+        when(accountVerificationMapper.markUsedIfVerified(TRANSACTION_ID)).thenReturn(1);
+        doAnswer(invocation -> {
+            Map<String, Object> arg = invocation.getArgument(0);
+            arg.put("accountId", 100L);
+            return null;
+        }).when(accountMapper).insert(any());
+        when(accountMapper.findByAccountId("100"))
+                .thenReturn(accountRow("100", MEMBER_ID, "ACTIVE", false));
+
+        service.registerAccount(MEMBER_ID, new AccountRegisterRequest(TRANSACTION_ID, null));
+
+        verify(accountMapper, never()).clearPrimaryByMemberId(any());
     }
     @Test
     @DisplayName("입금자명이 일치하고 시도 횟수가 한도 미만이면 인증에 성공한다")

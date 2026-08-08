@@ -59,8 +59,9 @@ public class AccountController {
 
     @Operation(summary = "계좌 연동 해제")
     @DeleteMapping("/{accountId}")
-    public ResponseEntity<ApiResponse<Void>> disconnect(@PathVariable String accountId) {
-        accountService.disconnectAccount(accountId);
+    public ResponseEntity<ApiResponse<Void>> disconnect(@AuthenticationPrincipal String memberId,
+                                                          @PathVariable String accountId) {
+        accountService.disconnectAccount(memberId, accountId);
         return ResponseEntity.ok(ApiResponse.success());
     }
 
