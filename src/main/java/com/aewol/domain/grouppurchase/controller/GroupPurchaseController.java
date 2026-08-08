@@ -19,7 +19,6 @@ import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
-import java.util.Map;
 
 @Tag(name = "GroupPurchase", description = "공동구매 API")
 @RestController
@@ -51,10 +50,10 @@ public class GroupPurchaseController {
                 .body(ApiResponse.created(groupPurchaseService.create(memberId, request)));
     }
 
-    @Operation(summary = "공동구매 상세")
+    @Operation(summary = "공동구매 게시글 상세보기")
     @GetMapping("/{gpId}")
-    public ResponseEntity<ApiResponse<Map<String, Object>>> detail(@PathVariable String gpId) {
-        return ResponseEntity.ok(ApiResponse.success(groupPurchaseService.getDetail(gpId)));
+    public ResponseEntity<ApiResponse<GroupPurchaseResponse>> detail(@PathVariable String gpId) {
+        return ResponseEntity.ok(ApiResponse.success("공동구매 상세 조회 성공", groupPurchaseService.getDetail(gpId)));
     }
 
     @Operation(summary = "공동구매 참여")

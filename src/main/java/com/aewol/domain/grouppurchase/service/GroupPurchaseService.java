@@ -8,12 +8,10 @@ import com.aewol.domain.grouppurchase.dto.GroupPurchaseListResponse;
 import com.aewol.domain.grouppurchase.dto.GroupPurchaseResponse;
 import org.springframework.web.multipart.MultipartFile;
 
-import java.util.Map;
-
 public interface GroupPurchaseService {
     GroupPurchaseListResponse list(String memberId, String status, String keyword, String category, int page, int size);
     GroupPurchaseResponse create(String memberId, GroupPurchaseCreateRequest request);
-    Map<String, Object> getDetail(String gpId);
+    GroupPurchaseResponse getDetail(String gpId);
     GroupPurchaseJoinResponse join(String memberId, String gpId, int quantity, GroupPurchaseJoinRequest request);
     GroupPurchaseImageUploadResponse uploadImage(MultipartFile image);
 }
