@@ -11,6 +11,11 @@ public interface TransactionMapper {
     List<Map<String, Object>> findByWalletId(@Param("walletId") String walletId,
                                               @Param("category") String category,
                                               @Param("petId") String petId);
-    List<Map<String, Object>> findRecentByWalletId(@Param("walletId") String walletId);
+    List<Map<String, Object>> findRecentByWalletId(@Param("walletId") String walletId,
+                                                    @Param("txnType") String txnType,
+                                                    @Param("limit") int limit);
     void insert(Map<String, Object> transaction);
+    int updateTag(@Param("txnId") String txnId,
+                  @Param("category") String category,
+                  @Param("petId") String petId);
 }

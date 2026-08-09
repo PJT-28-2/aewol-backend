@@ -7,7 +7,8 @@
         SELECT category, SUM(price) as total_amount, COUNT(*) as count
         FROM `transaction`
         WHERE wallet_id = #{walletId}
-          AND DATE_FORMAT(txn_date, '%Y-%m') = #{month}
+          AND txn_date &gt;= STR_TO_DATE(CONCAT(#{month}, '-01'), '%Y-%m-%d')
+          AND txn_date &lt; DATE_ADD(STR_TO_DATE(CONCAT(#{month}, '-01'), '%Y-%m-%d'), INTERVAL 1 MONTH)
           AND txn_type = 'PAYMENT'
         GROUP BY category
     </select>
@@ -17,6 +18,8 @@
         FROM `transaction` t
         WHERE t.wallet_id = #{walletId}
           AND t.txn_type = 'PAYMENT'
+          AND t.txn_date &gt;= STR_TO_DATE(CONCAT(#{yearMonth}, '-01'), '%Y-%m-%d')
+          AND t.txn_date &lt; DATE_ADD(STR_TO_DATE(CONCAT(#{yearMonth}, '-01'), '%Y-%m-%d'), INTERVAL 1 MONTH)
         <if test="petId != null and petId != ''">
             AND t.pet_id = #{petId}
         </if>

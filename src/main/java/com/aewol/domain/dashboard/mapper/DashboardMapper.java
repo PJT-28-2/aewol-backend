@@ -8,5 +8,7 @@ import java.util.Map;
 @Mapper
 public interface DashboardMapper {
     List<Map<String, Object>> getMonthlySummary(@Param("walletId") String walletId, @Param("month") String month);
-    List<Map<String, Object>> getCategoryBreakdown(@Param("walletId") String walletId, @Param("petId") String petId);
+    List<Map<String, Object>> getCategoryBreakdown(@Param("walletId") String walletId,
+                                                   @Param("petId") String petId,
+                                                   @Param("yearMonth") String yearMonth);
 }

@@ -13,8 +13,10 @@ public class TransactionResponse {
     private String txnType;
     private BigDecimal amount;
     private String category;
+    private String petId;
     private String merchantName;
     private String memo;
     private String autoTagged;
+    private String taggedBy;
     private String txnDate;
 }

@@ -22,8 +22,18 @@
     <select id="findRecentByWalletId" resultType="map">
         SELECT t.* FROM `transaction` t
         WHERE t.wallet_id = #{walletId}
+        <if test="txnType != null and txnType != ''">
+            AND t.txn_type = #{txnType}
+        </if>
         ORDER BY t.txn_date DESC, t.txn_id DESC
+        LIMIT #{limit}
     </select>
+
+    <update id="updateTag">
+        UPDATE `transaction`
+        SET category = #{category}, pet_id = #{petId}, auto_tagged = 'N'
+        WHERE txn_id = #{txnId}
+    </update>
 
     <!-- txn_id는 BIGINT AUTO_INCREMENT — 생성 키를 맵의 txnId로 돌려받는다 -->
     <insert id="insert" parameterType="map" useGeneratedKeys="true" keyProperty="txnId" keyColumn="txn_id">

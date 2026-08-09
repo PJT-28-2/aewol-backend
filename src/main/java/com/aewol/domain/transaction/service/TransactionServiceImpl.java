@@ -3,6 +3,7 @@ package com.aewol.domain.transaction.service;
 import com.aewol.common.exception.BusinessException;
 import com.aewol.domain.transaction.dto.PaymentRequest;
 import com.aewol.domain.transaction.dto.TransactionResponse;
+import com.aewol.domain.transaction.dto.TransactionTagUpdateRequest;
 import com.aewol.domain.transaction.mapper.TransactionMapper;
 import com.aewol.domain.wallet.mapper.WalletMapper;
 import lombok.RequiredArgsConstructor;
@@ -80,13 +81,17 @@ public class TransactionServiceImpl implements TransactionService {
 
     @Override
     @Transactional(readOnly = true)
-    public List<TransactionResponse> getRecentTransactions(String memberId) {
+    public List<TransactionResponse> getRecentTransactions(String memberId, String type, int limit) {
+        if (limit < 1 || limit > 20) {
+            throw new BusinessException("최근 거래 조회 개수는 1개 이상 20개 이하여야 합니다.");
+        }
+        String txnType = normalizeTransactionType(type);
         Map<String, Object> wallet = walletMapper.findByMemberId(memberId);
         if (wallet == null) {
             throw BusinessException.notFound("지갑을 찾을 수 없습니다.");
         }
         String walletId = String.valueOf(wallet.get("wallet_id"));
-        return transactionMapper.findRecentByWalletId(walletId).stream()
+        return transactionMapper.findRecentByWalletId(walletId, txnType, limit).stream()
                 .map(this::toResponse)
                 .collect(Collectors.toList());
     }
@@ -106,6 +111,26 @@ public class TransactionServiceImpl implements TransactionService {
         return toResponse(txn);
     }
 
+    @Override
+    @Transactional
+    public TransactionResponse updateTag(String memberId, String txnId, TransactionTagUpdateRequest request) {
+        TransactionResponse transaction = getTransaction(memberId, txnId);
+        if (!"PAYMENT".equals(transaction.getTxnType())) {
+            throw new BusinessException("결제 거래만 태그를 수정할 수 있습니다.");
+        }
+        if (transactionMapper.updateTag(txnId, request.getCategory(), request.getPetId()) == 0) {
+            throw BusinessException.notFound("거래를 찾을 수 없습니다.");
+        }
+        return getTransaction(memberId, txnId);
+    }
+
+    private String normalizeTransactionType(String type) {
+        if (type == null || "ALL".equalsIgnoreCase(type)) return null;
+        if ("CHARGE".equalsIgnoreCase(type)) return "DEPOSIT";
+        if ("WITHDRAW".equalsIgnoreCase(type)) return "WITHDRAW";
+        throw new BusinessException("거래 유형은 ALL, CHARGE, WITHDRAW 중 하나여야 합니다.");
+    }
+
     private TransactionResponse toResponse(Map<String, Object> txn) {
         return TransactionResponse.builder()
                 .txnId(String.valueOf(txn.get("txn_id")))
@@ -113,9 +138,11 @@ public class TransactionServiceImpl implements TransactionService {
                 .txnType((String) txn.get("txn_type"))
                 .amount((BigDecimal) txn.get("price"))
                 .category((String) txn.get("category"))
+                .petId(txn.get("pet_id") != null ? String.valueOf(txn.get("pet_id")) : null)
                 .merchantName((String) txn.get("merchant_name"))
                 .memo((String) txn.get("memo"))
                 .autoTagged((String) txn.get("auto_tagged"))
+                .taggedBy("Y".equals(txn.get("auto_tagged")) ? "AUTO" : "MANUAL")
                 .txnDate(txn.get("txn_date") != null ? txn.get("txn_date").toString() : null)
                 .build();
     }
