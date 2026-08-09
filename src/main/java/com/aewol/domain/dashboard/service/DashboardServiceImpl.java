@@ -26,8 +26,9 @@ public class DashboardServiceImpl implements DashboardService {
     @Override
     public Map<String, Object> getMonthlySummary(String memberId, String month) {
         String targetMonth = normalizeMonth(month);
-        String walletId = getWalletId(memberId);
         Map<String, Object> wallet = walletMapper.findByMemberId(memberId);
+        if (wallet == null) throw BusinessException.notFound("지갑을 찾을 수 없습니다.");
+        String walletId = String.valueOf(wallet.get("wallet_id"));
         BigDecimal currentTotal = zeroIfNull(dashboardMapper.getMonthlyTotal(walletId, targetMonth));
         String previousMonth = YearMonth.parse(targetMonth).minusMonths(1).toString();
         BigDecimal previousTotal = zeroIfNull(dashboardMapper.getMonthlyTotal(walletId, previousMonth));

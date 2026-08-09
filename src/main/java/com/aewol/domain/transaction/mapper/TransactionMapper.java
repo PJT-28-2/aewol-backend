@@ -12,10 +12,11 @@ public interface TransactionMapper {
                                               @Param("txnFilter") String txnFilter,
                                               @Param("startDate") java.time.LocalDateTime startDate,
                                               @Param("endDate") java.time.LocalDateTime endDate,
+                                              @Param("cursorDate") java.time.LocalDateTime cursorDate,
                                               @Param("cursorTxnId") Long cursorTxnId,
                                               @Param("limit") int limit);
     List<Map<String, Object>> findRecentByWalletId(@Param("walletId") String walletId,
-                                                    @Param("txnType") String txnType,
+                                                    @Param("txnFilter") String txnFilter,
                                                     @Param("limit") int limit);
     void insert(Map<String, Object> transaction);
     int updateTag(@Param("txnId") String txnId,

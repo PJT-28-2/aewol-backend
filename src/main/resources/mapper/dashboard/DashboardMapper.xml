@@ -25,15 +25,15 @@
     </select>
 
     <select id="getSpendingBreakdown" resultType="map">
-        SELECT t.category, t.pet_id, p.name AS pet_name, SUM(t.price) AS amount
+        SELECT t.category, p.pet_id, p.name AS pet_name, SUM(t.price) AS amount
         FROM `transaction` t
-        LEFT JOIN pet p ON p.pet_id = t.pet_id
+        LEFT JOIN pet p ON p.pet_id = t.pet_id AND p.is_active = 1
         WHERE t.wallet_id = #{walletId}
           AND t.txn_type = 'PAYMENT'
           AND t.txn_date &gt;= STR_TO_DATE(CONCAT(#{yearMonth}, '-01'), '%Y-%m-%d')
           AND t.txn_date &lt; DATE_ADD(STR_TO_DATE(CONCAT(#{yearMonth}, '-01'), '%Y-%m-%d'), INTERVAL 1 MONTH)
-        GROUP BY t.category, t.pet_id, p.name
-        ORDER BY t.category, amount DESC, t.pet_id
+        GROUP BY t.category, p.pet_id, p.name
+        ORDER BY t.category, amount DESC, p.pet_id
     </select>
 
 </mapper>

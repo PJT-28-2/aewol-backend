@@ -19,6 +19,8 @@ import java.time.YearMonth;
 import java.time.format.DateTimeParseException;
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -26,6 +28,9 @@ import java.util.stream.Collectors;
 @Service
 @RequiredArgsConstructor
 public class TransactionServiceImpl implements TransactionService {
+
+    private static final Pattern CURSOR_PATTERN = Pattern.compile(
+            "\\{\\\"date\\\":\\\"([^\\\"]+)\\\",\\\"id\\\":(\\d+)}");
 
     private final TransactionMapper transactionMapper;
     private final WalletMapper walletMapper;
@@ -82,7 +87,7 @@ public class TransactionServiceImpl implements TransactionService {
         }
         String txnFilter = normalizeListTransactionType(type);
         YearMonth targetMonth = parseMonth(period);
-        Long cursorTxnId = decodeCursor(cursor);
+        TransactionCursor decodedCursor = decodeCursor(cursor);
         Map<String, Object> wallet = walletMapper.findByMemberId(memberId);
         if (wallet == null) {
             throw BusinessException.notFound("지갑을 찾을 수 없습니다.");
@@ -90,12 +95,14 @@ public class TransactionServiceImpl implements TransactionService {
         String walletId = String.valueOf(wallet.get("wallet_id"));
         List<Map<String, Object>> rows = transactionMapper.findByWalletId(
                 walletId, txnFilter, targetMonth.atDay(1).atStartOfDay(),
-                targetMonth.plusMonths(1).atDay(1).atStartOfDay(), cursorTxnId, size + 1);
+                targetMonth.plusMonths(1).atDay(1).atStartOfDay(),
+                decodedCursor == null ? null : decodedCursor.date(),
+                decodedCursor == null ? null : decodedCursor.id(), size + 1);
         boolean hasNext = rows.size() > size;
         List<Map<String, Object>> pageRows = hasNext ? rows.subList(0, size) : rows;
         List<TransactionResponse> transactions = pageRows.stream()
                 .map(this::toResponse).collect(Collectors.toList());
-        String nextCursor = hasNext ? encodeCursor(pageRows.get(pageRows.size() - 1).get("txn_id")) : null;
+        String nextCursor = hasNext ? encodeCursor(pageRows.get(pageRows.size() - 1)) : null;
         return TransactionPageResponse.builder()
                 .transactions(transactions)
                 .nextCursor(nextCursor)
@@ -108,13 +115,13 @@ public class TransactionServiceImpl implements TransactionService {
         if (limit < 1 || limit > 20) {
             throw new BusinessException("최근 거래 조회 개수는 1개 이상 20개 이하여야 합니다.");
         }
-        String txnType = normalizeTransactionType(type);
+        String txnFilter = normalizeTransactionType(type);
         Map<String, Object> wallet = walletMapper.findByMemberId(memberId);
         if (wallet == null) {
             throw BusinessException.notFound("지갑을 찾을 수 없습니다.");
         }
         String walletId = String.valueOf(wallet.get("wallet_id"));
-        return transactionMapper.findRecentByWalletId(walletId, txnType, limit).stream()
+        return transactionMapper.findRecentByWalletId(walletId, txnFilter, limit).stream()
                 .map(this::toResponse)
                 .collect(Collectors.toList());
     }
@@ -153,7 +160,7 @@ public class TransactionServiceImpl implements TransactionService {
 
     private String normalizeTransactionType(String type) {
         if (type == null || "ALL".equalsIgnoreCase(type)) return null;
-        if ("CHARGE".equalsIgnoreCase(type)) return "DEPOSIT";
+        if ("CHARGE".equalsIgnoreCase(type)) return "CHARGE";
         if ("WITHDRAW".equalsIgnoreCase(type)) return "WITHDRAW";
         throw new BusinessException("거래 유형은 ALL, CHARGE, WITHDRAW 중 하나여야 합니다.");
     }
@@ -174,21 +181,25 @@ public class TransactionServiceImpl implements TransactionService {
         }
     }
 
-    private Long decodeCursor(String cursor) {
+    private TransactionCursor decodeCursor(String cursor) {
         if (cursor == null || cursor.isBlank()) return null;
         try {
             String json = new String(Base64.getDecoder().decode(cursor), StandardCharsets.UTF_8);
-            if (!json.matches("\\{\\\"id\\\":\\d+}")) throw new IllegalArgumentException();
-            return Long.valueOf(json.replaceAll("\\D", ""));
-        } catch (IllegalArgumentException exception) {
+            Matcher matcher = CURSOR_PATTERN.matcher(json);
+            if (!matcher.matches()) throw new IllegalArgumentException();
+            return new TransactionCursor(LocalDateTime.parse(matcher.group(1)), Long.valueOf(matcher.group(2)));
+        } catch (IllegalArgumentException | DateTimeParseException exception) {
             throw new BusinessException("유효하지 않은 거래 커서입니다.");
         }
     }
 
-    private String encodeCursor(Object txnId) {
-        String json = "{\"id\":" + txnId + "}";
+    private String encodeCursor(Map<String, Object> transaction) {
+        String json = "{\"date\":\"" + transaction.get("txn_date")
+                + "\",\"id\":" + transaction.get("txn_id") + "}";
         return Base64.getEncoder().encodeToString(json.getBytes(StandardCharsets.UTF_8));
     }
+
+    private record TransactionCursor(LocalDateTime date, Long id) {}
 
     private TransactionResponse toResponse(Map<String, Object> txn) {
         return TransactionResponse.builder()
