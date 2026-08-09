@@ -9,6 +9,7 @@ import com.aewol.domain.transaction.mapper.TransactionMapper;
 import com.aewol.domain.transaction.dto.TransactionTagUpdateRequest;
 import com.aewol.common.exception.BusinessException;
 import com.aewol.domain.wallet.mapper.WalletMapper;
+import com.aewol.domain.pet.mapper.PetMapper;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.HashMap;
@@ -29,12 +30,13 @@ class TransactionServiceImplTest {
     @Mock TransactionMapper transactionMapper;
     @Mock WalletMapper walletMapper;
     @Mock AutoTaggingService autoTaggingService;
+    @Mock PetMapper petMapper;
 
     @Test
     @DisplayName("반려동물을 선택해 결제하면 거래에 반려동물 태그를 직접 저장한다")
     void should_savePetId_when_paymentHasSelectedPet() {
         TransactionServiceImpl service = new TransactionServiceImpl(
-                transactionMapper, walletMapper, autoTaggingService);
+                transactionMapper, walletMapper, autoTaggingService, petMapper);
         PaymentRequest request = new PaymentRequest();
         ReflectionTestUtils.setField(request, "merchantName", "애월동물병원");
         ReflectionTestUtils.setField(request, "amount", new BigDecimal("72000"));
@@ -203,6 +205,8 @@ class TransactionServiceImplTest {
         when(transactionMapper.findById("txn-1"))
                 .thenReturn(transaction("wallet-1", "pet-1"), transaction("wallet-1", "pet-2"));
         when(walletMapper.findById("wallet-1")).thenReturn(map("member_id", "member-1"));
+        when(petMapper.findByIdAndMemberId("pet-2", "member-1"))
+                .thenReturn(map("pet_id", "pet-2"));
         when(transactionMapper.updateTag("txn-1", "FOOD", "pet-2")).thenReturn(1);
 
         service.updateTag("member-1", "txn-1", request);
@@ -210,8 +214,54 @@ class TransactionServiceImplTest {
         verify(transactionMapper).updateTag("txn-1", "FOOD", "pet-2");
     }
 
+    @Test
+    void should_returnCursorPage_when_moreTransactionsExist() {
+        TransactionServiceImpl service = service();
+        when(walletMapper.findByMemberId("member-1")).thenReturn(map("wallet_id", "wallet-1"));
+        when(transactionMapper.findByWalletId(
+                eq("wallet-1"), eq("ALL"), any(LocalDateTime.class),
+                any(LocalDateTime.class), isNull(), eq(3)))
+                .thenReturn(List.of(
+                        map("txn_id", 3L, "wallet_id", "wallet-1", "txn_type", "PAYMENT", "price", BigDecimal.ONE),
+                        map("txn_id", 2L, "wallet_id", "wallet-1", "txn_type", "PAYMENT", "price", BigDecimal.ONE),
+                        map("txn_id", 1L, "wallet_id", "wallet-1", "txn_type", "PAYMENT", "price", BigDecimal.ONE)));
+
+        var result = service.getTransactions("member-1", "ALL", "2026-08", null, 2);
+
+        assertEquals(2, result.getTransactions().size());
+        assertEquals("eyJpZCI6Mn0=", result.getNextCursor());
+    }
+
+    @Test
+    void should_throwException_when_cursorIsInvalid() {
+        TransactionServiceImpl service = service();
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.getTransactions("member-1", "ALL", "2026-08", "wrong-cursor", 20));
+
+        assertEquals("유효하지 않은 거래 커서입니다.", exception.getMessage());
+        verifyNoInteractions(walletMapper, transactionMapper);
+    }
+
+    @Test
+    void should_throwNotFound_when_tagPetDoesNotBelongToMember() {
+        TransactionServiceImpl service = service();
+        TransactionTagUpdateRequest request = new TransactionTagUpdateRequest();
+        ReflectionTestUtils.setField(request, "category", "FOOD");
+        ReflectionTestUtils.setField(request, "petId", "pet-2");
+        when(transactionMapper.findById("txn-1")).thenReturn(transaction("wallet-1", "pet-1"));
+        when(walletMapper.findById("wallet-1")).thenReturn(map("member_id", "member-1"));
+        when(petMapper.findByIdAndMemberId("pet-2", "member-1")).thenReturn(null);
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.updateTag("member-1", "txn-1", request));
+
+        assertEquals(HttpStatus.NOT_FOUND, exception.getStatus());
+        verify(transactionMapper, never()).updateTag(any(), any(), any());
+    }
+
     private TransactionServiceImpl service() {
-        return new TransactionServiceImpl(transactionMapper, walletMapper, autoTaggingService);
+        return new TransactionServiceImpl(transactionMapper, walletMapper, autoTaggingService, petMapper);
     }
 
     private static Map<String, Object> transaction(String walletId, String petId) {
