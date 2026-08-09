@@ -224,7 +224,7 @@ class GroupPurchaseServiceImplTest {
     }
 
     @Test
-    @DisplayName("취소된 공동구매는 마감 전이어도 cancelled로 응답한다")
+    @DisplayName("작성자가 취소한 공동구매는 마감 전이어도 cancelled로 응답하고, 작성자 취소 문구를 안내한다")
     void should_returnCancelled_when_groupPurchaseIsCancelled_onGetStatus() {
         GroupPurchaseServiceImpl service = service();
         Map<String, Object> gpRow = savedRow();
@@ -236,10 +236,11 @@ class GroupPurchaseServiceImplTest {
         GroupPurchaseStatusResponse result = service.getStatus("member-1", "1");
 
         assertEquals("cancelled", result.getStatus());
+        assertEquals("작성자가 취소한 공동구매입니다.", result.getNoticeMessage());
     }
 
     @Test
-    @DisplayName("마감 후 목표 수량을 못 채웠으면 cancelled로 응답한다")
+    @DisplayName("마감 후 목표 수량을 못 채웠으면 cancelled로 응답하고, 목표 미달 문구를 안내한다")
     void should_returnCancelled_when_deadlinePassedAndTargetNotReached_onGetStatus() {
         GroupPurchaseServiceImpl service = service();
         Map<String, Object> gpRow = savedRow();
@@ -251,6 +252,7 @@ class GroupPurchaseServiceImplTest {
         GroupPurchaseStatusResponse result = service.getStatus("member-1", "1");
 
         assertEquals("cancelled", result.getStatus());
+        assertEquals("목표 인원 미달로 공동구매가 취소되어 환불됩니다.", result.getNoticeMessage());
     }
 
     @Test

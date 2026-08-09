@@ -129,17 +129,20 @@ public class GroupPurchaseServiceImpl implements GroupPurchaseService {
                         .paidAt(toLocalDateTime(participant.get("paid_at")))
                         .build();
 
+        boolean ownerCancelled = "CANCELLED".equals(gp.get("status"));
+        String status = toWaitStatus(ownerCancelled, deadline, currentQuantity, targetQuantity);
+
         return GroupPurchaseStatusResponse.builder()
                 .memberId(String.valueOf(gp.get("member_id")))
                 .productName((String) gp.get("product_name"))
-                .status(toWaitStatus((String) gp.get("status"), deadline, currentQuantity, targetQuantity))
+                .status(status)
                 .currentQuantity(currentQuantity)
                 .targetQuantity(targetQuantity)
                 .deadline(deadline)
                 .unitPrice(toDecimal(gp.get("unit_price")))
                 .groupPrice(toDecimal(gp.get("group_price")))
                 .participantInfo(participantInfo)
-                .noticeMessage("목표 인원이 모두 모이면 공동구매가 최종 확정됩니다.")
+                .noticeMessage(toNoticeMessage(status, ownerCancelled))
                 .build();
     }
 
@@ -332,12 +335,13 @@ public class GroupPurchaseServiceImpl implements GroupPurchaseService {
     }
 
     /**
-     * 상태 화면 전용 waiting/confirmed/cancelled 값을 계산한다.
+     * 상태 화면 전용 waiting/confirmed/cancelled 값을 계산한다. Notion 명세가 이 3개 값만 허용하므로
+     * (작성자 취소 vs 마감 미달) 구분은 status가 아니라 noticeMessage 문구로만 표현한다.
      * 목표 수량 달성은 마감 전이라도 즉시 확정으로 보고(초과 참여는 updateQuantity에서 이미 막혀 있음),
      * 취소된 공동구매와 마감 후 미달성은 모두 cancelled로 묶는다(별도 "실패" 상태가 명세에 없음).
      */
-    private static String toWaitStatus(String dbStatus, LocalDateTime deadline, Integer currentQuantity, Integer targetQuantity) {
-        if ("CANCELLED".equals(dbStatus)) {
+    private static String toWaitStatus(boolean ownerCancelled, LocalDateTime deadline, Integer currentQuantity, Integer targetQuantity) {
+        if (ownerCancelled) {
             return "cancelled";
         }
         int current = currentQuantity == null ? 0 : currentQuantity;
@@ -349,6 +353,16 @@ public class GroupPurchaseServiceImpl implements GroupPurchaseService {
             return "cancelled";
         }
         return "waiting";
+    }
+
+    /** cancelled 상태 안에서 작성자 취소와 마감 미달을 구분해 안내 문구를 다르게 내려준다. */
+    private static String toNoticeMessage(String status, boolean ownerCancelled) {
+        if (!"cancelled".equals(status)) {
+            return "목표 인원이 모두 모이면 공동구매가 최종 확정됩니다.";
+        }
+        return ownerCancelled
+                ? "작성자가 취소한 공동구매입니다."
+                : "목표 인원 미달로 공동구매가 취소되어 환불됩니다.";
     }
 
     private static String toDDay(LocalDateTime deadline) {
