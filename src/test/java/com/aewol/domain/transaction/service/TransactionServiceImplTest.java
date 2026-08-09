@@ -6,6 +6,7 @@ import static org.mockito.Mockito.*;
 
 import com.aewol.domain.transaction.dto.PaymentRequest;
 import com.aewol.domain.transaction.mapper.TransactionMapper;
+import com.aewol.domain.transaction.dto.TransactionTagUpdateRequest;
 import com.aewol.common.exception.BusinessException;
 import com.aewol.domain.wallet.mapper.WalletMapper;
 import java.math.BigDecimal;
@@ -141,24 +142,24 @@ class TransactionServiceImplTest {
     void should_returnRecentTransactions_when_memberHasWallet() {
         TransactionServiceImpl service = service();
         when(walletMapper.findByMemberId("member-1")).thenReturn(map("wallet_id", "wallet-1"));
-        when(transactionMapper.findRecentByWalletId("wallet-1")).thenReturn(List.of(
+        when(transactionMapper.findRecentByWalletId("wallet-1", null, 4)).thenReturn(List.of(
                 transaction("wallet-1", null),
                 map("txn_id", "txn-2", "wallet_id", "wallet-1", "txn_type", "PAYMENT",
                         "price", BigDecimal.ONE, "auto_tagged", "N", "txn_date", LocalDateTime.now())));
 
-        List<?> result = service.getRecentTransactions("member-1");
+        List<?> result = service.getRecentTransactions("member-1", "ALL", 4);
 
         assertEquals(2, result.size());
-        verify(transactionMapper).findRecentByWalletId("wallet-1");
+        verify(transactionMapper).findRecentByWalletId("wallet-1", null, 4);
     }
 
     @Test
     void should_returnEmptyList_when_memberHasNoTransactions() {
         TransactionServiceImpl service = service();
         when(walletMapper.findByMemberId("member-1")).thenReturn(map("wallet_id", "wallet-1"));
-        when(transactionMapper.findRecentByWalletId("wallet-1")).thenReturn(List.of());
+        when(transactionMapper.findRecentByWalletId("wallet-1", null, 4)).thenReturn(List.of());
 
-        assertEquals(List.of(), service.getRecentTransactions("member-1"));
+        assertEquals(List.of(), service.getRecentTransactions("member-1", "ALL", 4));
     }
 
     @Test
@@ -167,10 +168,46 @@ class TransactionServiceImplTest {
         when(walletMapper.findByMemberId("member-1")).thenReturn(null);
 
         BusinessException exception = assertThrows(BusinessException.class,
-                () -> service.getRecentTransactions("member-1"));
+                () -> service.getRecentTransactions("member-1", "ALL", 4));
 
         assertEquals(HttpStatus.NOT_FOUND, exception.getStatus());
         verifyNoInteractions(transactionMapper);
+    }
+
+    @Test
+    void should_limitRecentTransactions_when_limitIsValid() {
+        TransactionServiceImpl service = service();
+        when(walletMapper.findByMemberId("member-1")).thenReturn(map("wallet_id", "wallet-1"));
+        when(transactionMapper.findRecentByWalletId("wallet-1", "DEPOSIT", 3)).thenReturn(List.of());
+
+        service.getRecentTransactions("member-1", "CHARGE", 3);
+
+        verify(transactionMapper).findRecentByWalletId("wallet-1", "DEPOSIT", 3);
+    }
+
+    @Test
+    void should_throwException_when_recentLimitExceedsMaximum() {
+        TransactionServiceImpl service = service();
+
+        assertThrows(BusinessException.class,
+                () -> service.getRecentTransactions("member-1", "ALL", 21));
+        verifyNoInteractions(walletMapper, transactionMapper);
+    }
+
+    @Test
+    void should_updateTag_when_memberOwnsPaymentTransaction() {
+        TransactionServiceImpl service = service();
+        TransactionTagUpdateRequest request = new TransactionTagUpdateRequest();
+        ReflectionTestUtils.setField(request, "category", "FOOD");
+        ReflectionTestUtils.setField(request, "petId", "pet-2");
+        when(transactionMapper.findById("txn-1"))
+                .thenReturn(transaction("wallet-1", "pet-1"), transaction("wallet-1", "pet-2"));
+        when(walletMapper.findById("wallet-1")).thenReturn(map("member_id", "member-1"));
+        when(transactionMapper.updateTag("txn-1", "FOOD", "pet-2")).thenReturn(1);
+
+        service.updateTag("member-1", "txn-1", request);
+
+        verify(transactionMapper).updateTag("txn-1", "FOOD", "pet-2");
     }
 
     private TransactionServiceImpl service() {
