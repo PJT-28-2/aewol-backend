@@ -7,6 +7,7 @@ import com.aewol.domain.grouppurchase.dto.GroupPurchaseJoinRequest;
 import com.aewol.domain.grouppurchase.dto.GroupPurchaseJoinResponse;
 import com.aewol.domain.grouppurchase.dto.GroupPurchaseListResponse;
 import com.aewol.domain.grouppurchase.dto.GroupPurchaseResponse;
+import com.aewol.domain.grouppurchase.dto.GroupPurchaseStatusResponse;
 import com.aewol.domain.grouppurchase.service.GroupPurchaseService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -54,6 +55,14 @@ public class GroupPurchaseController {
     @GetMapping("/{gpId}")
     public ResponseEntity<ApiResponse<GroupPurchaseResponse>> detail(@PathVariable String gpId) {
         return ResponseEntity.ok(ApiResponse.success("공동구매 상세 조회 성공", groupPurchaseService.getDetail(gpId)));
+    }
+
+    @Operation(summary = "공동구매 상태 화면")
+    @GetMapping("/{gpId}/status")
+    public ResponseEntity<ApiResponse<GroupPurchaseStatusResponse>> status(@AuthenticationPrincipal String memberId,
+                                                                             @PathVariable String gpId) {
+        return ResponseEntity.ok(ApiResponse.success("결제 후 대기 상태 조회 성공",
+                groupPurchaseService.getStatus(memberId, gpId)));
     }
 
     @Operation(summary = "공동구매 참여")
