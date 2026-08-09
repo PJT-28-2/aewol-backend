@@ -52,6 +52,7 @@ class DashboardServiceImplTest {
         Map<String, Object> result = service.getMonthlySummary("member-1", "2026-08");
 
         assertEquals(new BigDecimal("482600"), result.get("walletBalance"));
+        verify(walletMapper, times(1)).findByMemberId("member-1");
         Map<?, ?> monthlySpend = (Map<?, ?>) result.get("monthlySpend");
         assertEquals(new BigDecimal("120000"), monthlySpend.get("totalAmount"));
         assertEquals(20, monthlySpend.get("changeRate"));

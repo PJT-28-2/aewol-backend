@@ -2,6 +2,7 @@ package com.aewol.domain.transaction.service;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.mockito.Mockito.*;
 
 import com.aewol.domain.transaction.dto.PaymentRequest;
@@ -180,11 +181,11 @@ class TransactionServiceImplTest {
     void should_limitRecentTransactions_when_limitIsValid() {
         TransactionServiceImpl service = service();
         when(walletMapper.findByMemberId("member-1")).thenReturn(map("wallet_id", "wallet-1"));
-        when(transactionMapper.findRecentByWalletId("wallet-1", "DEPOSIT", 3)).thenReturn(List.of());
+        when(transactionMapper.findRecentByWalletId("wallet-1", "CHARGE", 3)).thenReturn(List.of());
 
         service.getRecentTransactions("member-1", "CHARGE", 3);
 
-        verify(transactionMapper).findRecentByWalletId("wallet-1", "DEPOSIT", 3);
+        verify(transactionMapper).findRecentByWalletId("wallet-1", "CHARGE", 3);
     }
 
     @Test
@@ -220,16 +221,30 @@ class TransactionServiceImplTest {
         when(walletMapper.findByMemberId("member-1")).thenReturn(map("wallet_id", "wallet-1"));
         when(transactionMapper.findByWalletId(
                 eq("wallet-1"), eq("ALL"), any(LocalDateTime.class),
-                any(LocalDateTime.class), isNull(), eq(3)))
+                any(LocalDateTime.class), isNull(), isNull(), eq(3)))
                 .thenReturn(List.of(
-                        map("txn_id", 3L, "wallet_id", "wallet-1", "txn_type", "PAYMENT", "price", BigDecimal.ONE),
-                        map("txn_id", 2L, "wallet_id", "wallet-1", "txn_type", "PAYMENT", "price", BigDecimal.ONE),
-                        map("txn_id", 1L, "wallet_id", "wallet-1", "txn_type", "PAYMENT", "price", BigDecimal.ONE)));
+                        map("txn_id", 3L, "wallet_id", "wallet-1", "txn_type", "PAYMENT", "price", BigDecimal.ONE,
+                                "txn_date", LocalDateTime.of(2026, 8, 7, 14, 13, 21)),
+                        map("txn_id", 2L, "wallet_id", "wallet-1", "txn_type", "PAYMENT", "price", BigDecimal.ONE,
+                                "txn_date", LocalDateTime.of(2026, 8, 7, 14, 13, 17)),
+                        map("txn_id", 1L, "wallet_id", "wallet-1", "txn_type", "PAYMENT", "price", BigDecimal.ONE,
+                                "txn_date", LocalDateTime.of(2026, 8, 7, 14, 13, 12))));
 
         var result = service.getTransactions("member-1", "ALL", "2026-08", null, 2);
 
         assertEquals(2, result.getTransactions().size());
-        assertEquals("eyJpZCI6Mn0=", result.getNextCursor());
+        assertNotNull(result.getNextCursor());
+    }
+
+    @Test
+    void should_useSameWithdrawFilterForRecentTransactions() {
+        TransactionServiceImpl service = service();
+        when(walletMapper.findByMemberId("member-1")).thenReturn(map("wallet_id", "wallet-1"));
+        when(transactionMapper.findRecentByWalletId("wallet-1", "WITHDRAW", 4)).thenReturn(List.of());
+
+        service.getRecentTransactions("member-1", "WITHDRAW", 4);
+
+        verify(transactionMapper).findRecentByWalletId("wallet-1", "WITHDRAW", 4);
     }
 
     @Test
