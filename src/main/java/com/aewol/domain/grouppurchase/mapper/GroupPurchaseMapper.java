@@ -15,4 +15,5 @@ public interface GroupPurchaseMapper {
     int updateQuantity(@Param("gpId") String gpId, @Param("quantity") int quantity);
     void insertParticipant(Map<String, Object> participant);
     Map<String, Object> findParticipant(@Param("gpId") String gpId, @Param("memberId") String memberId);
+    List<Map<String, Object>> findMyGroupPurchases(@Param("memberId") String memberId, @Param("status") String status);
 }

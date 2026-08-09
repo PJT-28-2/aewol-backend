@@ -6,11 +6,13 @@ import com.aewol.domain.grouppurchase.dto.GroupPurchaseImageUploadResponse;
 import com.aewol.domain.grouppurchase.dto.GroupPurchaseJoinRequest;
 import com.aewol.domain.grouppurchase.dto.GroupPurchaseJoinResponse;
 import com.aewol.domain.grouppurchase.dto.GroupPurchaseListResponse;
+import com.aewol.domain.grouppurchase.dto.GroupPurchaseMyItemResponse;
 import com.aewol.domain.grouppurchase.dto.GroupPurchaseResponse;
 import com.aewol.domain.grouppurchase.dto.GroupPurchaseStatusResponse;
 import com.aewol.domain.grouppurchase.service.GroupPurchaseService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import java.util.List;
 import javax.validation.Valid;
 import javax.validation.constraints.Positive;
 import lombok.RequiredArgsConstructor;
@@ -41,6 +43,15 @@ public class GroupPurchaseController {
             @RequestParam(defaultValue = "10") int size) {
         return ResponseEntity.ok(ApiResponse.success("공동구매 목록 조회 성공",
                 groupPurchaseService.list(memberId, status, keyword, category, page, size)));
+    }
+
+    @Operation(summary = "참여했던 공동구매 게시글 조회(마이페이지)")
+    @GetMapping("/my")
+    public ResponseEntity<ApiResponse<List<GroupPurchaseMyItemResponse>>> myList(
+            @AuthenticationPrincipal String memberId,
+            @RequestParam(required = false) String status) {
+        return ResponseEntity.ok(ApiResponse.success("나의 공동구매 목록 조회 성공",
+                groupPurchaseService.getMyList(memberId, status)));
     }
 
     @Operation(summary = "공동구매 생성")
