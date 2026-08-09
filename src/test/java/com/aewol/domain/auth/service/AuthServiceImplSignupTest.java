@@ -39,6 +39,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -59,13 +60,14 @@ class AuthServiceImplSignupTest {
     @Mock ValueOperations<String, String> valueOperations;
     @Mock EmailService emailService;
     @Mock KakaoAuthClient kakaoAuthClient;
+    @Mock AuthCredentialStore authCredentialStore;
 
     private AuthServiceImpl authService;
 
     @BeforeEach
     void setUp() {
         authService = new AuthServiceImpl(memberMapper, walletMapper, notificationSettingMapper,
-                jwtUtil, passwordEncoder, redisTemplate, emailService, kakaoAuthClient);
+                jwtUtil, passwordEncoder, redisTemplate, emailService, kakaoAuthClient, authCredentialStore);
         when(redisTemplate.opsForValue()).thenReturn(valueOperations);
         TransactionSynchronizationManager.initSynchronization();
     }
@@ -105,6 +107,8 @@ class AuthServiceImplSignupTest {
                 && Boolean.TRUE.equals(setting.get("familyShareEnabled"))
                 && Boolean.TRUE.equals(setting.get("communityEnabled"))
                 && Boolean.TRUE.equals(setting.get("marketingEnabled"))));
+        verify(jwtUtil, never()).generateAccessToken(anyString(), anyString());
+        verify(jwtUtil, never()).generateRefreshToken(anyString());
     }
 
     @Test
@@ -166,6 +170,22 @@ class AuthServiceImplSignupTest {
         verify(walletMapper, never()).insert(any());
         verify(notificationSettingMapper).upsertForRecovery(9L, false);
         verify(notificationSettingMapper, never()).insert(any());
+    }
+
+    @Test
+    void recoveryDoesNotDependOnRedisCredentialCleanup() {
+        stubCompletedVerification();
+        when(passwordEncoder.encode(anyString())).thenReturn("encoded");
+        when(memberMapper.existsActiveByEmail(EMAIL)).thenReturn(false);
+        when(memberMapper.findLatestInactiveByEmailForUpdate(EMAIL))
+                .thenReturn(inactive("LOCAL", 9L, true));
+        when(memberMapper.restoreLocalMember(any())).thenReturn(1);
+
+        SignupResponse response = authService.signup(request(false));
+
+        assertEquals(9L, response.getUserId());
+        verify(memberMapper).restoreLocalMember(any());
+        verify(notificationSettingMapper).upsertForRecovery(9L, false);
     }
 
     @Test

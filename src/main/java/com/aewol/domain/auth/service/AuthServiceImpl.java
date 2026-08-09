@@ -9,12 +9,12 @@ import com.aewol.domain.auth.dto.SignupEmailCodeRequest;
 import com.aewol.domain.auth.dto.SignupEmailCodeResponse;
 import com.aewol.domain.auth.dto.SignupEmailVerificationRequest;
 import com.aewol.domain.auth.dto.TokenResponse;
-import com.aewol.domain.auth.dto.VerifyRequest;
 import com.aewol.domain.member.mapper.MemberMapper;
 import com.aewol.domain.notification.mapper.NotificationSettingMapper;
 import com.aewol.domain.wallet.mapper.WalletMapper;
 import com.aewol.external.kakao.KakaoAuthClient;
 import com.aewol.external.smtp.EmailService;
+import io.jsonwebtoken.Claims;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.core.RedisTemplate;
@@ -27,6 +27,7 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
+import java.util.Date;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -88,6 +89,7 @@ public class AuthServiceImpl implements AuthService {
     private final RedisTemplate<String, String> redisTemplate;
     private final EmailService emailService;
     private final KakaoAuthClient kakaoAuthClient;
+    private final AuthCredentialStore authCredentialStore;
 
     @Override
     public SignupEmailCodeResponse sendSignupVerificationCode(SignupEmailCodeRequest request) {
@@ -166,45 +168,13 @@ public class AuthServiceImpl implements AuthService {
     }
 
     @Override
-    @Transactional
-    public TokenResponse verifyEmail(VerifyRequest request) {
-        String storedCode = redisTemplate.opsForValue().get("verify:" + request.getEmail());
-        if (storedCode == null) {
-            throw new BusinessException(HttpStatus.BAD_REQUEST, "인증코드가 만료되었습니다.");
-        }
-        if (!storedCode.equals(request.getCode())) {
-            throw new BusinessException(HttpStatus.BAD_REQUEST, "인증코드가 일치하지 않습니다.");
-        }
-
-        Map<String, Object> member = memberMapper.findByEmail(request.getEmail());
-        if (member == null) {
-            throw BusinessException.notFound("회원 정보를 찾을 수 없습니다.");
-        }
-
-        String memberId = String.valueOf(member.get("member_id")); // V3에서 member_id가 BIGINT로 전환되어 Long이 반환됨
-
-        // 이메일 인증 완료 처리
-        memberMapper.markEmailVerified(memberId);
-
-        // MAIN 지갑 자동 생성 (wallet_id는 AUTO_INCREMENT)
-        Map<String, Object> wallet = new HashMap<>();
-        wallet.put("memberId", memberId);
-        wallet.put("walletType", "MAIN");
-        wallet.put("balance", 0);
-        walletMapper.insert(wallet);
-
-        redisTemplate.delete("verify:" + request.getEmail());
-
-        return generateTokens(memberId, "USER");
-    }
-
-    @Override
     public TokenResponse login(LoginRequest request) {
-        Map<String, Object> member = memberMapper.findByEmail(request.getEmail());
+        Map<String, Object> member = memberMapper.findActiveByEmail(request.getEmail());
         if (member == null) {
             throw BusinessException.unauthorized("이메일 또는 비밀번호가 잘못되었습니다.");
         }
 
+        String memberId = String.valueOf(member.get("member_id"));
         String storedPassword = (String) member.get("password");
         if (storedPassword == null || !passwordEncoder.matches(request.getPassword(), storedPassword)) {
             throw BusinessException.unauthorized("이메일 또는 비밀번호가 잘못되었습니다.");
@@ -214,7 +184,6 @@ public class AuthServiceImpl implements AuthService {
             throw new BusinessException(HttpStatus.FORBIDDEN, "이메일 인증이 필요합니다.");
         }
 
-        String memberId = String.valueOf(member.get("member_id")); // V3에서 member_id가 BIGINT로 전환되어 Long이 반환됨
         String role = (String) member.get("role");
         return generateTokens(memberId, role);
     }
@@ -228,14 +197,20 @@ public class AuthServiceImpl implements AuthService {
 
         String kakaoId = String.valueOf(profile.get("id"));
         Map<String, Object> kakaoAccount = (Map<String, Object>) profile.get("kakao_account");
-        String email = kakaoAccount != null ? (String) kakaoAccount.get("email") : null;
+        String email = normalizeKakaoEmail(
+                kakaoAccount != null ? (String) kakaoAccount.get("email") : null);
         Map<String, Object> profileInfo = kakaoAccount != null ? (Map<String, Object>) kakaoAccount.get("profile") : null;
         String nickname = profileInfo != null ? (String) profileInfo.get("nickname") : "카카오유저";
 
-        Map<String, Object> existingMember = email != null ? memberMapper.findByEmail(email) : null;
+        Map<String, Object> existingMember = memberMapper.findActiveKakaoByIdentity(email, kakaoId);
 
         String memberId;
         if (existingMember == null) {
+            // 탈퇴한 동일 카카오 계정이나 이메일이 있으면 토큰 발급과 신규 계정 생성을 모두 막는다.
+            if (memberMapper.existsInactiveByKakaoIdentity(email, kakaoId)
+                    || (email != null && memberMapper.existsActiveByEmail(email))) {
+                throw BusinessException.unauthorized("카카오 로그인에 실패했습니다.");
+            }
             Map<String, Object> member = new HashMap<>();
             member.put("email", email != null ? email : kakaoId + "@kakao.user");
             member.put("password", null);
@@ -271,31 +246,29 @@ public class AuthServiceImpl implements AuthService {
             throw BusinessException.unauthorized("유효하지 않은 리프레시 토큰입니다.");
         }
 
-        String memberId = jwtUtil.getSubject(refreshToken);
-        String storedToken = redisTemplate.opsForValue().get("refresh:" + memberId);
-        if (storedToken == null || !storedToken.equals(refreshToken)) {
+        Claims claims = jwtUtil.parseClaims(refreshToken);
+        if (!jwtUtil.isRefreshToken(claims)) {
+            throw BusinessException.unauthorized("유효하지 않은 리프레시 토큰입니다.");
+        }
+        String memberId = claims.getSubject();
+        Map<String, Object> member = memberMapper.findAuthStateById(memberId);
+        if (!canUseToken(member, claims.getIssuedAt())) {
             throw BusinessException.unauthorized("리프레시 토큰이 만료되었습니다.");
         }
-
-        Map<String, Object> member = memberMapper.findById(memberId);
-        String role = member != null ? (String) member.get("role") : "USER";
-
-        redisTemplate.delete("refresh:" + memberId);
-        return generateTokens(memberId, role);
+        String role = (String) member.get("role");
+        String accessToken = jwtUtil.generateAccessToken(memberId, role);
+        String newRefreshToken = jwtUtil.generateRefreshToken(memberId);
+        if (!authCredentialStore.rotateRefreshAtomically(
+                memberId, refreshToken, newRefreshToken)) {
+            throw BusinessException.unauthorized("리프레시 토큰이 만료되었습니다.");
+        }
+        return tokenResponse(accessToken, newRefreshToken);
     }
 
     @Override
     public void logout(String memberId) {
         redisTemplate.delete("refresh:" + memberId);
-        log.info("로그아웃 완료 - memberId: {}", memberId);
-    }
-
-    @Override
-    @Transactional
-    public void withdraw(String memberId) {
-        // soft delete — 실제 삭제 대신 비활성화 등 처리
-        log.info("회원 탈퇴 처리 - memberId: {}", memberId);
-        redisTemplate.delete("refresh:" + memberId);
+        log.info("로그아웃이 완료되었습니다.");
     }
 
     private void validateCompletedVerification(String completedValue, String requestedCode) {
@@ -449,20 +422,46 @@ public class AuthServiceImpl implements AuthService {
         return result instanceof Number && ((Number) result).intValue() == 1;
     }
 
+    private boolean isActive(Object value) {
+        if (value instanceof Boolean) {
+            return (Boolean) value;
+        }
+        return value instanceof Number && ((Number) value).intValue() == 1;
+    }
+
     private TokenResponse generateTokens(String memberId, String role) {
         String accessToken = jwtUtil.generateAccessToken(memberId, role);
         String refreshToken = jwtUtil.generateRefreshToken(memberId);
+        authCredentialStore.storeRefresh(memberId, refreshToken);
 
-        // Redis에 Refresh Token 저장 (RTR)
-        redisTemplate.opsForValue().set(
-                "refresh:" + memberId, refreshToken,
-                jwtUtil.getRefreshTokenExpiry(), TimeUnit.MILLISECONDS
-        );
+        return tokenResponse(accessToken, refreshToken);
+    }
 
+    private boolean canUseToken(Map<String, Object> member, Date issuedAt) {
+        if (member == null || !isActive(member.get("is_active")) || issuedAt == null) {
+            return false;
+        }
+        Object withdrawnAtEpoch = member.get("withdrawn_at_epoch");
+        if (withdrawnAtEpoch == null) {
+            return true;
+        }
+        // 마지막 탈퇴 시각과 같거나 이전에 발급된 Refresh Token은 복구 후에도 거절한다.
+        return issuedAt.getTime() / 1000L > ((Number) withdrawnAtEpoch).longValue();
+    }
+
+    private TokenResponse tokenResponse(String accessToken, String refreshToken) {
         return TokenResponse.builder()
                 .accessToken(accessToken)
                 .refreshToken(refreshToken)
                 .build();
+    }
+
+    private String normalizeKakaoEmail(String email) {
+        if (email == null) {
+            return null;
+        }
+        String normalized = email.trim();
+        return normalized.isEmpty() ? null : normalized;
     }
 
     private String generateVerificationCode() {
