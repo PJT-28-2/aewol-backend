@@ -221,6 +221,7 @@ class GroupPurchaseServiceImplTest {
         GroupPurchaseStatusResponse result = service.getStatus("member-1", "1");
 
         assertEquals("confirmed", result.getStatus());
+        assertEquals("목표 인원이 모두 모여 공동구매가 확정되었습니다.", result.getNoticeMessage());
     }
 
     @Test

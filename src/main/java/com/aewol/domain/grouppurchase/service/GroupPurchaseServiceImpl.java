@@ -355,14 +355,15 @@ public class GroupPurchaseServiceImpl implements GroupPurchaseService {
         return "waiting";
     }
 
-    /** cancelled 상태 안에서 작성자 취소와 마감 미달을 구분해 안내 문구를 다르게 내려준다. */
+    /** confirmed와 cancelled(작성자 취소/마감 미달)를 각각 다른 문구로 안내한다. */
     private static String toNoticeMessage(String status, boolean ownerCancelled) {
-        if (!"cancelled".equals(status)) {
-            return "목표 인원이 모두 모이면 공동구매가 최종 확정됩니다.";
-        }
-        return ownerCancelled
-                ? "작성자가 취소한 공동구매입니다."
-                : "목표 인원 미달로 공동구매가 취소되어 환불됩니다.";
+        return switch (status) {
+            case "confirmed" -> "목표 인원이 모두 모여 공동구매가 확정되었습니다.";
+            case "cancelled" -> ownerCancelled
+                    ? "작성자가 취소한 공동구매입니다."
+                    : "목표 인원 미달로 공동구매가 취소되어 환불됩니다.";
+            default -> "목표 인원이 모두 모이면 공동구매가 최종 확정됩니다.";
+        };
     }
 
     private static String toDDay(LocalDateTime deadline) {
