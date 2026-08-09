@@ -99,10 +99,10 @@ public class GroupPurchaseServiceImpl implements GroupPurchaseService {
     }
 
     @Override
-    public Map<String, Object> getDetail(String gpId) {
+    public GroupPurchaseResponse getDetail(String gpId) {
         Map<String, Object> gp = groupPurchaseMapper.findById(gpId);
         if (gp == null) throw BusinessException.notFound("공동구매를 찾을 수 없습니다.");
-        return gp;
+        return toResponse(gp);
     }
 
     @Override
