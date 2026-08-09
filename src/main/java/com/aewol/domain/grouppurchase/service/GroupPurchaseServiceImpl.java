@@ -400,12 +400,15 @@ public class GroupPurchaseServiceImpl implements GroupPurchaseService {
         if ("CANCELLED".equals(dbStatus)) {
             return "CANCELLED";
         }
-        if (deadline == null || !deadline.isBefore(LocalDateTime.now())) {
-            return "OPEN";
-        }
         int current = currentQuantity == null ? 0 : currentQuantity;
         int target = targetQuantity == null ? 0 : targetQuantity;
-        return current >= target ? "COMPLETED" : "CANCELLED";
+        if (current >= target) {
+            return "COMPLETED";
+        }
+        if (deadline != null && deadline.isBefore(LocalDateTime.now())) {
+            return "CANCELLED";
+        }
+        return "OPEN";
     }
 
     private static String toDDay(LocalDateTime deadline) {

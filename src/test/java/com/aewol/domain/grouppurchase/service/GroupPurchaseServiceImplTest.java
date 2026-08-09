@@ -11,6 +11,7 @@ import com.aewol.domain.grouppurchase.dto.GroupPurchaseJoinRequest;
 import com.aewol.domain.grouppurchase.dto.GroupPurchaseJoinResponse;
 import com.aewol.domain.grouppurchase.dto.GroupPurchaseListItemResponse;
 import com.aewol.domain.grouppurchase.dto.GroupPurchaseListResponse;
+import com.aewol.domain.grouppurchase.dto.GroupPurchaseMyItemResponse;
 import com.aewol.domain.grouppurchase.dto.GroupPurchaseResponse;
 import com.aewol.domain.grouppurchase.dto.GroupPurchaseStatusResponse;
 import com.aewol.domain.grouppurchase.mapper.GroupPurchaseMapper;
@@ -267,6 +268,101 @@ class GroupPurchaseServiceImplTest {
 
         assertEquals(org.springframework.http.HttpStatus.NOT_FOUND, exception.getStatus());
         assertEquals("공동구매를 찾을 수 없습니다.", exception.getMessage());
+    }
+
+    @Test
+    @DisplayName("마감 전이면 저장된 status와 무관하게 OPEN으로 응답한다")
+    void should_returnOpen_when_deadlineNotPassed_onGetMyList() {
+        GroupPurchaseServiceImpl service = service();
+        LocalDateTime futureDeadline = LocalDateTime.now().plusDays(5);
+        when(groupPurchaseMapper.findMyGroupPurchases("member-1", null))
+                .thenReturn(List.of(listRow(1L, "OPEN", futureDeadline, 30000, 25000, 3, 10)));
+
+        List<GroupPurchaseMyItemResponse> result = service.getMyList("member-1", null);
+
+        assertEquals(1, result.size());
+        GroupPurchaseMyItemResponse item = result.get(0);
+        assertEquals(1L, item.getGpId());
+        assertEquals(3L, item.getMemberId());
+        assertEquals("사료 5kg", item.getProductName());
+        assertEquals("OPEN", item.getStatus());
+        assertEquals(3, item.getCurrentQuantity());
+        assertEquals(10, item.getTargetQuantity());
+        assertEquals(futureDeadline, item.getDeadline());
+    }
+
+    @Test
+    @DisplayName("마감 후 목표 수량을 채웠으면 COMPLETED로 응답한다")
+    void should_returnCompleted_when_deadlinePassedAndTargetReached_onGetMyList() {
+        GroupPurchaseServiceImpl service = service();
+        LocalDateTime pastDeadline = LocalDateTime.now().minusDays(1);
+        when(groupPurchaseMapper.findMyGroupPurchases("member-1", null))
+                .thenReturn(List.of(listRow(1L, "OPEN", pastDeadline, 30000, 25000, 10, 10)));
+
+        List<GroupPurchaseMyItemResponse> result = service.getMyList("member-1", null);
+
+        assertEquals("COMPLETED", result.get(0).getStatus());
+    }
+
+    @Test
+    @DisplayName("마감 전이어도 목표 수량을 채웠으면 COMPLETED로 응답한다")
+    void should_returnCompleted_when_targetQuantityReachedBeforeDeadline_onGetMyList() {
+        GroupPurchaseServiceImpl service = service();
+        LocalDateTime futureDeadline = LocalDateTime.now().plusDays(5);
+        when(groupPurchaseMapper.findMyGroupPurchases("member-1", null))
+                .thenReturn(List.of(listRow(1L, "OPEN", futureDeadline, 30000, 25000, 10, 10)));
+
+        List<GroupPurchaseMyItemResponse> result = service.getMyList("member-1", null);
+
+        assertEquals("COMPLETED", result.get(0).getStatus());
+    }
+
+    @Test
+    @DisplayName("마감 후 목표 수량을 못 채웠으면 CANCELLED로 응답한다")
+    void should_returnCancelled_when_deadlinePassedAndTargetNotReached_onGetMyList() {
+        GroupPurchaseServiceImpl service = service();
+        LocalDateTime pastDeadline = LocalDateTime.now().minusDays(1);
+        when(groupPurchaseMapper.findMyGroupPurchases("member-1", null))
+                .thenReturn(List.of(listRow(1L, "OPEN", pastDeadline, 30000, 25000, 4, 10)));
+
+        List<GroupPurchaseMyItemResponse> result = service.getMyList("member-1", null);
+
+        assertEquals("CANCELLED", result.get(0).getStatus());
+    }
+
+    @Test
+    @DisplayName("작성자가 취소했으면 마감 전이어도 CANCELLED로 응답한다")
+    void should_returnCancelled_when_groupPurchaseIsCancelled_onGetMyList() {
+        GroupPurchaseServiceImpl service = service();
+        LocalDateTime futureDeadline = LocalDateTime.now().plusDays(5);
+        when(groupPurchaseMapper.findMyGroupPurchases("member-1", null))
+                .thenReturn(List.of(listRow(1L, "CANCELLED", futureDeadline, 30000, 25000, 2, 10)));
+
+        List<GroupPurchaseMyItemResponse> result = service.getMyList("member-1", null);
+
+        assertEquals("CANCELLED", result.get(0).getStatus());
+    }
+
+    @Test
+    @DisplayName("status 필터를 매퍼에 그대로 전달한다")
+    void should_passStatusFilter_toMapper_onGetMyList() {
+        GroupPurchaseServiceImpl service = service();
+        when(groupPurchaseMapper.findMyGroupPurchases("member-1", "CANCELLED")).thenReturn(List.of());
+
+        service.getMyList("member-1", "CANCELLED");
+
+        verify(groupPurchaseMapper).findMyGroupPurchases("member-1", "CANCELLED");
+    }
+
+    @Test
+    @DisplayName("결과가 없으면 빈 목록을 반환한다")
+    void should_returnEmptyList_when_noRowsMatch_onGetMyList() {
+        GroupPurchaseServiceImpl service = service();
+        when(groupPurchaseMapper.findMyGroupPurchases("member-1", null)).thenReturn(List.of());
+
+        List<GroupPurchaseMyItemResponse> result = service.getMyList("member-1", null);
+
+        assertTrue(result.isEmpty());
     }
 
     @Test
