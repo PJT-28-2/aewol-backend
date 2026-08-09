@@ -8,6 +8,7 @@ import com.aewol.domain.grouppurchase.dto.GroupPurchaseJoinRequest;
 import com.aewol.domain.grouppurchase.dto.GroupPurchaseJoinResponse;
 import com.aewol.domain.grouppurchase.dto.GroupPurchaseListItemResponse;
 import com.aewol.domain.grouppurchase.dto.GroupPurchaseListResponse;
+import com.aewol.domain.grouppurchase.dto.GroupPurchaseMyItemResponse;
 import com.aewol.domain.grouppurchase.dto.GroupPurchaseResponse;
 import com.aewol.domain.grouppurchase.dto.GroupPurchaseStatusParticipantResponse;
 import com.aewol.domain.grouppurchase.dto.GroupPurchaseStatusResponse;
@@ -144,6 +145,13 @@ public class GroupPurchaseServiceImpl implements GroupPurchaseService {
                 .participantInfo(participantInfo)
                 .noticeMessage(toNoticeMessage(status, ownerCancelled))
                 .build();
+    }
+
+    @Override
+    public List<GroupPurchaseMyItemResponse> getMyList(String memberId, String status) {
+        return groupPurchaseMapper.findMyGroupPurchases(memberId, status).stream()
+                .map(this::toMyItemResponse)
+                .collect(Collectors.toList());
     }
 
     @Override
@@ -364,6 +372,40 @@ public class GroupPurchaseServiceImpl implements GroupPurchaseService {
                     : "목표 인원 미달로 공동구매가 취소되어 환불됩니다.";
             default -> "목표 인원이 모두 모이면 공동구매가 최종 확정됩니다.";
         };
+    }
+
+    private GroupPurchaseMyItemResponse toMyItemResponse(Map<String, Object> gp) {
+        LocalDateTime deadline = toLocalDateTime(gp.get("deadline"));
+        Integer currentQuantity = toInt(gp.get("current_quantity"));
+        Integer targetQuantity = toInt(gp.get("target_quantity"));
+        return GroupPurchaseMyItemResponse.builder()
+                .gpId(toLong(gp.get("gp_id")))
+                .memberId(toLong(gp.get("member_id")))
+                .productName((String) gp.get("product_name"))
+                .status(toMyStatus((String) gp.get("status"), deadline, currentQuantity, targetQuantity))
+                .currentQuantity(currentQuantity)
+                .targetQuantity(targetQuantity)
+                .deadline(deadline)
+                .createdAt(toLocalDateTime(gp.get("created_at")))
+                .build();
+    }
+
+    /**
+     * 마이페이지 목록 전용 OPEN/COMPLETED/CANCELLED 값을 계산한다. DB status 컬럼은 실제로 OPEN/CANCELLED만
+     * 저장되므로(COMPLETED/CLOSED는 findList처럼 계산값), 여기서도 저장값을 그대로 내려주지 않고
+     * computeDisplayStatus/toWaitStatus와 동일한 마감시각·목표수량 기준으로 판정한다.
+     * 목록 화면이라 7번(getStatus)처럼 취소 사유를 세분화하지 않고 마감 후 미달성도 CANCELLED로 묶는다.
+     */
+    private static String toMyStatus(String dbStatus, LocalDateTime deadline, Integer currentQuantity, Integer targetQuantity) {
+        if ("CANCELLED".equals(dbStatus)) {
+            return "CANCELLED";
+        }
+        if (deadline == null || !deadline.isBefore(LocalDateTime.now())) {
+            return "OPEN";
+        }
+        int current = currentQuantity == null ? 0 : currentQuantity;
+        int target = targetQuantity == null ? 0 : targetQuantity;
+        return current >= target ? "COMPLETED" : "CANCELLED";
     }
 
     private static String toDDay(LocalDateTime deadline) {
