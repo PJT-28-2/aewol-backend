@@ -30,9 +30,9 @@ public class DashboardController {
     @GetMapping("/category")
     public ResponseEntity<ApiResponse<Map<String, Object>>> getByCategory(
             @AuthenticationPrincipal String memberId,
-            @RequestParam(required = false) String petId,
+            @RequestParam(defaultValue = "CATEGORY") String groupBy,
             @RequestParam(required = false) String yearMonth) {
         return ResponseEntity.ok(ApiResponse.success(
-                dashboardService.getCategoryBreakdown(memberId, petId, yearMonth)));
+                dashboardService.getCategoryBreakdown(memberId, groupBy, yearMonth)));
     }
 }

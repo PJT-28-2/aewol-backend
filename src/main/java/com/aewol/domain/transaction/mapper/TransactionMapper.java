@@ -9,8 +9,11 @@ import java.util.Map;
 public interface TransactionMapper {
     Map<String, Object> findById(@Param("txnId") String txnId);
     List<Map<String, Object>> findByWalletId(@Param("walletId") String walletId,
-                                              @Param("category") String category,
-                                              @Param("petId") String petId);
+                                              @Param("txnFilter") String txnFilter,
+                                              @Param("startDate") java.time.LocalDateTime startDate,
+                                              @Param("endDate") java.time.LocalDateTime endDate,
+                                              @Param("cursorTxnId") Long cursorTxnId,
+                                              @Param("limit") int limit);
     List<Map<String, Object>> findRecentByWalletId(@Param("walletId") String walletId,
                                                     @Param("txnType") String txnType,
                                                     @Param("limit") int limit);

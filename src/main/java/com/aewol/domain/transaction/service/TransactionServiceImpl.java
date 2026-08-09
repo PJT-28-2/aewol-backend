@@ -4,6 +4,8 @@ import com.aewol.common.exception.BusinessException;
 import com.aewol.domain.transaction.dto.PaymentRequest;
 import com.aewol.domain.transaction.dto.TransactionResponse;
 import com.aewol.domain.transaction.dto.TransactionTagUpdateRequest;
+import com.aewol.domain.transaction.dto.TransactionPageResponse;
+import com.aewol.domain.pet.mapper.PetMapper;
 import com.aewol.domain.transaction.mapper.TransactionMapper;
 import com.aewol.domain.wallet.mapper.WalletMapper;
 import lombok.RequiredArgsConstructor;
@@ -13,6 +15,10 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
+import java.time.YearMonth;
+import java.time.format.DateTimeParseException;
+import java.nio.charset.StandardCharsets;
+import java.util.Base64;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -24,6 +30,7 @@ public class TransactionServiceImpl implements TransactionService {
     private final TransactionMapper transactionMapper;
     private final WalletMapper walletMapper;
     private final AutoTaggingService autoTaggingService;
+    private final PetMapper petMapper;
 
     @Override
     @Transactional
@@ -68,15 +75,31 @@ public class TransactionServiceImpl implements TransactionService {
     }
 
     @Override
-    public List<TransactionResponse> getTransactions(String memberId, String category, String petId) {
+    public TransactionPageResponse getTransactions(String memberId, String type, String period,
+                                                    String cursor, int size) {
+        if (size < 1 || size > 100) {
+            throw new BusinessException("거래 조회 개수는 1개 이상 100개 이하여야 합니다.");
+        }
+        String txnFilter = normalizeListTransactionType(type);
+        YearMonth targetMonth = parseMonth(period);
+        Long cursorTxnId = decodeCursor(cursor);
         Map<String, Object> wallet = walletMapper.findByMemberId(memberId);
         if (wallet == null) {
             throw BusinessException.notFound("지갑을 찾을 수 없습니다.");
         }
         String walletId = String.valueOf(wallet.get("wallet_id"));
-        return transactionMapper.findByWalletId(walletId, category, petId).stream()
-                .map(this::toResponse)
-                .collect(Collectors.toList());
+        List<Map<String, Object>> rows = transactionMapper.findByWalletId(
+                walletId, txnFilter, targetMonth.atDay(1).atStartOfDay(),
+                targetMonth.plusMonths(1).atDay(1).atStartOfDay(), cursorTxnId, size + 1);
+        boolean hasNext = rows.size() > size;
+        List<Map<String, Object>> pageRows = hasNext ? rows.subList(0, size) : rows;
+        List<TransactionResponse> transactions = pageRows.stream()
+                .map(this::toResponse).collect(Collectors.toList());
+        String nextCursor = hasNext ? encodeCursor(pageRows.get(pageRows.size() - 1).get("txn_id")) : null;
+        return TransactionPageResponse.builder()
+                .transactions(transactions)
+                .nextCursor(nextCursor)
+                .build();
     }
 
     @Override
@@ -118,6 +141,10 @@ public class TransactionServiceImpl implements TransactionService {
         if (!"PAYMENT".equals(transaction.getTxnType())) {
             throw new BusinessException("결제 거래만 태그를 수정할 수 있습니다.");
         }
+        if (request.getPetId() != null
+                && petMapper.findByIdAndMemberId(request.getPetId(), memberId) == null) {
+            throw BusinessException.notFound("반려동물을 찾을 수 없습니다.");
+        }
         if (transactionMapper.updateTag(txnId, request.getCategory(), request.getPetId()) == 0) {
             throw BusinessException.notFound("거래를 찾을 수 없습니다.");
         }
@@ -129,6 +156,38 @@ public class TransactionServiceImpl implements TransactionService {
         if ("CHARGE".equalsIgnoreCase(type)) return "DEPOSIT";
         if ("WITHDRAW".equalsIgnoreCase(type)) return "WITHDRAW";
         throw new BusinessException("거래 유형은 ALL, CHARGE, WITHDRAW 중 하나여야 합니다.");
+    }
+
+    private String normalizeListTransactionType(String type) {
+        if (type == null || "ALL".equalsIgnoreCase(type)) return "ALL";
+        if ("CHARGE".equalsIgnoreCase(type)) return "CHARGE";
+        if ("WITHDRAW".equalsIgnoreCase(type)) return "WITHDRAW";
+        throw new BusinessException("거래 유형은 ALL, CHARGE, WITHDRAW 중 하나여야 합니다.");
+    }
+
+    private YearMonth parseMonth(String period) {
+        if (period == null || period.isBlank()) return YearMonth.now();
+        try {
+            return YearMonth.parse(period);
+        } catch (DateTimeParseException exception) {
+            throw new BusinessException("조회 기간은 yyyy-MM 형식이어야 합니다.");
+        }
+    }
+
+    private Long decodeCursor(String cursor) {
+        if (cursor == null || cursor.isBlank()) return null;
+        try {
+            String json = new String(Base64.getDecoder().decode(cursor), StandardCharsets.UTF_8);
+            if (!json.matches("\\{\\\"id\\\":\\d+}")) throw new IllegalArgumentException();
+            return Long.valueOf(json.replaceAll("\\D", ""));
+        } catch (IllegalArgumentException exception) {
+            throw new BusinessException("유효하지 않은 거래 커서입니다.");
+        }
+    }
+
+    private String encodeCursor(Object txnId) {
+        String json = "{\"id\":" + txnId + "}";
+        return Base64.getEncoder().encodeToString(json.getBytes(StandardCharsets.UTF_8));
     }
 
     private TransactionResponse toResponse(Map<String, Object> txn) {
@@ -144,6 +203,7 @@ public class TransactionServiceImpl implements TransactionService {
                 .autoTagged((String) txn.get("auto_tagged"))
                 .taggedBy("Y".equals(txn.get("auto_tagged")) ? "AUTO" : "MANUAL")
                 .txnDate(txn.get("txn_date") != null ? txn.get("txn_date").toString() : null)
+                .paymentMethod("애월 통합 지갑")
                 .build();
     }
 }
