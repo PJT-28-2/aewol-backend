@@ -15,6 +15,7 @@ public interface WalletMapper {
     Map<String, Object> findById(@Param("walletId") String walletId);
     void insert(Map<String, Object> wallet);
     void updateBalance(@Param("walletId") String walletId, @Param("balance") BigDecimal balance);
+    int addBalance(@Param("walletId") String walletId, @Param("amount") BigDecimal amount);
 
     /**
      * 잔액 조회 후 절대값을 저장하는 방식은 동시 결제에서 갱신 유실이 발생한다.

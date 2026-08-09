@@ -22,7 +22,7 @@ public class DashboardController {
     @GetMapping("/summary")
     public ResponseEntity<ApiResponse<Map<String, Object>>> getSummary(
             @AuthenticationPrincipal String memberId,
-            @RequestParam(defaultValue = "#{T(java.time.YearMonth).now().toString()}") String month) {
+            @RequestParam(required = false) String month) {
         return ResponseEntity.ok(ApiResponse.success(dashboardService.getMonthlySummary(memberId, month)));
     }
 
@@ -30,7 +30,9 @@ public class DashboardController {
     @GetMapping("/category")
     public ResponseEntity<ApiResponse<Map<String, Object>>> getByCategory(
             @AuthenticationPrincipal String memberId,
-            @RequestParam(required = false) String petId) {
-        return ResponseEntity.ok(ApiResponse.success(dashboardService.getCategoryBreakdown(memberId, petId)));
+            @RequestParam(defaultValue = "CATEGORY") String groupBy,
+            @RequestParam(required = false) String yearMonth) {
+        return ResponseEntity.ok(ApiResponse.success(
+                dashboardService.getCategoryBreakdown(memberId, groupBy, yearMonth)));
     }
 }

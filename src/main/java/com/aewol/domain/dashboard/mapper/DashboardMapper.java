@@ -7,6 +7,10 @@ import java.util.Map;
 
 @Mapper
 public interface DashboardMapper {
-    List<Map<String, Object>> getMonthlySummary(@Param("walletId") String walletId, @Param("month") String month);
-    List<Map<String, Object>> getCategoryBreakdown(@Param("walletId") String walletId, @Param("petId") String petId);
+    java.math.BigDecimal getMonthlyTotal(@Param("walletId") String walletId,
+                                         @Param("month") String month);
+    List<Map<String, Object>> getPetMonthlySummary(@Param("walletId") String walletId,
+                                                   @Param("month") String month);
+    List<Map<String, Object>> getSpendingBreakdown(@Param("walletId") String walletId,
+                                                   @Param("yearMonth") String yearMonth);
 }
