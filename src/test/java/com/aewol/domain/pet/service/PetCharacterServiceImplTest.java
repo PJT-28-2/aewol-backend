@@ -6,7 +6,7 @@ import static org.mockito.Mockito.*;
 
 import com.aewol.common.exception.BusinessException;
 import com.aewol.common.util.ChromaKeyRemover;
-import com.aewol.common.util.FileUtil;
+import com.aewol.common.storage.FileStorage;
 import com.aewol.common.util.RedisRateLimiter;
 import com.aewol.domain.pet.dto.PetCharacterResponse;
 import com.aewol.domain.pet.mapper.PetMapper;
@@ -30,7 +30,7 @@ class PetCharacterServiceImplTest {
 
     @Mock GeminiImageClient geminiImageClient;
     @Mock ChromaKeyRemover chromaKeyRemover;
-    @Mock FileUtil fileUtil;
+    @Mock FileStorage fileStorage;
     @Mock PetMapper petMapper;
     @Mock RedisRateLimiter rateLimiter;
 
@@ -39,7 +39,7 @@ class PetCharacterServiceImplTest {
     @BeforeEach
     void setUp() {
         service = new PetCharacterServiceImpl(
-                geminiImageClient, chromaKeyRemover, fileUtil, petMapper, rateLimiter);
+                geminiImageClient, chromaKeyRemover, fileStorage, petMapper, rateLimiter);
         ReflectionTestUtils.setField(service, "dailyLimit", 5);
     }
 
@@ -53,14 +53,15 @@ class PetCharacterServiceImplTest {
                 .thenReturn("fullbody".getBytes(), "profile".getBytes());
         when(chromaKeyRemover.removeGreenBackground(any()))
                 .thenAnswer(invocation -> invocation.getArgument(0));
-        when(fileUtil.uploadBytes(any(), eq("pet-character"), eq("png")))
-                .thenReturn("/uploads/pet-character/full.png", "/uploads/pet-character/face.png");
+        when(fileStorage.store(any(), eq("pet-character"), eq("png")))
+                .thenReturn("pet-character/full.png", "pet-character/face.png");
+        givenSignedUrls();
         when(petMapper.updateCharacterImages(any(), any(), any(), any())).thenReturn(1);
 
         PetCharacterResponse result = service.generate("member-1", "pet-1", photo());
 
-        assertEquals("/uploads/pet-character/face.png", result.getProfileImg());
-        assertEquals("/uploads/pet-character/full.png", result.getCharacterImg());
+        assertEquals("signed:pet-character/face.png", result.getProfileImg());
+        assertEquals("signed:pet-character/full.png", result.getCharacterImg());
         assertEquals(4, result.getRemainingToday());
         verify(chromaKeyRemover, times(2)).removeGreenBackground(any());
     }
@@ -76,7 +77,7 @@ class PetCharacterServiceImplTest {
         when(geminiImageClient.generate(any(), anyString(), anyString()))
                 .thenReturn(raw, "profile".getBytes());
         when(chromaKeyRemover.removeGreenBackground(any())).thenReturn(keyed);
-        when(fileUtil.uploadBytes(any(), anyString(), anyString())).thenReturn("/uploads/x.png");
+        when(fileStorage.store(any(), anyString(), anyString())).thenReturn("pet-character/x.png");
         when(petMapper.updateCharacterImages(any(), any(), any(), any())).thenReturn(1);
 
         service.generate("member-1", "pet-1", photo());
@@ -98,14 +99,15 @@ class PetCharacterServiceImplTest {
                 .thenReturn("fullbody".getBytes(), (byte[]) null);
         when(chromaKeyRemover.removeGreenBackground(any()))
                 .thenAnswer(invocation -> invocation.getArgument(0));
-        when(fileUtil.uploadBytes(any(), anyString(), anyString()))
-                .thenReturn("/uploads/pet-character/full.png");
+        when(fileStorage.store(any(), anyString(), anyString()))
+                .thenReturn("pet-character/full.png");
+        givenSignedUrls();
         when(petMapper.updateCharacterImages(any(), any(), isNull(), anyString())).thenReturn(1);
 
         PetCharacterResponse result = service.generate("member-1", "pet-1", photo());
 
         assertNull(result.getProfileImg());
-        assertEquals("/uploads/pet-character/full.png", result.getCharacterImg());
+        assertEquals("signed:pet-character/full.png", result.getCharacterImg());
     }
 
     @Test
@@ -161,6 +163,55 @@ class PetCharacterServiceImplTest {
     }
 
     @Test
+    @DisplayName("재생성하면 이전 이미지를 지워 고아 파일이 쌓이지 않게 한다")
+    void should_deletePreviousImages_when_regenerated() {
+        Map<String, Object> pet = new HashMap<>();
+        pet.put("pet_id", "pet-1");
+        pet.put("member_id", "member-1");
+        pet.put("profile_img", "pet-character/old-face.png");
+        pet.put("character_img", "pet-character/old-full.png");
+        when(petMapper.findByIdAndMemberId("pet-1", "member-1")).thenReturn(pet);
+        when(geminiImageClient.isConfigured()).thenReturn(true);
+        when(rateLimiter.incrementWithExpiry(anyString(), anyLong())).thenReturn(1L);
+        when(geminiImageClient.generate(any(), anyString(), anyString()))
+                .thenReturn("fullbody".getBytes(), "profile".getBytes());
+        when(chromaKeyRemover.removeGreenBackground(any()))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+        when(fileStorage.store(any(), anyString(), anyString()))
+                .thenReturn("pet-character/new-full.png", "pet-character/new-face.png");
+        when(petMapper.updateCharacterImages(any(), any(), any(), any())).thenReturn(1);
+        givenSignedUrls();
+
+        service.generate("member-1", "pet-1", photo());
+
+        verify(fileStorage).delete("pet-character/old-face.png");
+        verify(fileStorage).delete("pet-character/old-full.png");
+        verify(fileStorage, never()).delete("pet-character/new-full.png");
+    }
+
+    @Test
+    @DisplayName("DB 갱신에 실패하면 이전 이미지를 지우지 않는다")
+    void should_keepPreviousImages_when_updateFails() {
+        Map<String, Object> pet = new HashMap<>();
+        pet.put("pet_id", "pet-1");
+        pet.put("member_id", "member-1");
+        pet.put("profile_img", "pet-character/old-face.png");
+        when(petMapper.findByIdAndMemberId("pet-1", "member-1")).thenReturn(pet);
+        when(geminiImageClient.isConfigured()).thenReturn(true);
+        when(rateLimiter.incrementWithExpiry(anyString(), anyLong())).thenReturn(1L);
+        when(geminiImageClient.generate(any(), anyString(), anyString()))
+                .thenReturn("fullbody".getBytes(), "profile".getBytes());
+        when(chromaKeyRemover.removeGreenBackground(any()))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+        when(fileStorage.store(any(), anyString(), anyString())).thenReturn("pet-character/new.png");
+        when(petMapper.updateCharacterImages(any(), any(), any(), any())).thenReturn(0);
+
+        assertThrows(BusinessException.class, () -> service.generate("member-1", "pet-1", photo()));
+
+        verify(fileStorage, never()).delete("pet-character/old-face.png");
+    }
+
+    @Test
     @DisplayName("API 키가 없으면 한도를 소모하지 않고 안내한다")
     void should_rejectWithoutConsumingQuota_when_apiKeyMissing() {
         givenOwnedPet();
@@ -172,6 +223,13 @@ class PetCharacterServiceImplTest {
     }
 
     // ── helpers ──────────────────────────────────────────────────
+
+    /** signedUrl은 조회 시점에 붙이는 임시 주소라 키를 알아볼 수 있게만 흉내 낸다. */
+    private void givenSignedUrls() {
+        lenient().when(fileStorage.signedUrl(anyString()))
+                .thenAnswer(invocation -> "signed:" + invocation.getArgument(0));
+        lenient().when(fileStorage.signedUrl(isNull())).thenReturn(null);
+    }
 
     private void givenOwnedPet() {
         Map<String, Object> pet = new HashMap<>();
