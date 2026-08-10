@@ -284,63 +284,7 @@ class TransactionServiceImplTest {
     }
 
     @Test
-    @DisplayName("Toss 결제를 기록하면 insertTossPayment로 payment_key와 order_id를 저장한다")
-    void should_insertTossPayment_when_recordingExternalPayment() {
-        TransactionServiceImpl service = service();
-        when(walletMapper.findByMemberId("member-1")).thenReturn(map(
-                "wallet_id", "wallet-1", "balance", new BigDecimal("100000")));
-        when(walletMapper.findById("wallet-1")).thenReturn(map("member_id", "member-1"));
-        when(walletMapper.deductBalance("wallet-1", new BigDecimal("72000"))).thenReturn(1);
-        when(autoTaggingService.categorize("애월동물병원")).thenReturn("HOSPITAL");
-        when(transactionMapper.findById(any())).thenAnswer(invocation -> map(
-                "txn_id", 1L, "wallet_id", "wallet-1",
-                "pet_id", "pet-1", "txn_type", "PAYMENT",
-                "price", new BigDecimal("72000"), "category", "HOSPITAL",
-                "merchant_name", "애월동물병원", "auto_tagged", "Y",
-                "txn_date", LocalDateTime.now()));
-        PaymentRecordCommand command = PaymentRecordCommand.builder()
-                .memberId("member-1")
-                .merchantName("애월동물병원")
-                .amount(new BigDecimal("72000"))
-                .petId("pet-1")
-                .memo("토스 결제")
-                .paymentKey("payment-key-1")
-                .orderId("order-1")
-                .build();
-
-        service.recordExternalPayment(command);
-
-        ArgumentCaptor<Map<String, Object>> captor = ArgumentCaptor.forClass(Map.class);
-        verify(transactionMapper).insertTossPayment(captor.capture());
-        assertEquals("payment-key-1", captor.getValue().get("paymentKey"));
-        assertEquals("order-1", captor.getValue().get("orderId"));
-        verify(transactionMapper, never()).insert(any());
-    }
-
-    @Test
-    @DisplayName("Toss 결제 기록 시 잔액이 부족하면 예외가 발생하고 원장에 기록되지 않는다")
-    void should_throwException_when_externalPaymentBalanceInsufficient() {
-        TransactionServiceImpl service = service();
-        when(walletMapper.findByMemberId("member-1")).thenReturn(map(
-                "wallet_id", "wallet-1", "balance", new BigDecimal("10000")));
-        PaymentRecordCommand command = PaymentRecordCommand.builder()
-                .memberId("member-1")
-                .merchantName("애월동물병원")
-                .amount(new BigDecimal("72000"))
-                .paymentKey("payment-key-1")
-                .orderId("order-1")
-                .build();
-
-        BusinessException exception = assertThrows(BusinessException.class,
-                () -> service.recordExternalPayment(command));
-
-        assertEquals("잔액이 부족합니다.", exception.getMessage());
-        verify(walletMapper, never()).deductBalance(any(), any());
-        verifyNoInteractions(transactionMapper);
-    }
-
-    @Test
-    @DisplayName("기존 processPayment 경로는 여전히 공유 insert 문을 사용한다")
+    @DisplayName("지갑 결제 경로는 공유 insert 문만 사용한다(충전 전용 insertTossPayment를 타지 않는다)")
     void should_useSharedInsert_when_processingLegacyPayment() {
         TransactionServiceImpl service = service();
         PaymentRequest request = new PaymentRequest();
