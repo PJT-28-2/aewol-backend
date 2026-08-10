@@ -54,7 +54,8 @@ public class GroupPurchaseController {
                 groupPurchaseService.getMyList(memberId, status)));
     }
 
-    @Operation(summary = "공동구매 생성")
+    /** 관리자(role=ADMIN) 전용. SecurityConfig에서 POST /api/group-purchase에 ROLE_ADMIN을 요구한다. */
+    @Operation(summary = "공동구매 생성 (관리자 전용)")
     @PostMapping
     public ResponseEntity<ApiResponse<GroupPurchaseResponse>> create(@AuthenticationPrincipal String memberId,
                                                                        @Valid @RequestBody GroupPurchaseCreateRequest request) {
@@ -86,7 +87,8 @@ public class GroupPurchaseController {
                 groupPurchaseService.join(memberId, gpId, quantity, request)));
     }
 
-    @Operation(summary = "공동구매 이미지 업로드")
+    /** 관리자(role=ADMIN) 전용. SecurityConfig에서 POST /api/group-purchase/images에 ROLE_ADMIN을 요구한다. */
+    @Operation(summary = "공동구매 이미지 업로드 (관리자 전용)")
     @PostMapping("/images")
     public ResponseEntity<ApiResponse<GroupPurchaseImageUploadResponse>> uploadImage(
             @RequestParam("image") MultipartFile image) {
