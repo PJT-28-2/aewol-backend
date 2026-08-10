@@ -51,10 +51,6 @@ external:
     redirect-uri: http://localhost:5173/callback/kakao
   gemini:
     api-key: ${GEMINI_API_KEY}
-  # 반려동물 프로필 이미지 생성용. Gemini는 영수증 OCR(이미지 읽기) 전용이라
-  # 이미지 생성에는 쓸 수 없어 별도 연동이 필요하다.
-  openai:
-    api-key: ${OPENAI_API_KEY}
   codef:
     client-id: ${CODEF_CLIENT_ID}
     client-secret: ${CODEF_CLIENT_SECRET}
