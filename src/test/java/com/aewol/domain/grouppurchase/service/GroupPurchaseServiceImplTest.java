@@ -269,8 +269,8 @@ class GroupPurchaseServiceImplTest {
     }
 
     @Test
-    @DisplayName("마감 후 목표 수량을 못 채웠으면 cancelled로 응답하고, 목표 미달 문구를 안내한다")
-    void should_returnCancelled_when_deadlinePassedAndTargetNotReached_onGetStatus() {
+    @DisplayName("마감 후 목표 수량을 못 채웠으면 failed로 응답하고, 목표 미달 문구를 안내한다")
+    void should_returnFailed_when_deadlinePassedAndTargetNotReached_onGetStatus() {
         GroupPurchaseServiceImpl service = service();
         Map<String, Object> gpRow = savedRow();
         gpRow.put("deadline", LocalDateTime.now().minusDays(1));
@@ -280,8 +280,32 @@ class GroupPurchaseServiceImplTest {
 
         GroupPurchaseStatusResponse result = service.getStatus("member-1", "1");
 
-        assertEquals("cancelled", result.getStatus());
+        assertEquals("failed", result.getStatus());
         assertEquals("목표 인원 미달로 공동구매가 취소되어 환불됩니다.", result.getNoticeMessage());
+    }
+
+    @Test
+    @DisplayName("작성자 취소(cancelled)와 마감 미달(failed)은 서로 다른 status 값으로 구분된다")
+    void should_returnDifferentStatus_forOwnerCancelledAndDeadlinePassedTargetNotReached_onGetStatus() {
+        GroupPurchaseServiceImpl service = service();
+
+        Map<String, Object> ownerCancelledRow = savedRow();
+        ownerCancelledRow.put("status", "CANCELLED");
+        ownerCancelledRow.put("deadline", LocalDateTime.now().plusDays(5));
+        when(groupPurchaseMapper.findById("1")).thenReturn(ownerCancelledRow);
+        when(groupPurchaseMapper.findParticipant("1", "member-1")).thenReturn(null);
+        GroupPurchaseStatusResponse ownerCancelledResult = service.getStatus("member-1", "1");
+
+        Map<String, Object> failedRow = savedRow();
+        failedRow.put("deadline", LocalDateTime.now().minusDays(1));
+        failedRow.put("current_quantity", 4);
+        when(groupPurchaseMapper.findById("2")).thenReturn(failedRow);
+        when(groupPurchaseMapper.findParticipant("2", "member-1")).thenReturn(null);
+        GroupPurchaseStatusResponse failedResult = service.getStatus("member-1", "2");
+
+        assertEquals("cancelled", ownerCancelledResult.getStatus());
+        assertEquals("failed", failedResult.getStatus());
+        org.junit.jupiter.api.Assertions.assertNotEquals(ownerCancelledResult.getStatus(), failedResult.getStatus());
     }
 
     @Test
