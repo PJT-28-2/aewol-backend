@@ -1,7 +1,7 @@
 package com.aewol.domain.share.service;
 
 import com.aewol.common.exception.BusinessException;
-import com.aewol.common.util.FileUtil;
+import com.aewol.common.storage.FileStorage;
 import com.aewol.domain.activity.mapper.ActivityLogMapper;
 import com.aewol.domain.pet.mapper.PetMapper;
 import com.aewol.domain.share.dto.CareDiaryResponse;
@@ -18,6 +18,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
@@ -38,7 +39,7 @@ public class CareDiaryServiceImpl implements CareDiaryService {
     private final ShareMapper shareMapper;
     private final PetMapper petMapper;
     private final ActivityLogMapper activityLogMapper;
-    private final FileUtil fileUtil;
+    private final FileStorage fileStorage;
 
     @Override
     @Transactional
@@ -174,13 +175,22 @@ public class CareDiaryServiceImpl implements CareDiaryService {
         return row;
     }
 
+    /** DB에는 저장 키만 넣는다. 화면에 보여줄 주소는 조회 시점에 만든다. */
     private String storeImage(MultipartFile image) {
         try {
-            return fileUtil.upload(image, UPLOAD_SUB_DIR);
+            return fileStorage.store(image.getBytes(), UPLOAD_SUB_DIR, extensionOf(image));
         } catch (IOException e) {
             log.error("[CARE_DIARY_UPLOAD_FAILED] 일기 이미지 저장 실패 - size: {}", image.getSize(), e);
             throw new BusinessException("사진 저장에 실패했습니다. 잠시 후 다시 시도해 주세요.");
         }
+    }
+
+    private String extensionOf(MultipartFile image) {
+        String name = image.getOriginalFilename();
+        if (name != null && name.contains(".")) {
+            return name.substring(name.lastIndexOf('.') + 1).toLowerCase(Locale.ROOT);
+        }
+        return "png";
     }
 
     /**
@@ -233,7 +243,9 @@ public class CareDiaryServiceImpl implements CareDiaryService {
                 .petId(text(row, "petId"))
                 .diaryDate(dateText(value(row, "diaryDate")))
                 .content(text(row, "content"))
-                .images(imagesByDiaryId.getOrDefault(diaryId, List.of()))
+                .images(imagesByDiaryId.getOrDefault(diaryId, List.of()).stream()
+                        .map(fileStorage::signedUrl)
+                        .collect(Collectors.toList()))
                 .authorId(authorId)
                 .authorName(text(row, "authorName"))
                 .createdAt(dateTimeText(value(row, "createdAt")))

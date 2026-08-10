@@ -2,7 +2,7 @@ package com.aewol.domain.pet.service;
 
 import com.aewol.common.exception.BusinessException;
 import com.aewol.common.util.ChromaKeyRemover;
-import com.aewol.common.util.FileUtil;
+import com.aewol.common.storage.FileStorage;
 import com.aewol.common.util.RedisRateLimiter;
 import com.aewol.domain.pet.dto.PetCharacterResponse;
 import com.aewol.domain.pet.mapper.PetMapper;
@@ -45,7 +45,7 @@ public class PetCharacterServiceImpl implements PetCharacterService {
 
     private final GeminiImageClient geminiImageClient;
     private final ChromaKeyRemover chromaKeyRemover;
-    private final FileUtil fileUtil;
+    private final FileStorage fileStorage;
     private final PetMapper petMapper;
     private final RedisRateLimiter rateLimiter;
 
@@ -88,21 +88,26 @@ public class PetCharacterServiceImpl implements PetCharacterService {
             log.warn("[PET_CHARACTER_PROFILE_FAILED] 프로필 생성 실패 - petId: {}", petId);
         }
 
-        String characterPath = store(chromaKeyRemover.removeGreenBackground(fullbodyRaw));
-        String profilePath = profileRaw == null
+        String characterKey = store(chromaKeyRemover.removeGreenBackground(fullbodyRaw));
+        String profileKey = profileRaw == null
                 ? null
                 : store(chromaKeyRemover.removeGreenBackground(profileRaw));
 
         // UPDATE 한 문장이라 별도 트랜잭션이 필요 없다. 같은 클래스 안에서 @Transactional
         // 메서드를 직접 부르면 프록시를 거치지 않아 어차피 적용되지도 않는다.
-        if (petMapper.updateCharacterImages(petId, memberId, profilePath, characterPath) != 1) {
+        if (petMapper.updateCharacterImages(petId, memberId, profileKey, characterKey) != 1) {
             throw BusinessException.notFound("반려동물을 찾을 수 없습니다.");
         }
 
+        // 새 이미지를 DB에 반영한 뒤에 지운다. 먼저 지우면 갱신이 실패했을 때
+        // 이전 이미지까지 잃는다.
+        deleteIfPresent(pet, "profile_img", "profileImg");
+        deleteIfPresent(pet, "character_img", "characterImg");
+
         return PetCharacterResponse.builder()
                 .petId(petId)
-                .profileImg(profilePath)
-                .characterImg(characterPath)
+                .profileImg(fileStorage.signedUrl(profileKey))
+                .characterImg(fileStorage.signedUrl(characterKey))
                 .remainingToday((int) Math.max(0, dailyLimit - used))
                 .build();
     }
@@ -159,13 +164,24 @@ public class PetCharacterServiceImpl implements PetCharacterService {
         }
     }
 
+    /** DB에는 저장 키만 넣는다. 화면에 보여줄 주소는 응답을 만들 때 붙인다. */
     private String store(byte[] image) {
-        try {
-            return fileUtil.uploadBytes(image, UPLOAD_SUB_DIR, "png");
-        } catch (IOException e) {
-            log.error("[PET_CHARACTER_SAVE_FAILED] 생성 이미지 저장 실패 - {}바이트", image.length, e);
-            throw new BusinessException("이미지 저장에 실패했어요. 잠시 후 다시 시도해 주세요.");
+        return fileStorage.store(image, UPLOAD_SUB_DIR, "png");
+    }
+
+    /** 재생성 전에 쓰던 이미지를 지운다. 놔두면 호출할 때마다 고아 파일이 쌓인다. */
+    private void deleteIfPresent(Map<String, Object> pet, String... keys) {
+        Object previous = value(pet, keys);
+        if (previous != null && !String.valueOf(previous).isBlank()) {
+            fileStorage.delete(String.valueOf(previous));
         }
+    }
+
+    private static Object value(Map<String, Object> map, String... keys) {
+        for (String key : keys) {
+            if (map.containsKey(key)) return map.get(key);
+        }
+        return null;
     }
 
     private byte[] readBytes(MultipartFile photo) {

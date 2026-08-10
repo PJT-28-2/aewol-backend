@@ -36,6 +36,9 @@ public class SecurityConfig {
                         // Public endpoints
                         .requestMatchers("/api/auth/**").permitAll()
                         .requestMatchers("/swagger-ui/**", "/v3/api-docs/**").permitAll()
+                        // <img> 태그는 Authorization 헤더를 붙일 수 없다. 이 경로는 JWT 대신
+                        // URL에 실린 서명과 만료 시각으로 접근을 판단한다(FileController).
+                        .requestMatchers(HttpMethod.GET, "/api/files/**").permitAll()
                         .requestMatchers("/ws/**").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/support/**").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/banks").permitAll()
