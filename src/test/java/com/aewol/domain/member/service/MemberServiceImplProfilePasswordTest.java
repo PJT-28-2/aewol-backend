@@ -9,6 +9,7 @@ import com.aewol.domain.member.dto.MemberUpdateRequest;
 import com.aewol.domain.member.mapper.MemberMapper;
 import java.util.HashMap;
 import java.util.Map;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -17,13 +18,19 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.util.ReflectionTestUtils;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
+import org.springframework.transaction.support.TransactionSynchronizationUtils;
 
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -39,6 +46,13 @@ class MemberServiceImplProfilePasswordTest {
     @BeforeEach
     void setUp() {
         service = new MemberServiceImpl(memberMapper, passwordEncoder, authCredentialStore);
+    }
+
+    @AfterEach
+    void tearDown() {
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.clearSynchronization();
+        }
     }
 
     @Test
@@ -170,6 +184,7 @@ class MemberServiceImplProfilePasswordTest {
         when(passwordEncoder.matches("current-password", "encoded-old")).thenReturn(true);
         when(passwordEncoder.encode("new-password")).thenReturn("encoded-new");
         when(memberMapper.updatePassword("1", "encoded-new")).thenReturn(1);
+        TransactionSynchronizationManager.initSynchronization();
 
         service.changePassword("1", changeRequest("current-password", "new-password"));
 
@@ -177,6 +192,56 @@ class MemberServiceImplProfilePasswordTest {
         verify(passwordEncoder).encode("new-password");
         verify(memberMapper).updatePassword("1", "encoded-new");
         verify(memberMapper, never()).updatePassword("1", "new-password");
+        verify(authCredentialStore, never()).deleteRefresh("1");
+
+        TransactionSynchronizationUtils.triggerAfterCommit();
+
+        verify(authCredentialStore, times(1)).deleteRefresh("1");
+    }
+
+    @Test
+    void passwordChangeRollbackDoesNotDeleteRefreshToken() {
+        when(memberMapper.findById("1")).thenReturn(member("LOCAL", "encoded-old"));
+        when(passwordEncoder.matches("current-password", "encoded-old")).thenReturn(true);
+        when(passwordEncoder.encode("new-password")).thenReturn("encoded-new");
+        when(memberMapper.updatePassword("1", "encoded-new")).thenReturn(1);
+        TransactionSynchronizationManager.initSynchronization();
+
+        service.changePassword("1", changeRequest("current-password", "new-password"));
+
+        assertEquals(1, TransactionSynchronizationManager.getSynchronizations().size());
+        TransactionSynchronizationUtils.triggerAfterCompletion(TransactionSynchronization.STATUS_ROLLED_BACK);
+
+        verify(authCredentialStore, never()).deleteRefresh("1");
+    }
+
+    @Test
+    void passwordChangeRedisCleanupFailureAfterCommitDoesNotEscape() {
+        when(memberMapper.findById("1")).thenReturn(member("LOCAL", "encoded-old"));
+        when(passwordEncoder.matches("current-password", "encoded-old")).thenReturn(true);
+        when(passwordEncoder.encode("new-password")).thenReturn("encoded-new");
+        when(memberMapper.updatePassword("1", "encoded-new")).thenReturn(1);
+        doThrow(new RuntimeException("redis unavailable"))
+                .when(authCredentialStore).deleteRefresh("1");
+        TransactionSynchronizationManager.initSynchronization();
+
+        service.changePassword("1", changeRequest("current-password", "new-password"));
+
+        assertDoesNotThrow(TransactionSynchronizationUtils::triggerAfterCommit);
+        verify(authCredentialStore, times(1)).deleteRefresh("1");
+    }
+
+    @Test
+    void passwordChangeWithoutTransactionSynchronizationFailsFast() {
+        when(memberMapper.findById("1")).thenReturn(member("LOCAL", "encoded-old"));
+        when(passwordEncoder.matches("current-password", "encoded-old")).thenReturn(true);
+        when(passwordEncoder.encode("new-password")).thenReturn("encoded-new");
+
+        assertThrows(IllegalStateException.class,
+                () -> service.changePassword("1", changeRequest("current-password", "new-password")));
+
+        verify(memberMapper, never()).updatePassword(any(), any());
+        verify(authCredentialStore, never()).deleteRefresh("1");
     }
 
     @Test
@@ -205,14 +270,21 @@ class MemberServiceImplProfilePasswordTest {
         when(passwordEncoder.matches("current-password", "encoded")).thenReturn(true);
         when(passwordEncoder.encode("new-password")).thenReturn("encoded-new");
         when(memberMapper.updatePassword("1", "encoded-new")).thenReturn(0, 2);
+        TransactionSynchronizationManager.initSynchronization();
 
         BusinessException zero = assertThrows(BusinessException.class,
                 () -> service.changePassword("1", changeRequest("current-password", "new-password")));
+        TransactionSynchronizationUtils.triggerAfterCompletion(TransactionSynchronization.STATUS_ROLLED_BACK);
+        TransactionSynchronizationManager.clearSynchronization();
+        TransactionSynchronizationManager.initSynchronization();
+
         BusinessException multiple = assertThrows(BusinessException.class,
                 () -> service.changePassword("1", changeRequest("current-password", "new-password")));
+        TransactionSynchronizationUtils.triggerAfterCompletion(TransactionSynchronization.STATUS_ROLLED_BACK);
 
         assertEquals(409, zero.getStatus().value());
         assertEquals(409, multiple.getStatus().value());
+        verify(authCredentialStore, never()).deleteRefresh("1");
     }
 
     private void assertBadRequest(org.junit.jupiter.api.function.Executable executable) {
