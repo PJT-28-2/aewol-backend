@@ -44,8 +44,8 @@ external:
     client-id: ${KAKAO_CLIENT_ID:}
     client-secret: ${KAKAO_CLIENT_SECRET:}
     redirect-uri: ${KAKAO_REDIRECT_URI:http://localhost:5173/callback/kakao}
-  gemini:
-    api-key: ${GEMINI_API_KEY:}
+  ocr-service:
+    url: ${OCR_SERVICE_URL:http://localhost:8000}
   codef:
     client-id: ${CODEF_CLIENT_ID:}
     client-secret: ${CODEF_CLIENT_SECRET:}
