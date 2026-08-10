@@ -56,13 +56,13 @@ class RecurringCreateRequestTest {
     }
 
     @Test
-    void should_rejectRequest_when_priceHasMoreThanTwoDecimalPlaces() {
+    void should_rejectRequest_when_priceHasDecimalPlaces() {
         RecurringCreateRequest request = new RecurringCreateRequest(
-                "강아지 사료", new BigDecimal("32000.123"), 15, "FOOD", null);
+                "강아지 사료", new BigDecimal("32000.5"), 15, "FOOD", null);
 
         Set<ConstraintViolation<RecurringCreateRequest>> violations = validator.validate(request);
 
-        assertEquals("결제 금액은 소수점 둘째 자리까지 입력할 수 있습니다.",
+        assertEquals("결제 금액은 정수만 입력할 수 있습니다.",
                 violations.iterator().next().getMessage());
     }
 
