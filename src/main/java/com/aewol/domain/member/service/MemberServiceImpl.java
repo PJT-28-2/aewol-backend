@@ -91,6 +91,8 @@ public class MemberServiceImpl implements MemberService {
         }
 
         String encodedPassword = passwordEncoder.encode(request.getNewPassword());
+        registerPasswordChangeCredentialCleanup(memberId);
+
         if (memberMapper.updatePassword(memberId, encodedPassword) != 1) {
             throw BusinessException.conflict("비밀번호를 변경할 수 없는 회원 상태입니다.");
         }
@@ -189,6 +191,19 @@ public class MemberServiceImpl implements MemberService {
                 } catch (RuntimeException e) {
                     // DB 탈퇴는 이미 확정됐으므로 성공 응답을 유지한다. 비활성 상태 검사가 기존 credential을 차단한다.
                     log.warn("회원탈퇴 후 인증 credential 정리에 실패했습니다. TTL 만료를 기다립니다.", e);
+                }
+            }
+        });
+    }
+
+    private void registerPasswordChangeCredentialCleanup(String memberId) {
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCommit() {
+                try {
+                    authCredentialStore.deleteRefresh(memberId);
+                } catch (RuntimeException e) {
+                    log.warn("비밀번호 변경 후 Refresh Token 삭제에 실패했습니다. TTL 만료를 기다립니다.", e);
                 }
             }
         });
