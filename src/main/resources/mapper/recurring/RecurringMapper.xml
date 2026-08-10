@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
 <mapper namespace="com.aewol.domain.recurring.mapper.RecurringMapper">
-    <!-- V4/V16: payment_day는 매월 결제 희망일(1~31), 없는 날짜는 서비스에서 말일 처리 -->
+    <!-- V4/V17: payment_day는 매월 결제 희망일(1~31), 없는 날짜는 서비스에서 말일 처리 -->
 
     <select id="findById" resultType="map">
         SELECT * FROM recurring_payment
