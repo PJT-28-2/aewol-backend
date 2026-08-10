@@ -1,6 +1,7 @@
 package com.aewol.config;
 
 import com.aewol.external.gemini.GeminiVisionClient;
+import com.aewol.external.paddleocr.PaddleOcrClient;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -30,6 +31,9 @@ class RestTemplateConfigTest {
     @Autowired
     private GeminiVisionClient geminiVisionClient;
 
+    @Autowired
+    private PaddleOcrClient paddleOcrClient;
+
     @Test
     @DisplayName("GeminiVisionClient는 공유 restTemplate이 아닌 전용 geminiRestTemplate 빈을 주입받는다")
     void should_injectDedicatedRestTemplate_intoGeminiVisionClient() {
@@ -57,5 +61,25 @@ class RestTemplateConfigTest {
         RestTemplate byName = (RestTemplate) context.getBean("restTemplate");
 
         assertSame(byName, byType);
+    }
+
+    @Test
+    @DisplayName("PaddleOcrClient는 공유 restTemplate이 아닌 전용 ocrServiceRestTemplate 빈을 주입받는다")
+    void should_injectDedicatedRestTemplate_intoPaddleOcrClient() {
+        RestTemplate sharedRestTemplate = (RestTemplate) context.getBean("restTemplate");
+        RestTemplate injected = (RestTemplate) ReflectionTestUtils.getField(paddleOcrClient, "restTemplate");
+
+        assertNotSame(sharedRestTemplate, injected);
+    }
+
+    @Test
+    @DisplayName("PaddleOcrClient에 주입된 RestTemplate은 30초 read timeout이 설정되어 있다")
+    void should_haveConfiguredReadTimeout_onPaddleOcrClientRestTemplate() {
+        RestTemplate injected = (RestTemplate) ReflectionTestUtils.getField(paddleOcrClient, "restTemplate");
+        ClientHttpRequestFactory requestFactory = injected.getRequestFactory();
+
+        Object readTimeout = ReflectionTestUtils.getField(requestFactory, "readTimeout");
+
+        assertEquals(30000, readTimeout);
     }
 }
