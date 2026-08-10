@@ -76,7 +76,7 @@ class RecurringControllerTest {
                 .nextPaymentDate("2026-08-15")
                 .build());
 
-        mockMvc.perform(post("/api/recurring-payments")
+        mockMvc.perform(post("/api/recurring")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(request)))
                 .andExpect(status().isCreated());
@@ -89,7 +89,7 @@ class RecurringControllerTest {
         RecurringCreateRequest request = new RecurringCreateRequest(
                 "강아지 사료", BigDecimal.ZERO, 32, "SOS", null);
 
-        mockMvc.perform(post("/api/recurring-payments")
+        mockMvc.perform(post("/api/recurring")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(request)))
                 .andExpect(status().isBadRequest());
