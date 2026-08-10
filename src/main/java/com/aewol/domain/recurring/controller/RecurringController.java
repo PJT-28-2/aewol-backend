@@ -16,21 +16,21 @@ import java.util.List;
 
 @Tag(name = "Recurring", description = "정기결제 API")
 @RestController
-@RequestMapping("/api")
+@RequestMapping("/api/recurring")
 @RequiredArgsConstructor
 public class RecurringController {
 
     private final RecurringService recurringService;
 
     @Operation(summary = "정기결제 목록")
-    @GetMapping("/recurring")
+    @GetMapping
     public ResponseEntity<ApiResponse<List<RecurringResponse>>> list(
             @AuthenticationPrincipal String memberId) {
         return ResponseEntity.ok(ApiResponse.success(recurringService.getRecurringPayments(memberId)));
     }
 
     @Operation(summary = "정기결제 등록")
-    @PostMapping("/recurring-payments")
+    @PostMapping
     public ResponseEntity<ApiResponse<RecurringResponse>> create(
             @AuthenticationPrincipal String memberId,
             @Valid @RequestBody RecurringCreateRequest request) {
@@ -39,7 +39,7 @@ public class RecurringController {
     }
 
     @Operation(summary = "정기결제 해지")
-    @DeleteMapping("/recurring/{recurringId}")
+    @DeleteMapping("/{recurringId}")
     public ResponseEntity<ApiResponse<Void>> cancel(@AuthenticationPrincipal String memberId,
                                                      @PathVariable String recurringId) {
         recurringService.cancelRecurring(memberId, recurringId);
