@@ -64,8 +64,9 @@ public class GroupPurchaseController {
 
     @Operation(summary = "공동구매 게시글 상세보기")
     @GetMapping("/{gpId}")
-    public ResponseEntity<ApiResponse<GroupPurchaseResponse>> detail(@PathVariable String gpId) {
-        return ResponseEntity.ok(ApiResponse.success("공동구매 상세 조회 성공", groupPurchaseService.getDetail(gpId)));
+    public ResponseEntity<ApiResponse<GroupPurchaseResponse>> detail(@AuthenticationPrincipal String memberId,
+                                                                        @PathVariable String gpId) {
+        return ResponseEntity.ok(ApiResponse.success("공동구매 상세 조회 성공", groupPurchaseService.getDetail(memberId, gpId)));
     }
 
     @Operation(summary = "공동구매 상태 화면")

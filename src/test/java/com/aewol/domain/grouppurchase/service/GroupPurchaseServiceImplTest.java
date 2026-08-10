@@ -129,12 +129,14 @@ class GroupPurchaseServiceImplTest {
     }
 
     @Test
-    @DisplayName("존재하는 gpId로 조회하면 상세 정보를 반환한다")
+    @DisplayName("참여 중인 회원이 조회하면 상세 정보와 함께 isParticipating이 true로 내려간다")
     void should_returnGroupPurchaseDetail_when_gpExists() {
         GroupPurchaseServiceImpl service = service();
         when(groupPurchaseMapper.findById("1")).thenReturn(savedRow());
+        when(groupPurchaseMapper.findParticipant("1", "member-7"))
+                .thenReturn(participantRow(10523L, "1", "member-7", 1));
 
-        GroupPurchaseResponse result = service.getDetail("1");
+        GroupPurchaseResponse result = service.getDetail("member-7", "1");
 
         assertEquals("1", result.getGpId());
         assertEquals("member-1", result.getMemberId());
@@ -148,6 +150,31 @@ class GroupPurchaseServiceImplTest {
         assertEquals(10, result.getTargetQuantity());
         assertEquals(0, result.getCurrentQuantity());
         assertEquals(LocalDateTime.of(2026, 8, 15, 0, 0), result.getDeadline());
+        assertTrue(result.getIsParticipating());
+    }
+
+    @Test
+    @DisplayName("참여하지 않은 회원이 조회하면 isParticipating이 false로 내려간다")
+    void should_returnIsParticipatingFalse_when_memberHasNotJoined_onGetDetail() {
+        GroupPurchaseServiceImpl service = service();
+        when(groupPurchaseMapper.findById("1")).thenReturn(savedRow());
+        when(groupPurchaseMapper.findParticipant("1", "member-7")).thenReturn(null);
+
+        GroupPurchaseResponse result = service.getDetail("member-7", "1");
+
+        assertFalse(result.getIsParticipating());
+    }
+
+    @Test
+    @DisplayName("비로그인 상태로 조회하면 isParticipating은 false이고 참여 여부를 조회하지 않는다")
+    void should_returnIsParticipatingFalse_when_memberIdIsNull_onGetDetail() {
+        GroupPurchaseServiceImpl service = service();
+        when(groupPurchaseMapper.findById("1")).thenReturn(savedRow());
+
+        GroupPurchaseResponse result = service.getDetail(null, "1");
+
+        assertFalse(result.getIsParticipating());
+        verify(groupPurchaseMapper, never()).findParticipant(any(), any());
     }
 
     @Test
@@ -157,7 +184,7 @@ class GroupPurchaseServiceImplTest {
         when(groupPurchaseMapper.findById("999")).thenReturn(null);
 
         BusinessException exception = assertThrows(BusinessException.class,
-                () -> service.getDetail("999"));
+                () -> service.getDetail("member-1", "999"));
 
         assertEquals(org.springframework.http.HttpStatus.NOT_FOUND, exception.getStatus());
         assertEquals("공동구매를 찾을 수 없습니다.", exception.getMessage());
