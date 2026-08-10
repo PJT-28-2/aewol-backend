@@ -24,7 +24,7 @@ public class FaqServiceImpl implements FaqService {
     }
 
     @Override
-    public FaqDetailResponse getFaq(String faqId) {
+    public FaqDetailResponse getFaq(Long faqId) {
         Map<String, Object> faq = faqMapper.findById(faqId);
         if (faq == null) {
             throw BusinessException.notFound("FAQ를 찾을 수 없어요");

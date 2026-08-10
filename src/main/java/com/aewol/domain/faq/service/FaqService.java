@@ -6,5 +6,5 @@ import java.util.List;
 
 public interface FaqService {
     List<FaqResponse> getFaqs(String category, String keyword);
-    FaqDetailResponse getFaq(String faqId);
+    FaqDetailResponse getFaq(Long faqId);
 }

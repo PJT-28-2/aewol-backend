@@ -23,7 +23,7 @@ class FaqServiceImplTest {
     @Mock FaqMapper faqMapper;
     @InjectMocks FaqServiceImpl service;
 
-    private static final String FAQ_ID = "1";
+    private static final Long FAQ_ID = 1L;
 
     @Test
     @DisplayName("category/keyword 없이 조회하면 매퍼에 null로 그대로 전달한다")
@@ -60,7 +60,7 @@ class FaqServiceImplTest {
         assertEquals(org.springframework.http.HttpStatus.NOT_FOUND, ex.getStatus());
     }
 
-    private Map<String, Object> faqRow(String faqId, String category, String question) {
+    private Map<String, Object> faqRow(Long faqId, String category, String question) {
         Map<String, Object> row = new HashMap<>();
         row.put("faq_id", faqId);
         row.put("category", category);

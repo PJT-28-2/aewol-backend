@@ -34,7 +34,7 @@ public class FaqController {
 
     @Operation(summary = "FAQ 상세 조회")
     @GetMapping("/{faqId}")
-    public ResponseEntity<ApiResponse<FaqDetailResponse>> getFaq(@PathVariable String faqId) {
+    public ResponseEntity<ApiResponse<FaqDetailResponse>> getFaq(@PathVariable Long faqId) {
         return ResponseEntity.ok(ApiResponse.success(faqService.getFaq(faqId)));
     }
 }

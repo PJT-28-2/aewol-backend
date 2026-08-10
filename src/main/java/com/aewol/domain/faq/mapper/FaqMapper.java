@@ -8,5 +8,5 @@ import org.apache.ibatis.annotations.Param;
 @Mapper
 public interface FaqMapper {
     List<Map<String, Object>> findAll(@Param("category") String category, @Param("keyword") String keyword);
-    Map<String, Object> findById(@Param("faqId") String faqId);
+    Map<String, Object> findById(@Param("faqId") Long faqId);
 }
