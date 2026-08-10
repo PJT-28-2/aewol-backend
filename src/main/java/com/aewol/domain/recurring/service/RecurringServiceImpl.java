@@ -1,6 +1,9 @@
 package com.aewol.domain.recurring.service;
 
 import com.aewol.common.exception.BusinessException;
+import com.aewol.domain.pet.mapper.PetMapper;
+import com.aewol.domain.recurring.dto.RecurringCreateRequest;
+import com.aewol.domain.recurring.dto.RecurringResponse;
 import com.aewol.domain.recurring.mapper.RecurringMapper;
 import com.aewol.domain.wallet.mapper.WalletMapper;
 import lombok.RequiredArgsConstructor;
@@ -8,7 +11,10 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
+import java.time.YearMonth;
+import java.math.BigDecimal;
 import java.util.*;
+import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
@@ -16,33 +22,37 @@ public class RecurringServiceImpl implements RecurringService {
 
     private final RecurringMapper recurringMapper;
     private final WalletMapper walletMapper;
+    private final PetMapper petMapper;
 
     @Override
-    public List<Map<String, Object>> getRecurringPayments(String memberId) {
+    @Transactional(readOnly = true)
+    public List<RecurringResponse> getRecurringPayments(String memberId) {
         Map<String, Object> wallet = walletMapper.findByMemberId(memberId);
         if (wallet == null) throw BusinessException.notFound("지갑을 찾을 수 없습니다.");
-        return recurringMapper.findByWalletId(String.valueOf(wallet.get("wallet_id")));
+        return recurringMapper.findByWalletId(String.valueOf(wallet.get("wallet_id"))).stream()
+                .map(this::toResponse)
+                .collect(Collectors.toList());
     }
 
     @Override
     @Transactional
-    public Map<String, Object> createRecurring(String memberId, Map<String, Object> request) {
+    public RecurringResponse createRecurring(String memberId, RecurringCreateRequest request) {
         Map<String, Object> wallet = walletMapper.findByMemberId(memberId);
         if (wallet == null) throw BusinessException.notFound("지갑을 찾을 수 없습니다.");
+        assertPetOwnership(memberId, request.getPetId());
 
-        // 프론트 계약: { itemName, price, cycleDay(1~28), category, petId }
-        int paymentDay = parsePaymentDay(request.get("cycleDay") != null ? request.get("cycleDay") : request.get("paymentDay"));
+        int paymentDay = request.getCycleDay();
 
         Map<String, Object> recurring = new HashMap<>();
         recurring.put("walletId", wallet.get("wallet_id"));
-        recurring.put("petId", request.get("petId"));
-        recurring.put("productName", request.get("itemName") != null ? request.get("itemName") : request.get("productName"));
-        recurring.put("category", request.get("category"));
-        recurring.put("price", request.get("price") != null ? request.get("price") : request.get("amount"));
+        recurring.put("petId", blankToNull(request.getPetId()));
+        recurring.put("productName", request.getItemName().trim());
+        recurring.put("category", request.getCategory());
+        recurring.put("price", request.getPrice());
         recurring.put("paymentDay", paymentDay);
         recurring.put("nextPaymentDate", nextPaymentDate(paymentDay));
         recurringMapper.insert(recurring); // recurring_id AUTO_INCREMENT
-        return recurring;
+        return toResponse(recurring);
     }
 
     @Override
@@ -54,20 +64,68 @@ public class RecurringServiceImpl implements RecurringService {
         if (wallet == null || !Objects.equals(memberId, String.valueOf(wallet.get("member_id")))) {
             throw BusinessException.forbidden("정기결제를 해지할 권한이 없습니다.");
         }
-        recurringMapper.deactivate(recurringId);
+        if (recurringMapper.deactivate(recurringId) != 1) {
+            throw BusinessException.notFound("정기결제를 찾을 수 없습니다.");
+        }
     }
 
-    private int parsePaymentDay(Object value) {
-        if (value == null) throw new BusinessException("결제일(1~28)을 선택해 주세요.");
-        int day = value instanceof Number ? ((Number) value).intValue() : Integer.parseInt(String.valueOf(value));
-        if (day < 1 || day > 28) throw new BusinessException("결제일은 1~28 사이여야 합니다.");
-        return day;
+    private void assertPetOwnership(String memberId, String petId) {
+        String normalizedPetId = blankToNull(petId);
+        if (normalizedPetId == null) return;
+        Map<String, Object> pet = petMapper.findById(normalizedPetId);
+        if (pet == null) throw BusinessException.notFound("반려동물을 찾을 수 없습니다.");
+        if (!Objects.equals(memberId, String.valueOf(pet.get("member_id")))) {
+            throw BusinessException.forbidden("해당 반려동물을 정기결제에 지정할 권한이 없습니다.");
+        }
     }
 
-    /** 매월 N일 의미의 payment_day 기준, 다음 도래일 계산 */
+    /** 매월 N일 기준. 해당 날짜가 없는 달은 그달의 마지막 날로 계산한다. */
     private LocalDate nextPaymentDate(int paymentDay) {
-        LocalDate today = LocalDate.now();
-        LocalDate candidate = today.withDayOfMonth(paymentDay);
-        return candidate.isAfter(today) ? candidate : candidate.plusMonths(1);
+        return nextPaymentDate(paymentDay, LocalDate.now());
+    }
+
+    static LocalDate nextPaymentDate(int paymentDay, LocalDate today) {
+        YearMonth currentMonth = YearMonth.from(today);
+        LocalDate candidate = paymentDate(currentMonth, paymentDay);
+        if (candidate.isAfter(today)) return candidate;
+        return paymentDate(currentMonth.plusMonths(1), paymentDay);
+    }
+
+    private static LocalDate paymentDate(YearMonth month, int paymentDay) {
+        return month.atDay(Math.min(paymentDay, month.lengthOfMonth()));
+    }
+
+    private RecurringResponse toResponse(Map<String, Object> recurring) {
+        Object recurringId = value(recurring, "recurring_id", "recurringId");
+        Object price = value(recurring, "price");
+        Object cycleDay = value(recurring, "payment_day", "paymentDay", "cycleDay");
+        Object nextPaymentDate = value(recurring, "next_payment_date", "nextPaymentDate");
+        Object petId = value(recurring, "pet_id", "petId");
+        return RecurringResponse.builder()
+                .recurringId(recurringId == null ? null : String.valueOf(recurringId))
+                .itemName(stringValue(value(recurring, "product_name", "productName", "itemName")))
+                .price(price instanceof BigDecimal ? (BigDecimal) price : new BigDecimal(String.valueOf(price)))
+                .cycleDay(cycleDay instanceof Number
+                        ? ((Number) cycleDay).intValue() : Integer.parseInt(String.valueOf(cycleDay)))
+                .category(stringValue(value(recurring, "category")))
+                .petId(petId == null ? null : String.valueOf(petId))
+                .nextPaymentDate(nextPaymentDate == null ? null : String.valueOf(nextPaymentDate))
+                .build();
+    }
+
+    private static Object value(Map<String, Object> map, String... keys) {
+        for (String key : keys) {
+            if (map.containsKey(key)) return map.get(key);
+        }
+        return null;
+    }
+
+    private static String blankToNull(String value) {
+        if (value == null || value.isBlank()) return null;
+        return value.trim();
+    }
+
+    private static String stringValue(Object value) {
+        return value == null ? null : String.valueOf(value);
     }
 }

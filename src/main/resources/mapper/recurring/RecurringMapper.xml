@@ -1,14 +1,17 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
 <mapper namespace="com.aewol.domain.recurring.mapper.RecurringMapper">
-    <!-- V4: cycle_days(주기 일수) -> payment_day(매월 며칠, 1~28) -->
+    <!-- V4/V16: payment_day는 매월 결제 희망일(1~31), 없는 날짜는 서비스에서 말일 처리 -->
 
     <select id="findById" resultType="map">
-        SELECT * FROM recurring_payment WHERE recurring_id = #{recurringId}
+        SELECT * FROM recurring_payment
+        WHERE recurring_id = #{recurringId} AND is_active = 1
     </select>
 
     <select id="findByWalletId" resultType="map">
-        SELECT * FROM recurring_payment WHERE wallet_id = #{walletId} AND is_active = 1
+        SELECT * FROM recurring_payment
+        WHERE wallet_id = #{walletId} AND is_active = 1
+        ORDER BY next_payment_date ASC, recurring_id ASC
     </select>
 
     <insert id="insert" parameterType="map" useGeneratedKeys="true" keyProperty="recurringId" keyColumn="recurring_id">
@@ -17,7 +20,8 @@
     </insert>
 
     <update id="deactivate">
-        UPDATE recurring_payment SET is_active = 0 WHERE recurring_id = #{recurringId}
+        UPDATE recurring_payment SET is_active = 0
+        WHERE recurring_id = #{recurringId} AND is_active = 1
     </update>
 
     <select id="findDuePayments" resultType="map">
