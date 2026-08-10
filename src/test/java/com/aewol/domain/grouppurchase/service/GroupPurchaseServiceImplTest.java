@@ -369,8 +369,8 @@ class GroupPurchaseServiceImplTest {
     }
 
     @Test
-    @DisplayName("마감 후 목표 수량을 못 채웠으면 CANCELLED로 응답한다")
-    void should_returnCancelled_when_deadlinePassedAndTargetNotReached_onGetMyList() {
+    @DisplayName("마감 후 목표 수량을 못 채웠으면 FAILED로 응답한다")
+    void should_returnFailed_when_deadlinePassedAndTargetNotReached_onGetMyList() {
         GroupPurchaseServiceImpl service = service();
         LocalDateTime pastDeadline = LocalDateTime.now().minusDays(1);
         when(groupPurchaseMapper.findMyGroupPurchases("member-1", null))
@@ -378,7 +378,7 @@ class GroupPurchaseServiceImplTest {
 
         List<GroupPurchaseMyItemResponse> result = service.getMyList("member-1", null);
 
-        assertEquals("CANCELLED", result.get(0).getStatus());
+        assertEquals("FAILED", result.get(0).getStatus());
     }
 
     @Test
@@ -392,6 +392,24 @@ class GroupPurchaseServiceImplTest {
         List<GroupPurchaseMyItemResponse> result = service.getMyList("member-1", null);
 
         assertEquals("CANCELLED", result.get(0).getStatus());
+    }
+
+    @Test
+    @DisplayName("작성자 취소(CANCELLED)와 마감 미달(FAILED)은 서로 다른 status 값으로 구분된다")
+    void should_returnDifferentStatus_forOwnerCancelledAndDeadlinePassedTargetNotReached_onGetMyList() {
+        GroupPurchaseServiceImpl service = service();
+        LocalDateTime futureDeadline = LocalDateTime.now().plusDays(5);
+        LocalDateTime pastDeadline = LocalDateTime.now().minusDays(1);
+        when(groupPurchaseMapper.findMyGroupPurchases("member-1", null))
+                .thenReturn(List.of(
+                        listRow(1L, "CANCELLED", futureDeadline, 30000, 25000, 2, 10),
+                        listRow(2L, "OPEN", pastDeadline, 30000, 25000, 4, 10)));
+
+        List<GroupPurchaseMyItemResponse> result = service.getMyList("member-1", null);
+
+        assertEquals("CANCELLED", result.get(0).getStatus());
+        assertEquals("FAILED", result.get(1).getStatus());
+        org.junit.jupiter.api.Assertions.assertNotEquals(result.get(0).getStatus(), result.get(1).getStatus());
     }
 
     @Test

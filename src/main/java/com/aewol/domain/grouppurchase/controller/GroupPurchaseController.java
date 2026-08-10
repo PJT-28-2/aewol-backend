@@ -45,7 +45,8 @@ public class GroupPurchaseController {
                 groupPurchaseService.list(memberId, status, keyword, category, page, size)));
     }
 
-    @Operation(summary = "참여했던 공동구매 게시글 조회(마이페이지)")
+    /** 일반 유저(role=USER) 전용. SecurityConfig에서 GET /api/group-purchase/my에 ROLE_USER를 요구한다(관리자의 작성글 관리는 별도 엔드포인트 예정). */
+    @Operation(summary = "참여했던 공동구매 게시글 조회(마이페이지, 일반 유저 전용)")
     @GetMapping("/my")
     public ResponseEntity<ApiResponse<List<GroupPurchaseMyItemResponse>>> myList(
             @AuthenticationPrincipal String memberId,

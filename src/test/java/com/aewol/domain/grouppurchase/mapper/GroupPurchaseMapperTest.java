@@ -28,7 +28,8 @@ import org.springframework.jdbc.support.KeyHolder;
 
 /**
  * findMyGroupPurchases의 status 필터 SQL이 GroupPurchaseServiceImpl#toMyStatus와
- * 동일한 기준(목표 수량 달성 시 마감 여부 무관 COMPLETED)으로 판정하는지 실제 H2 DB에 대해 검증한다.
+ * 동일한 기준(4분리: OPEN/COMPLETED/FAILED/CANCELLED)으로 판정하는지, 그리고 게시글은
+ * 관리자만 작성하므로 참여글(group_purchase_participant)만 반환하는지 실제 H2 DB에 대해 검증한다.
  * GroupPurchaseServiceImplTest는 매퍼를 mock으로 대체하므로 이 SQL 자체는 그쪽 테스트로 잡히지 않는다.
  */
 class GroupPurchaseMapperTest {
@@ -71,22 +72,24 @@ class GroupPurchaseMapperTest {
     }
 
     @Test
-    @DisplayName("작성글과 참여글을 합쳐서 조회하고, 자기 글에 자기가 참여해도 중복 없이 반환한다")
-    void should_returnAuthoredAndParticipatedGroupPurchases_withoutDuplicates() {
-        long ownGpId = insertGroupPurchase(1L, "OPEN", 3, 10, LocalDateTime.now().plusDays(5));
-        insertParticipant(ownGpId, 1L); // 작성자 본인이 자기 글에 참여한 경우 (LEFT JOIN 중복 유발 케이스)
-        long othersGpId = insertGroupPurchase(2L, "OPEN", 1, 5, LocalDateTime.now().plusDays(5));
-        insertParticipant(othersGpId, 1L); // 다른 사람 글에 참여
+    @DisplayName("참여한 공동구매만 반환하고, 참여하지 않은(작성만 한) 공동구매는 반환하지 않는다")
+    void should_returnOnlyParticipatedGroupPurchases_notAuthoredWithoutParticipation() {
+        long authoredOnlyGpId = insertGroupPurchase(99L, "OPEN", 3, 10, LocalDateTime.now().plusDays(5));
+        // 관리자(99L)가 작성만 하고 본인은 참여하지 않은 글 — 마이페이지(참여자 전용)에서 제외되어야 한다.
+        long participatedGpId = insertGroupPurchase(99L, "OPEN", 1, 5, LocalDateTime.now().plusDays(5));
+        insertParticipant(participatedGpId, 1L);
 
         List<Map<String, Object>> result = findMyGroupPurchases("1", null);
 
-        assertEquals(2, result.size());
+        assertEquals(1, result.size());
+        assertEquals(participatedGpId, ((Number) result.get(0).get("gp_id")).longValue());
     }
 
     @Test
     @DisplayName("마감 전이어도 목표 수량을 채웠으면 COMPLETED 필터에 잡히고 OPEN 필터에서는 빠진다")
     void should_matchCompletedFilter_notOpenFilter_when_targetReachedBeforeDeadline() {
-        insertGroupPurchase(1L, "OPEN", 10, 10, LocalDateTime.now().plusDays(5));
+        long gpId = insertGroupPurchase(99L, "OPEN", 10, 10, LocalDateTime.now().plusDays(5));
+        insertParticipant(gpId, 1L);
 
         assertEquals(1, findMyGroupPurchases("1", "COMPLETED").size());
         assertEquals(0, findMyGroupPurchases("1", "OPEN").size());
@@ -95,39 +98,48 @@ class GroupPurchaseMapperTest {
     @Test
     @DisplayName("마감 전이고 목표 미달이면 OPEN 필터에만 잡힌다")
     void should_matchOpenFilterOnly_when_deadlineNotPassedAndTargetNotReached() {
-        insertGroupPurchase(1L, "OPEN", 3, 10, LocalDateTime.now().plusDays(5));
+        long gpId = insertGroupPurchase(99L, "OPEN", 3, 10, LocalDateTime.now().plusDays(5));
+        insertParticipant(gpId, 1L);
 
         assertEquals(1, findMyGroupPurchases("1", "OPEN").size());
+        assertEquals(0, findMyGroupPurchases("1", "COMPLETED").size());
+        assertEquals(0, findMyGroupPurchases("1", "FAILED").size());
+        assertEquals(0, findMyGroupPurchases("1", "CANCELLED").size());
+    }
+
+    @Test
+    @DisplayName("마감이 지났고 목표 미달이면 FAILED 필터에만 잡힌다")
+    void should_matchFailedFilterOnly_when_deadlinePassedAndTargetNotReached() {
+        long gpId = insertGroupPurchase(99L, "OPEN", 3, 10, LocalDateTime.now().minusDays(1));
+        insertParticipant(gpId, 1L);
+
+        assertEquals(1, findMyGroupPurchases("1", "FAILED").size());
+        assertEquals(0, findMyGroupPurchases("1", "OPEN").size());
         assertEquals(0, findMyGroupPurchases("1", "COMPLETED").size());
         assertEquals(0, findMyGroupPurchases("1", "CANCELLED").size());
     }
 
     @Test
-    @DisplayName("마감이 지났고 목표 미달이면 CANCELLED 필터에만 잡힌다")
-    void should_matchCancelledFilterOnly_when_deadlinePassedAndTargetNotReached() {
-        insertGroupPurchase(1L, "OPEN", 3, 10, LocalDateTime.now().minusDays(1));
-
-        assertEquals(1, findMyGroupPurchases("1", "CANCELLED").size());
-        assertEquals(0, findMyGroupPurchases("1", "OPEN").size());
-        assertEquals(0, findMyGroupPurchases("1", "COMPLETED").size());
-    }
-
-    @Test
-    @DisplayName("작성자가 취소한 공동구매는 마감 전이어도 CANCELLED 필터에만 잡힌다")
+    @DisplayName("작성자(관리자)가 취소한 공동구매는 마감 전이어도 CANCELLED 필터에만 잡히고 FAILED 필터에는 잡히지 않는다")
     void should_matchCancelledFilterOnly_when_ownerCancelled() {
-        insertGroupPurchase(1L, "CANCELLED", 3, 10, LocalDateTime.now().plusDays(5));
+        long gpId = insertGroupPurchase(99L, "CANCELLED", 3, 10, LocalDateTime.now().plusDays(5));
+        insertParticipant(gpId, 1L);
 
         assertEquals(1, findMyGroupPurchases("1", "CANCELLED").size());
         assertEquals(0, findMyGroupPurchases("1", "OPEN").size());
         assertEquals(0, findMyGroupPurchases("1", "COMPLETED").size());
+        assertEquals(0, findMyGroupPurchases("1", "FAILED").size());
     }
 
     @Test
-    @DisplayName("status 필터가 없으면 상태와 무관하게 모두 반환한다")
+    @DisplayName("status 필터가 없으면 상태와 무관하게 참여한 공동구매를 모두 반환한다")
     void should_returnAll_when_statusFilterIsNull() {
-        insertGroupPurchase(1L, "OPEN", 3, 10, LocalDateTime.now().plusDays(5));
-        insertGroupPurchase(1L, "CANCELLED", 1, 10, LocalDateTime.now().plusDays(5));
-        insertGroupPurchase(1L, "OPEN", 10, 10, LocalDateTime.now().minusDays(1));
+        long openGpId = insertGroupPurchase(99L, "OPEN", 3, 10, LocalDateTime.now().plusDays(5));
+        insertParticipant(openGpId, 1L);
+        long cancelledGpId = insertGroupPurchase(99L, "CANCELLED", 1, 10, LocalDateTime.now().plusDays(5));
+        insertParticipant(cancelledGpId, 1L);
+        long failedGpId = insertGroupPurchase(99L, "OPEN", 10, 10, LocalDateTime.now().minusDays(1));
+        insertParticipant(failedGpId, 1L);
 
         assertTrue(findMyGroupPurchases("1", null).size() >= 3);
     }

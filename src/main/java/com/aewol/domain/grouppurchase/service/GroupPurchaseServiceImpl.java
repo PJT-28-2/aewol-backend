@@ -392,10 +392,10 @@ public class GroupPurchaseServiceImpl implements GroupPurchaseService {
     }
 
     /**
-     * 마이페이지 목록 전용 OPEN/COMPLETED/CANCELLED 값을 계산한다. DB status 컬럼은 실제로 OPEN/CANCELLED만
-     * 저장되므로(COMPLETED/CLOSED는 findList처럼 계산값), 여기서도 저장값을 그대로 내려주지 않고
-     * computeDisplayStatus/toWaitStatus와 동일한 마감시각·목표수량 기준으로 판정한다.
-     * 목록 화면이라 7번(getStatus)처럼 취소 사유를 세분화하지 않고 마감 후 미달성도 CANCELLED로 묶는다.
+     * 마이페이지 목록 전용 OPEN/COMPLETED/FAILED/CANCELLED 값을 계산한다(Notion 2026-08-10 정책 변경,
+     * 순서7 getStatus/toWaitStatus와 동일한 4분리 기준). DB status 컬럼은 실제로 OPEN/CANCELLED만
+     * 저장되므로(COMPLETED/FAILED는 findList처럼 계산값), 여기서도 저장값을 그대로 내려주지 않고
+     * 판정 순서([관리자 취소 여부] → [목표 수량 도달 여부] → [마감일 경과 여부])로 계산한다.
      */
     private static String toMyStatus(String dbStatus, LocalDateTime deadline, Integer currentQuantity, Integer targetQuantity) {
         if ("CANCELLED".equals(dbStatus)) {
@@ -407,7 +407,7 @@ public class GroupPurchaseServiceImpl implements GroupPurchaseService {
             return "COMPLETED";
         }
         if (deadline != null && deadline.isBefore(LocalDateTime.now())) {
-            return "CANCELLED";
+            return "FAILED";
         }
         return "OPEN";
     }
