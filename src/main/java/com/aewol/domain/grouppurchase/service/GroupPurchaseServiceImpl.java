@@ -144,7 +144,7 @@ public class GroupPurchaseServiceImpl implements GroupPurchaseService {
                 .unitPrice(toDecimal(gp.get("unit_price")))
                 .groupPrice(toDecimal(gp.get("group_price")))
                 .participantInfo(participantInfo)
-                .noticeMessage(toNoticeMessage(status, ownerCancelled))
+                .noticeMessage(toNoticeMessage(status))
                 .build();
     }
 
@@ -345,10 +345,10 @@ public class GroupPurchaseServiceImpl implements GroupPurchaseService {
     }
 
     /**
-     * 상태 화면 전용 waiting/confirmed/cancelled 값을 계산한다. Notion 명세가 이 3개 값만 허용하므로
-     * (작성자 취소 vs 마감 미달) 구분은 status가 아니라 noticeMessage 문구로만 표현한다.
-     * 목표 수량 달성은 마감 전이라도 즉시 확정으로 보고(초과 참여는 updateQuantity에서 이미 막혀 있음),
-     * 취소된 공동구매와 마감 후 미달성은 모두 cancelled로 묶는다(별도 "실패" 상태가 명세에 없음).
+     * 상태 화면 전용 waiting/confirmed/failed/cancelled 값을 계산한다(Notion 2026-08-10 정책 변경).
+     * 판정 순서: [관리자 취소 여부] → [목표 수량 도달 여부] → [마감일 경과 여부].
+     * 목표 수량 달성은 마감 전이라도 즉시 confirmed로 확정하고(초과 참여는 updateQuantity에서 이미 막혀 있음),
+     * 마감 후 미달성은 failed(환불 대상), 관리자 취소는 cancelled로 각각 구분한다.
      */
     private static String toWaitStatus(boolean ownerCancelled, LocalDateTime deadline, Integer currentQuantity, Integer targetQuantity) {
         if (ownerCancelled) {
@@ -360,18 +360,17 @@ public class GroupPurchaseServiceImpl implements GroupPurchaseService {
             return "confirmed";
         }
         if (deadline != null && deadline.isBefore(LocalDateTime.now())) {
-            return "cancelled";
+            return "failed";
         }
         return "waiting";
     }
 
-    /** confirmed와 cancelled(작성자 취소/마감 미달)를 각각 다른 문구로 안내한다. */
-    private static String toNoticeMessage(String status, boolean ownerCancelled) {
+    /** 각 status 값에 맞는 안내 문구를 반환한다. */
+    private static String toNoticeMessage(String status) {
         return switch (status) {
             case "confirmed" -> "목표 인원이 모두 모여 공동구매가 확정되었습니다.";
-            case "cancelled" -> ownerCancelled
-                    ? "작성자가 취소한 공동구매입니다."
-                    : "목표 인원 미달로 공동구매가 취소되어 환불됩니다.";
+            case "failed" -> "목표 인원 미달로 공동구매가 취소되어 환불됩니다.";
+            case "cancelled" -> "작성자가 취소한 공동구매입니다.";
             default -> "목표 인원이 모두 모이면 공동구매가 최종 확정됩니다.";
         };
     }
