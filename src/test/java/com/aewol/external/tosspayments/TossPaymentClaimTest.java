@@ -1,4 +1,4 @@
-package com.aewol.domain.transaction.service;
+package com.aewol.external.tosspayments;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;

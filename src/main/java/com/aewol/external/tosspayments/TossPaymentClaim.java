@@ -1,4 +1,4 @@
-package com.aewol.domain.transaction.service;
+package com.aewol.external.tosspayments;
 
 import com.aewol.common.exception.BusinessException;
 import java.nio.charset.StandardCharsets;

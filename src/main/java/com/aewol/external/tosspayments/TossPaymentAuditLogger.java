@@ -1,4 +1,4 @@
-package com.aewol.domain.transaction.service;
+package com.aewol.external.tosspayments;
 
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
