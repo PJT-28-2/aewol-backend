@@ -41,6 +41,7 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.GET, "/api/banks").permitAll()
                         // Admin only
                         .requestMatchers("/api/admin/**").hasRole("ADMIN")
+                        .requestMatchers(HttpMethod.POST, "/api/group-purchase", "/api/group-purchase/images").hasRole("ADMIN")
                         // All other requests require authentication
                         .anyRequest().authenticated()
                 )
