@@ -22,12 +22,6 @@ public class RestTemplateConfig {
         return new RestTemplate(requestFactory);
     }
 
-    // CODEF 전용 RestTemplate — 연결 5초 / 응답 대기 10초로 제한한다. 기본 restTemplate()은
-    // 타임아웃이 전혀 없어서, CODEF가 응답을 지연하면 요청이 무기한 블로킹되고 그 호출이
-    // @Transactional 메서드 안에 있으면 DB 커넥션 풀까지 고갈될 수 있다(CodeRabbit 지적,
-    // 2026-08-06). 다른 외부 연동(Toss/Naver/Kakao 등)은 기존 restTemplate()을 그대로 쓰고
-    // 있어서 그쪽 타임아웃 정책은 건드리지 않는다.
-    //
     // connectionRequestTimeout(풀에서 연결을 빌려오는 대기 시간)도 같이 설정한다 — 이걸
     // 안 정하면 무제한 대기가 기본값이라 위 두 타임아웃을 걸어도 소용없다. 또한
     // HttpClients 기본 커넥션 풀은 라우트당 2개로 제한돼 있어서 동시 CODEF 호출이
@@ -43,6 +37,31 @@ public class RestTemplateConfig {
         RequestConfig requestConfig = RequestConfig.custom()
                 .setConnectTimeout(5_000)
                 .setSocketTimeout(10_000)
+                .setConnectionRequestTimeout(5_000)
+                .build();
+
+        HttpComponentsClientHttpRequestFactory factory = new HttpComponentsClientHttpRequestFactory(
+                HttpClientBuilder.create()
+                        .setConnectionManager(connectionManager)
+                        .setDefaultRequestConfig(requestConfig)
+                        .build());
+        return new RestTemplate(factory);
+    }
+
+    // TossPayments 전용 RestTemplate — codefRestTemplate()과 동일한 이유로 커넥션 풀링 +
+    // connectionRequestTimeout을 명시한다. confirm/cancel은 실제 돈이 오가는 호출이라
+    // 기본 restTemplate()(풀링 없는 SimpleClientHttpRequestFactory, connectionRequestTimeout
+    // 미설정)로는 동시 요청 시 커넥션 확보 단계에서부터 막힐 수 있다. 소켓 타임아웃은
+    // CODEF(10초)보다 여유를 둔다 — confirm 호출 안에서 카드사 승인까지 기다려야 하므로.
+    @Bean
+    public RestTemplate tossRestTemplate() {
+        PoolingHttpClientConnectionManager connectionManager = new PoolingHttpClientConnectionManager();
+        connectionManager.setMaxTotal(20);
+        connectionManager.setDefaultMaxPerRoute(20);
+
+        RequestConfig requestConfig = RequestConfig.custom()
+                .setConnectTimeout(5_000)
+                .setSocketTimeout(20_000)
                 .setConnectionRequestTimeout(5_000)
                 .build();
 
