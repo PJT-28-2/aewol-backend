@@ -1,6 +1,7 @@
 package com.aewol.domain.transaction.service;
 
 import com.aewol.common.exception.BusinessException;
+import com.aewol.domain.transaction.dto.PaymentRecordCommand;
 import com.aewol.domain.transaction.dto.PaymentRequest;
 import com.aewol.domain.transaction.dto.TransactionResponse;
 import com.aewol.domain.transaction.dto.TransactionTagUpdateRequest;
@@ -40,7 +41,25 @@ public class TransactionServiceImpl implements TransactionService {
     @Override
     @Transactional
     public TransactionResponse processPayment(String memberId, PaymentRequest request) {
-        Map<String, Object> wallet = walletMapper.findByMemberId(memberId);
+        PaymentRecordCommand command = PaymentRecordCommand.builder()
+                .memberId(memberId)
+                .merchantName(request.getMerchantName())
+                .amount(request.getAmount())
+                .petId(request.getPetId())
+                .memo(request.getMemo())
+                .paymentKey(null)
+                .build();
+        return recordPayment(command);
+    }
+
+    @Override
+    @Transactional
+    public TransactionResponse recordExternalPayment(PaymentRecordCommand command) {
+        return recordPayment(command);
+    }
+
+    private TransactionResponse recordPayment(PaymentRecordCommand command) {
+        Map<String, Object> wallet = walletMapper.findByMemberId(command.getMemberId());
         if (wallet == null) {
             throw BusinessException.notFound("지갑을 찾을 수 없습니다.");
         }
@@ -48,35 +67,41 @@ public class TransactionServiceImpl implements TransactionService {
         String walletId = String.valueOf(wallet.get("wallet_id"));
 
         // 자동 태깅
-        String category = autoTaggingService.categorize(request.getMerchantName());
-        log.info("자동 태깅 결과 - merchant: {}, category: {}", request.getMerchantName(), category);
+        String category = autoTaggingService.categorize(command.getMerchantName());
+        log.info("자동 태깅 결과 - merchant: {}, category: {}", command.getMerchantName(), category);
 
         // 지갑 잔액 차감 (V1에서 버킷 폐기 — 지갑 단일 잔액)
         BigDecimal balance = (BigDecimal) wallet.get("balance");
-        if (balance.compareTo(request.getAmount()) < 0) {
+        if (balance.compareTo(command.getAmount()) < 0) {
             throw new BusinessException("잔액이 부족합니다.");
         }
         // balance 조회 후 절대값을 저장하면 동시 결제에서 갱신이 유실될 수 있어,
         // balance - amount와 balance >= amount 조건을 하나의 원자적 UPDATE로 수행한다.
-        if (walletMapper.deductBalance(walletId, request.getAmount()) == 0) {
+        if (walletMapper.deductBalance(walletId, command.getAmount()) == 0) {
             throw new BusinessException("잔액이 부족합니다.");
         }
 
         // 거래 기록 생성 — txn_id는 AUTO_INCREMENT 생성 키
         Map<String, Object> txn = new HashMap<>();
         txn.put("walletId", walletId);
-        txn.put("petId", request.getPetId());
+        txn.put("petId", command.getPetId());
         txn.put("txnType", "PAYMENT");
-        txn.put("price", request.getAmount());
+        txn.put("price", command.getAmount());
         txn.put("category", category);
-        txn.put("merchantName", request.getMerchantName());
+        txn.put("merchantName", command.getMerchantName());
         txn.put("merchantCategoryCode", null);
-        txn.put("memo", request.getMemo());
+        txn.put("memo", command.getMemo());
         txn.put("autoTagged", "Y");
         txn.put("txnDate", LocalDateTime.now());
-        transactionMapper.insert(txn);
+        if (command.getPaymentKey() != null) {
+            txn.put("paymentKey", command.getPaymentKey());
+            txn.put("orderId", command.getOrderId());
+            transactionMapper.insertTossPayment(txn);
+        } else {
+            transactionMapper.insert(txn);
+        }
 
-        return getTransaction(memberId, String.valueOf(txn.get("txnId")));
+        return getTransaction(command.getMemberId(), String.valueOf(txn.get("txnId")));
     }
 
     @Override
