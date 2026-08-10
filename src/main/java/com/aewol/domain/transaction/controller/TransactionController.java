@@ -2,11 +2,9 @@ package com.aewol.domain.transaction.controller;
 
 import com.aewol.common.response.ApiResponse;
 import com.aewol.domain.transaction.dto.PaymentRequest;
-import com.aewol.domain.transaction.dto.TossPaymentConfirmRequest;
 import com.aewol.domain.transaction.dto.TransactionResponse;
 import com.aewol.domain.transaction.dto.TransactionTagUpdateRequest;
 import com.aewol.domain.transaction.dto.TransactionPageResponse;
-import com.aewol.domain.transaction.service.TossPaymentService;
 import com.aewol.domain.transaction.service.TransactionService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -26,7 +24,6 @@ import java.util.List;
 public class TransactionController {
 
     private final TransactionService transactionService;
-    private final TossPaymentService tossPaymentService;
 
     @Operation(summary = "결제 (자동 태깅)")
     @PostMapping("/payment")
@@ -34,15 +31,6 @@ public class TransactionController {
                                                                      @Valid @RequestBody PaymentRequest request) {
         return ResponseEntity.status(HttpStatus.CREATED)
                 .body(ApiResponse.created(transactionService.processPayment(memberId, request)));
-    }
-
-    @Operation(summary = "Toss 결제 승인 확정")
-    @PostMapping("/toss-confirm")
-    public ResponseEntity<ApiResponse<TransactionResponse>> tossConfirm(
-            @AuthenticationPrincipal String memberId,
-            @Valid @RequestBody TossPaymentConfirmRequest request) {
-        return ResponseEntity.status(HttpStatus.CREATED)
-                .body(ApiResponse.created(tossPaymentService.confirm(memberId, request)));
     }
 
     @Operation(summary = "거래 내역 조회")

@@ -47,14 +47,7 @@ public class TransactionServiceImpl implements TransactionService {
                 .amount(request.getAmount())
                 .petId(request.getPetId())
                 .memo(request.getMemo())
-                .paymentKey(null)
                 .build();
-        return recordPayment(command);
-    }
-
-    @Override
-    @Transactional
-    public TransactionResponse recordExternalPayment(PaymentRecordCommand command) {
         return recordPayment(command);
     }
 
@@ -93,13 +86,7 @@ public class TransactionServiceImpl implements TransactionService {
         txn.put("memo", command.getMemo());
         txn.put("autoTagged", "Y");
         txn.put("txnDate", LocalDateTime.now());
-        if (command.getPaymentKey() != null) {
-            txn.put("paymentKey", command.getPaymentKey());
-            txn.put("orderId", command.getOrderId());
-            transactionMapper.insertTossPayment(txn);
-        } else {
-            transactionMapper.insert(txn);
-        }
+        transactionMapper.insert(txn);
 
         return getTransaction(command.getMemberId(), String.valueOf(txn.get("txnId")));
     }
