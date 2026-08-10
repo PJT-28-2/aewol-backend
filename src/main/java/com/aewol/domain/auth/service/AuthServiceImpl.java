@@ -2,6 +2,7 @@ package com.aewol.domain.auth.service;
 
 import com.aewol.common.exception.BusinessException;
 import com.aewol.common.util.JwtUtil;
+import com.aewol.common.util.PhoneNumberUtil;
 import com.aewol.domain.auth.dto.LoginRequest;
 import com.aewol.domain.auth.dto.SignupRequest;
 import com.aewol.domain.auth.dto.SignupResponse;
@@ -148,6 +149,12 @@ public class AuthServiceImpl implements AuthService {
 
         if (memberMapper.existsActiveByEmail(request.getEmail())) {
             throw BusinessException.conflict("이미 가입된 이메일입니다.");
+        }
+
+        String normalizedPhone = PhoneNumberUtil.normalize(request.getPhone());
+        if (normalizedPhone != null && !normalizedPhone.isEmpty()
+                && memberMapper.existsActiveByPhone(normalizedPhone)) {
+            throw BusinessException.conflict("이미 사용 중인 전화번호입니다.");
         }
 
         // 신규 가입과 탈퇴 회원 복구의 DB 변경을 지갑·알림 설정과 함께 하나의 트랜잭션으로 처리한다.
@@ -343,7 +350,7 @@ public class AuthServiceImpl implements AuthService {
         member.put("email", request.getEmail());
         member.put("password", encodedPassword);
         member.put("name", request.getName());
-        member.put("phone", request.getPhone());
+        member.put("phone", PhoneNumberUtil.normalize(request.getPhone()));
         member.put("provider", "LOCAL");
         member.put("providerId", null);
         member.put("emailVerified", "Y");

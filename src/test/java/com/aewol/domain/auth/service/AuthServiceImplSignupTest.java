@@ -257,17 +257,89 @@ class AuthServiceImplSignupTest {
         verify(redisTemplate, never()).execute(any(RedisScript.class), anyList(), anyString());
     }
 
+    @Test
+    void normalizesPhoneBeforeCreatingLocalMember() {
+        stubCompletedVerification();
+        when(passwordEncoder.encode("password12")).thenReturn("encoded");
+        when(memberMapper.existsActiveByEmail(EMAIL)).thenReturn(false);
+        when(memberMapper.existsActiveByPhone("01012345678")).thenReturn(false);
+        when(memberMapper.findLatestInactiveByEmailForUpdate(EMAIL)).thenReturn(null);
+        doAnswer(invocation -> {
+            ((Map<String, Object>) invocation.getArgument(0)).put("memberId", 7L);
+            return null;
+        }).when(memberMapper).insert(any());
+
+        authService.signup(request(false, "010-1234-5678"));
+
+        verify(memberMapper).existsActiveByPhone("01012345678");
+        verify(memberMapper).insert(argThat(member -> "01012345678".equals(member.get("phone"))));
+    }
+
+    @Test
+    void activeDuplicatePhoneRejectsLocalSignup() {
+        stubCompletedVerification();
+        when(passwordEncoder.encode("password12")).thenReturn("encoded");
+        when(memberMapper.existsActiveByEmail(EMAIL)).thenReturn(false);
+        when(memberMapper.existsActiveByPhone("01012345678")).thenReturn(true);
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> authService.signup(request(false, "010 1234 5678")));
+
+        assertEquals(409, exception.getStatus().value());
+        assertEquals("이미 사용 중인 전화번호입니다.", exception.getMessage());
+        verify(memberMapper, never()).findLatestInactiveByEmailForUpdate(anyString());
+        verify(memberMapper, never()).insert(any());
+        verify(memberMapper, never()).restoreLocalMember(any());
+    }
+
+    @Test
+    void inactiveRecoveryTargetDoesNotBlockItsOwnPhoneAndStoresNormalizedValue() {
+        stubCompletedVerification();
+        when(passwordEncoder.encode("password12")).thenReturn("encoded");
+        when(memberMapper.existsActiveByEmail(EMAIL)).thenReturn(false);
+        when(memberMapper.existsActiveByPhone("01012345678")).thenReturn(false);
+        when(memberMapper.findLatestInactiveByEmailForUpdate(EMAIL))
+                .thenReturn(inactive("LOCAL", 9L, true));
+        when(memberMapper.restoreLocalMember(any())).thenReturn(1);
+
+        authService.signup(request(false, "010-1234-5678"));
+
+        verify(memberMapper).existsActiveByPhone("01012345678");
+        verify(memberMapper).restoreLocalMember(argThat(member ->
+                Long.valueOf(9L).equals(member.get("memberId"))
+                        && "01012345678".equals(member.get("phone"))));
+    }
+
+    @Test
+    void anotherActiveMembersPhoneRejectsLocalRecovery() {
+        stubCompletedVerification();
+        when(passwordEncoder.encode("password12")).thenReturn("encoded");
+        when(memberMapper.existsActiveByEmail(EMAIL)).thenReturn(false);
+        when(memberMapper.existsActiveByPhone("01012345678")).thenReturn(true);
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> authService.signup(request(false, "010-1234-5678")));
+
+        assertEquals(409, exception.getStatus().value());
+        assertEquals("이미 사용 중인 전화번호입니다.", exception.getMessage());
+        verify(memberMapper, never()).restoreLocalMember(any());
+    }
+
     private void stubCompletedVerification() {
         when(valueOperations.get(COMPLETED_KEY)).thenReturn(COMPLETED_VALUE);
     }
 
     private SignupRequest request(boolean marketing) {
+        return request(marketing, "01012345678");
+    }
+
+    private SignupRequest request(boolean marketing, String phone) {
         SignupRequest request = new SignupRequest();
         ReflectionTestUtils.setField(request, "email", EMAIL);
         ReflectionTestUtils.setField(request, "verificationCode", CODE);
         ReflectionTestUtils.setField(request, "password", "password12");
         ReflectionTestUtils.setField(request, "name", "홍길동");
-        ReflectionTestUtils.setField(request, "phone", "01012345678");
+        ReflectionTestUtils.setField(request, "phone", phone);
         ReflectionTestUtils.setField(request, "zipCode", "12345");
         ReflectionTestUtils.setField(request, "address", "제주시 애월읍");
         ReflectionTestUtils.setField(request, "addressDetail", "101호");

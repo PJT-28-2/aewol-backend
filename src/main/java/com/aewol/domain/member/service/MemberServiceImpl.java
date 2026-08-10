@@ -1,7 +1,10 @@
 package com.aewol.domain.member.service;
 
 import com.aewol.common.exception.BusinessException;
+import com.aewol.common.util.PhoneNumberUtil;
 import com.aewol.domain.auth.service.AuthCredentialStore;
+import com.aewol.domain.member.dto.MemberPasswordChangeRequest;
+import com.aewol.domain.member.dto.MemberPasswordVerifyRequest;
 import com.aewol.domain.member.dto.MemberResponse;
 import com.aewol.domain.member.dto.MemberUpdateRequest;
 import com.aewol.domain.member.dto.MemberWithdrawRequest;
@@ -22,6 +25,8 @@ import java.util.Map;
 @RequiredArgsConstructor
 @Slf4j
 public class MemberServiceImpl implements MemberService {
+
+    private static final String PASSWORD_MISMATCH_MESSAGE = "현재 비밀번호가 일치하지 않습니다.";
 
     private final MemberMapper memberMapper;
     private final PasswordEncoder passwordEncoder;
@@ -56,13 +61,41 @@ public class MemberServiceImpl implements MemberService {
 
         Map<String, Object> update = new HashMap<>();
         update.put("memberId", memberId);
-        update.put("name", request.getName() != null ? request.getName() : member.get("name"));
-        update.put("phone", request.getPhone() != null ? request.getPhone() : member.get("phone"));
-        update.put("profileImg", request.getProfileImg() != null ? request.getProfileImg() : member.get("profile_img"));
+        update.put("phone", updatedPhone(memberId, request.getPhone(), member.get("phone")));
+        update.put("profileImg", request.getProfileImg() != null
+                ? request.getProfileImg().trim() : member.get("profile_img"));
         update.put("zipCode", request.getZipCode() != null ? request.getZipCode() : member.get("zip_code"));
         update.put("address", request.getAddress() != null ? request.getAddress() : member.get("address"));
-        update.put("addressDetail", request.getAddressDetail() != null ? request.getAddressDetail() : member.get("address_detail"));
-        memberMapper.update(update);
+        update.put("addressDetail", request.getAddressDetail() != null
+                ? request.getAddressDetail().trim() : member.get("address_detail"));
+        validateRequiredProfileFields(request);
+        memberMapper.updateProfile(update);
+    }
+
+    @Override
+    public void verifyPassword(String memberId, MemberPasswordVerifyRequest request) {
+        Map<String, Object> member = findMember(memberId);
+        requireLocalMember(member, "카카오 회원은 비밀번호 확인 대상이 아닙니다.");
+        validateCurrentPassword(member, request.getCurrentPassword());
+    }
+
+    @Override
+    @Transactional
+    public void changePassword(String memberId, MemberPasswordChangeRequest request) {
+        Map<String, Object> member = findMember(memberId);
+        requireLocalMember(member, "카카오 회원은 비밀번호를 변경할 수 없습니다.");
+        validateCurrentPassword(member, request.getCurrentPassword());
+
+        if (request.getCurrentPassword().equals(request.getNewPassword())) {
+            throw new BusinessException("새 비밀번호는 현재 비밀번호와 달라야 합니다.");
+        }
+
+        String encodedPassword = passwordEncoder.encode(request.getNewPassword());
+        registerPasswordChangeCredentialCleanup(memberId);
+
+        if (memberMapper.updatePassword(memberId, encodedPassword) != 1) {
+            throw BusinessException.conflict("비밀번호를 변경할 수 없는 회원 상태입니다.");
+        }
     }
 
     @Override
@@ -73,16 +106,10 @@ public class MemberServiceImpl implements MemberService {
             throw BusinessException.conflict("이미 탈퇴한 회원입니다.");
         }
 
-        Object providerValue = member.get("provider");
-        String provider = providerValue instanceof String ? (String) providerValue : null;
+        String provider = providerOf(member);
         if ("LOCAL".equals(provider)) {
             String currentPassword = request != null ? request.getCurrentPassword() : null;
-            String storedPassword = (String) member.get("password");
-            if (!StringUtils.hasText(currentPassword)
-                    || storedPassword == null
-                    || !passwordEncoder.matches(currentPassword, storedPassword)) {
-                throw new BusinessException("현재 비밀번호가 일치하지 않습니다.");
-            }
+            validateCurrentPassword(member, currentPassword);
         } else if (!"KAKAO".equals(provider)) {
             throw new IllegalStateException("지원하지 않는 회원 인증 제공자입니다.");
         }
@@ -95,6 +122,65 @@ public class MemberServiceImpl implements MemberService {
         registerCredentialCleanup(memberId);
     }
 
+    private Map<String, Object> findMember(String memberId) {
+        Map<String, Object> member = memberMapper.findById(memberId);
+        if (member == null) {
+            throw BusinessException.notFound("회원을 찾을 수 없습니다.");
+        }
+        return member;
+    }
+
+    private String updatedPhone(String memberId, String requestedPhone, Object currentPhone) {
+        if (requestedPhone == null) {
+            return (String) currentPhone;
+        }
+        if (!StringUtils.hasText(requestedPhone)) {
+            throw new BusinessException("전화번호는 비어 있을 수 없습니다.");
+        }
+
+        String normalizedPhone = PhoneNumberUtil.normalize(requestedPhone);
+        if (!StringUtils.hasText(normalizedPhone)) {
+            throw new BusinessException("전화번호는 비어 있을 수 없습니다.");
+        }
+        if (memberMapper.existsActiveByPhoneExcludingMember(normalizedPhone, memberId)) {
+            throw BusinessException.conflict("이미 사용 중인 전화번호입니다.");
+        }
+        return normalizedPhone;
+    }
+
+    private void validateRequiredProfileFields(MemberUpdateRequest request) {
+        if (request.getZipCode() != null && !StringUtils.hasText(request.getZipCode())) {
+            throw new BusinessException("우편번호는 비어 있을 수 없습니다.");
+        }
+        if (request.getAddress() != null && !StringUtils.hasText(request.getAddress())) {
+            throw new BusinessException("주소는 비어 있을 수 없습니다.");
+        }
+    }
+
+    private void requireLocalMember(Map<String, Object> member, String kakaoMessage) {
+        String provider = providerOf(member);
+        if ("KAKAO".equals(provider)) {
+            throw new BusinessException(kakaoMessage);
+        }
+        if (!"LOCAL".equals(provider)) {
+            throw new IllegalStateException("지원하지 않는 회원 인증 제공자입니다.");
+        }
+    }
+
+    private String providerOf(Map<String, Object> member) {
+        Object provider = member.get("provider");
+        return provider instanceof String ? (String) provider : null;
+    }
+
+    private void validateCurrentPassword(Map<String, Object> member, String currentPassword) {
+        String storedPassword = (String) member.get("password");
+        if (!StringUtils.hasText(currentPassword)
+                || storedPassword == null
+                || !passwordEncoder.matches(currentPassword, storedPassword)) {
+            throw new BusinessException(PASSWORD_MISMATCH_MESSAGE);
+        }
+    }
+
     private void registerCredentialCleanup(String memberId) {
         // Redis는 DB 트랜잭션에 참여하지 않으므로 commit 이후에만 인증 세대를 교체하고 Refresh Token을 정리한다.
         TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
@@ -105,6 +191,19 @@ public class MemberServiceImpl implements MemberService {
                 } catch (RuntimeException e) {
                     // DB 탈퇴는 이미 확정됐으므로 성공 응답을 유지한다. 비활성 상태 검사가 기존 credential을 차단한다.
                     log.warn("회원탈퇴 후 인증 credential 정리에 실패했습니다. TTL 만료를 기다립니다.", e);
+                }
+            }
+        });
+    }
+
+    private void registerPasswordChangeCredentialCleanup(String memberId) {
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCommit() {
+                try {
+                    authCredentialStore.deleteRefresh(memberId);
+                } catch (RuntimeException e) {
+                    log.warn("비밀번호 변경 후 Refresh Token 삭제에 실패했습니다. TTL 만료를 기다립니다.", e);
                 }
             }
         });
