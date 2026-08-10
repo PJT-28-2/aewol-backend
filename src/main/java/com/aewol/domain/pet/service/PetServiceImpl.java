@@ -27,13 +27,18 @@ import java.util.stream.Collectors;
 public class PetServiceImpl implements PetService {
 
     private static final String VACCINATION = "VACCINATION";
+    private static final String MEDICAL_CONFIRMATION = "MEDICAL_CONFIRMATION";
+    private static final Set<String> UPLOADABLE_DOCUMENT_TYPES =
+            Set.of(VACCINATION, MEDICAL_CONFIRMATION);
     private static final String DOCUMENT_SUB_DIR = "pet-documents";
     private static final int MAX_DOCUMENT_NAME_LENGTH = 100;
-    private static final Map<String, Set<String>> ALLOWED_FILE_TYPES = Map.of(
-            "image/jpeg", Set.of("jpg", "jpeg"),
-            "image/png", Set.of("png"),
-            "application/pdf", Set.of("pdf")
-    );
+    private static final Set<String> ALLOWED_DOCUMENT_EXTENSIONS =
+            Set.of("jpg", "jpeg", "png", "pdf");
+    private static final byte[] JPEG_SIGNATURE = {(byte) 0xFF, (byte) 0xD8, (byte) 0xFF};
+    private static final byte[] PNG_SIGNATURE = {
+            (byte) 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A
+    };
+    private static final byte[] PDF_SIGNATURE = {0x25, 0x50, 0x44, 0x46, 0x2D};
 
     private final PetMapper petMapper;
     private final PetDocumentMapper petDocumentMapper;
@@ -105,12 +110,14 @@ public class PetServiceImpl implements PetService {
 
     @Override
     @Transactional
-    public PetDocumentResponse uploadVaccinationDocument(String memberId, String petId,
-                                                          MultipartFile file, LocalDate issuedDate) {
+    public PetDocumentResponse uploadPetDocument(String memberId, String petId, String docType,
+                                                 MultipartFile file, LocalDate issuedDate) {
         assertOwner(memberId, petId);
+        String normalizedDocType = normalizeDocumentType(docType);
         String storageExtension = validateDocument(file);
         String originalFilename = extractOriginalFilename(file);
-        Map<String, Object> existing = petDocumentMapper.findByPetIdAndTypeForUpdate(petId, VACCINATION);
+        Map<String, Object> existing = petDocumentMapper.findByPetIdAndTypeForUpdate(
+                petId, normalizedDocType);
         String newFileUrl;
         try {
             newFileUrl = fileUtil.upload(file, DOCUMENT_SUB_DIR, storageExtension);
@@ -121,7 +128,7 @@ public class PetServiceImpl implements PetService {
         Map<String, Object> document = new HashMap<>();
         document.put("petId", petId);
         document.put("docName", originalFilename);
-        document.put("docType", VACCINATION);
+        document.put("docType", normalizedDocType);
         document.put("fileUrl", newFileUrl);
         document.put("issuedDate", issuedDate);
 
@@ -140,6 +147,15 @@ public class PetServiceImpl implements PetService {
         String oldFileUrl = existing == null ? null : (String) existing.get("file_url");
         arrangeFileCleanup(newFileUrl, oldFileUrl);
         return toDocumentResponse(document);
+    }
+
+    private String normalizeDocumentType(String docType) {
+        String normalized = docType == null ? "" : docType.trim().toUpperCase(Locale.ROOT);
+        if (!UPLOADABLE_DOCUMENT_TYPES.contains(normalized)) {
+            throw new BusinessException(
+                    "문서 유형은 VACCINATION 또는 MEDICAL_CONFIRMATION만 가능합니다.");
+        }
+        return normalized;
     }
 
     @Override
@@ -169,16 +185,37 @@ public class PetServiceImpl implements PetService {
         if (file == null || file.isEmpty()) {
             throw new BusinessException("업로드할 파일이 없습니다.");
         }
-        String contentType = file.getContentType() == null ? "" : file.getContentType().toLowerCase(Locale.ROOT);
-        Set<String> extensions = ALLOWED_FILE_TYPES.get(contentType);
         String originalFilename = file.getOriginalFilename();
         String extension = originalFilename != null && originalFilename.contains(".")
                 ? originalFilename.substring(originalFilename.lastIndexOf('.') + 1).toLowerCase(Locale.ROOT)
                 : "";
-        if (extensions == null || !extensions.contains(extension)) {
+        if (!ALLOWED_DOCUMENT_EXTENSIONS.contains(extension) || !hasMatchingFileSignature(file, extension)) {
             throw new BusinessException("JPEG, PNG, PDF 파일만 업로드할 수 있습니다.");
         }
-        return "image/jpeg".equals(contentType) ? "jpg" : extension;
+        return "jpeg".equals(extension) ? "jpg" : extension;
+    }
+
+    private boolean hasMatchingFileSignature(MultipartFile file, String extension) {
+        try {
+            byte[] header = file.getInputStream().readNBytes(PNG_SIGNATURE.length);
+            if ("jpg".equals(extension) || "jpeg".equals(extension)) {
+                return startsWith(header, JPEG_SIGNATURE);
+            }
+            if ("png".equals(extension)) {
+                return startsWith(header, PNG_SIGNATURE);
+            }
+            return "pdf".equals(extension) && startsWith(header, PDF_SIGNATURE);
+        } catch (IOException e) {
+            throw new BusinessException(HttpStatus.INTERNAL_SERVER_ERROR, "파일을 확인하는 중 오류가 발생했습니다.");
+        }
+    }
+
+    private boolean startsWith(byte[] bytes, byte[] signature) {
+        if (bytes.length < signature.length) return false;
+        for (int i = 0; i < signature.length; i++) {
+            if (bytes[i] != signature[i]) return false;
+        }
+        return true;
     }
 
     private String extractOriginalFilename(MultipartFile file) {

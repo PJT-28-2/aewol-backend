@@ -80,17 +80,18 @@ public class PetController {
                 petRegistrationService.verify(memberId, petId, request)));
     }
 
-    @Operation(summary = "접종증명서 업로드")
+    @Operation(summary = "반려동물 문서 업로드")
     @PostMapping(value = "/{petId}/documents", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
-    public ResponseEntity<ApiResponse<PetDocumentResponse>> uploadVaccinationDocument(
+    public ResponseEntity<ApiResponse<PetDocumentResponse>> uploadPetDocument(
             @AuthenticationPrincipal String memberId,
             @PathVariable String petId,
             @RequestParam("file") MultipartFile file,
+            @RequestParam(value = "docType", defaultValue = "VACCINATION") String docType,
             @RequestParam(value = "issuedDate", required = false)
             @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate issuedDate) {
         return ResponseEntity.status(HttpStatus.CREATED)
                 .body(ApiResponse.created(
-                        petService.uploadVaccinationDocument(memberId, petId, file, issuedDate)));
+                        petService.uploadPetDocument(memberId, petId, docType, file, issuedDate)));
     }
 
     @Operation(summary = "반려동물 문서 목록 조회")
