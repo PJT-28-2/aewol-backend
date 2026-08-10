@@ -19,6 +19,7 @@ public interface TransactionMapper {
                                                     @Param("txnFilter") String txnFilter,
                                                     @Param("limit") int limit);
     void insert(Map<String, Object> transaction);
+    void insertTossPayment(Map<String, Object> transaction);
     int updateTag(@Param("txnId") String txnId,
                   @Param("category") String category,
                   @Param("petId") String petId);
