@@ -76,7 +76,8 @@ public class GroupPurchaseController {
                 groupPurchaseService.getStatus(memberId, gpId)));
     }
 
-    @Operation(summary = "공동구매 참여")
+    /** 일반 유저(role=USER) 전용. SecurityConfig에서 POST /api/group-purchase/{gpId}/join에 ROLE_USER를 요구한다(관리자는 참여 불가). */
+    @Operation(summary = "공동구매 참여 (일반 유저 전용)")
     @PostMapping("/{gpId}/join")
     public ResponseEntity<ApiResponse<GroupPurchaseJoinResponse>> join(@AuthenticationPrincipal String memberId,
                                                    @PathVariable String gpId,
