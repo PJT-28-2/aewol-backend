@@ -98,14 +98,15 @@ public class GroupPurchaseServiceImpl implements GroupPurchaseService {
         gp.put("targetQuantity", request.getTargetQuantity());
         gp.put("deadline", request.getDeadline());
         groupPurchaseMapper.insert(gp); // gp_id AUTO_INCREMENT
-        return toResponse(groupPurchaseMapper.findById(String.valueOf(gp.get("gpId"))));
+        return toResponse(groupPurchaseMapper.findById(String.valueOf(gp.get("gpId"))), false);
     }
 
     @Override
-    public GroupPurchaseResponse getDetail(String gpId) {
+    public GroupPurchaseResponse getDetail(String memberId, String gpId) {
         Map<String, Object> gp = groupPurchaseMapper.findById(gpId);
         if (gp == null) throw BusinessException.notFound("공동구매를 찾을 수 없습니다.");
-        return toResponse(gp);
+        boolean isParticipating = memberId != null && groupPurchaseMapper.findParticipant(gpId, memberId) != null;
+        return toResponse(gp, isParticipating);
     }
 
     @Override
@@ -290,7 +291,7 @@ public class GroupPurchaseServiceImpl implements GroupPurchaseService {
         }
     }
 
-    private GroupPurchaseResponse toResponse(Map<String, Object> gp) {
+    private GroupPurchaseResponse toResponse(Map<String, Object> gp, boolean isParticipating) {
         return GroupPurchaseResponse.builder()
                 .gpId(String.valueOf(gp.get("gp_id")))
                 .memberId(String.valueOf(gp.get("member_id")))
@@ -308,6 +309,7 @@ public class GroupPurchaseServiceImpl implements GroupPurchaseService {
                 .status((String) gp.get("status"))
                 .deadline(toLocalDateTime(gp.get("deadline")))
                 .createdAt(toLocalDateTime(gp.get("created_at")))
+                .isParticipating(isParticipating)
                 .build();
     }
 
