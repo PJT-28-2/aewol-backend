@@ -24,7 +24,7 @@ public class RecurringCreateRequest {
 
     @NotNull(message = "결제 금액을 입력해 주세요.")
     @DecimalMin(value = "1", message = "결제 금액은 1원 이상이어야 합니다.")
-    @Digits(integer = 13, fraction = 2, message = "결제 금액은 소수점 둘째 자리까지 입력할 수 있습니다.")
+    @Digits(integer = 13, fraction = 0, message = "결제 금액은 정수만 입력할 수 있습니다.")
     private BigDecimal price;
 
     @NotNull(message = "결제일을 선택해 주세요.")
