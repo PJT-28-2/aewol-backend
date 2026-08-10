@@ -11,7 +11,9 @@ import com.aewol.domain.grouppurchase.dto.GroupPurchaseJoinRequest;
 import com.aewol.domain.grouppurchase.dto.GroupPurchaseJoinResponse;
 import com.aewol.domain.grouppurchase.dto.GroupPurchaseListItemResponse;
 import com.aewol.domain.grouppurchase.dto.GroupPurchaseListResponse;
+import com.aewol.domain.grouppurchase.dto.GroupPurchaseMyItemResponse;
 import com.aewol.domain.grouppurchase.dto.GroupPurchaseResponse;
+import com.aewol.domain.grouppurchase.dto.GroupPurchaseStatusResponse;
 import com.aewol.domain.grouppurchase.mapper.GroupPurchaseMapper;
 import com.aewol.domain.transaction.mapper.TransactionMapper;
 import com.aewol.domain.wallet.mapper.WalletMapper;
@@ -124,6 +126,243 @@ class GroupPurchaseServiceImplTest {
         assertEquals("member-1", captor.getValue().get("memberId"));
         assertEquals("사료 5kg", captor.getValue().get("productName"));
         assertEquals(10, captor.getValue().get("targetQuantity"));
+    }
+
+    @Test
+    @DisplayName("존재하는 gpId로 조회하면 상세 정보를 반환한다")
+    void should_returnGroupPurchaseDetail_when_gpExists() {
+        GroupPurchaseServiceImpl service = service();
+        when(groupPurchaseMapper.findById("1")).thenReturn(savedRow());
+
+        GroupPurchaseResponse result = service.getDetail("1");
+
+        assertEquals("1", result.getGpId());
+        assertEquals("member-1", result.getMemberId());
+        assertEquals("사료 5kg", result.getProductName());
+        assertEquals("/uploads/group-purchase/product.png", result.getImage());
+        assertEquals(new BigDecimal("30000"), result.getUnitPrice());
+        assertEquals(new BigDecimal("25000"), result.getGroupPrice());
+        assertEquals("택배배송", result.getDeliveryMethod());
+        assertEquals(new BigDecimal("3000"), result.getDeliveryFee());
+        assertEquals(LocalDate.of(2026, 8, 20), result.getDeliveryDate());
+        assertEquals(10, result.getTargetQuantity());
+        assertEquals(0, result.getCurrentQuantity());
+        assertEquals(LocalDateTime.of(2026, 8, 15, 0, 0), result.getDeadline());
+    }
+
+    @Test
+    @DisplayName("존재하지 않는 gpId로 조회하면 예외가 발생한다")
+    void should_throwException_when_gpNotFound_onGetDetail() {
+        GroupPurchaseServiceImpl service = service();
+        when(groupPurchaseMapper.findById("999")).thenReturn(null);
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.getDetail("999"));
+
+        assertEquals(org.springframework.http.HttpStatus.NOT_FOUND, exception.getStatus());
+        assertEquals("공동구매를 찾을 수 없습니다.", exception.getMessage());
+    }
+
+    @Test
+    @DisplayName("참여자가 조회하면 participantInfo가 채워진 상태 정보를 반환한다")
+    void should_returnStatusWithParticipantInfo_when_requesterIsParticipant() {
+        GroupPurchaseServiceImpl service = service();
+        Map<String, Object> gpRow = savedRow();
+        gpRow.put("deadline", LocalDateTime.now().plusDays(5));
+        Map<String, Object> participantRow = participantRow(10523L, "1", "member-1", 2);
+        participantRow.put("paid_amount", new BigDecimal("50000"));
+        participantRow.put("payment_status", "PAID");
+        participantRow.put("paid_at", LocalDateTime.of(2026, 8, 7, 10, 0));
+        when(groupPurchaseMapper.findById("1")).thenReturn(gpRow);
+        when(groupPurchaseMapper.findParticipant("1", "member-1")).thenReturn(participantRow);
+
+        GroupPurchaseStatusResponse result = service.getStatus("member-1", "1");
+
+        assertEquals("member-1", result.getMemberId());
+        assertEquals("사료 5kg", result.getProductName());
+        assertEquals("waiting", result.getStatus());
+        assertEquals(0, result.getCurrentQuantity());
+        assertEquals(10, result.getTargetQuantity());
+        assertEquals(new BigDecimal("30000"), result.getUnitPrice());
+        assertEquals(new BigDecimal("25000"), result.getGroupPrice());
+        assertNotNull(result.getParticipantInfo());
+        assertEquals(10523L, result.getParticipantInfo().getParticipantId());
+        assertEquals(2, result.getParticipantInfo().getPurchaseQuantity());
+        assertEquals(new BigDecimal("50000"), result.getParticipantInfo().getPaidAmount());
+        assertEquals("PAID", result.getParticipantInfo().getPaymentStatus());
+        assertEquals(LocalDateTime.of(2026, 8, 7, 10, 0), result.getParticipantInfo().getPaidAt());
+        assertNotNull(result.getNoticeMessage());
+    }
+
+    @Test
+    @DisplayName("참여하지 않은 회원(작성자 포함)이 조회하면 participantInfo 없이 게시글 정보만 반환한다")
+    void should_returnNullParticipantInfo_when_requesterHasNotJoined() {
+        GroupPurchaseServiceImpl service = service();
+        Map<String, Object> gpRow = savedRow();
+        gpRow.put("deadline", LocalDateTime.now().plusDays(5));
+        when(groupPurchaseMapper.findById("1")).thenReturn(gpRow);
+        when(groupPurchaseMapper.findParticipant("1", "member-1")).thenReturn(null);
+
+        GroupPurchaseStatusResponse result = service.getStatus("member-1", "1");
+
+        assertEquals("사료 5kg", result.getProductName());
+        assertNull(result.getParticipantInfo());
+    }
+
+    @Test
+    @DisplayName("마감 전이어도 목표 수량을 채웠으면 confirmed로 응답한다")
+    void should_returnConfirmed_when_targetQuantityReachedBeforeDeadline() {
+        GroupPurchaseServiceImpl service = service();
+        Map<String, Object> gpRow = savedRow();
+        gpRow.put("deadline", LocalDateTime.now().plusDays(5));
+        gpRow.put("current_quantity", 10);
+        when(groupPurchaseMapper.findById("1")).thenReturn(gpRow);
+        when(groupPurchaseMapper.findParticipant("1", "member-1")).thenReturn(null);
+
+        GroupPurchaseStatusResponse result = service.getStatus("member-1", "1");
+
+        assertEquals("confirmed", result.getStatus());
+        assertEquals("목표 인원이 모두 모여 공동구매가 확정되었습니다.", result.getNoticeMessage());
+    }
+
+    @Test
+    @DisplayName("작성자가 취소한 공동구매는 마감 전이어도 cancelled로 응답하고, 작성자 취소 문구를 안내한다")
+    void should_returnCancelled_when_groupPurchaseIsCancelled_onGetStatus() {
+        GroupPurchaseServiceImpl service = service();
+        Map<String, Object> gpRow = savedRow();
+        gpRow.put("status", "CANCELLED");
+        gpRow.put("deadline", LocalDateTime.now().plusDays(5));
+        when(groupPurchaseMapper.findById("1")).thenReturn(gpRow);
+        when(groupPurchaseMapper.findParticipant("1", "member-1")).thenReturn(null);
+
+        GroupPurchaseStatusResponse result = service.getStatus("member-1", "1");
+
+        assertEquals("cancelled", result.getStatus());
+        assertEquals("작성자가 취소한 공동구매입니다.", result.getNoticeMessage());
+    }
+
+    @Test
+    @DisplayName("마감 후 목표 수량을 못 채웠으면 cancelled로 응답하고, 목표 미달 문구를 안내한다")
+    void should_returnCancelled_when_deadlinePassedAndTargetNotReached_onGetStatus() {
+        GroupPurchaseServiceImpl service = service();
+        Map<String, Object> gpRow = savedRow();
+        gpRow.put("deadline", LocalDateTime.now().minusDays(1));
+        gpRow.put("current_quantity", 4);
+        when(groupPurchaseMapper.findById("1")).thenReturn(gpRow);
+        when(groupPurchaseMapper.findParticipant("1", "member-1")).thenReturn(null);
+
+        GroupPurchaseStatusResponse result = service.getStatus("member-1", "1");
+
+        assertEquals("cancelled", result.getStatus());
+        assertEquals("목표 인원 미달로 공동구매가 취소되어 환불됩니다.", result.getNoticeMessage());
+    }
+
+    @Test
+    @DisplayName("존재하지 않는 gpId로 상태를 조회하면 예외가 발생한다")
+    void should_throwException_when_gpNotFound_onGetStatus() {
+        GroupPurchaseServiceImpl service = service();
+        when(groupPurchaseMapper.findById("999")).thenReturn(null);
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.getStatus("member-1", "999"));
+
+        assertEquals(org.springframework.http.HttpStatus.NOT_FOUND, exception.getStatus());
+        assertEquals("공동구매를 찾을 수 없습니다.", exception.getMessage());
+    }
+
+    @Test
+    @DisplayName("마감 전이면 저장된 status와 무관하게 OPEN으로 응답한다")
+    void should_returnOpen_when_deadlineNotPassed_onGetMyList() {
+        GroupPurchaseServiceImpl service = service();
+        LocalDateTime futureDeadline = LocalDateTime.now().plusDays(5);
+        when(groupPurchaseMapper.findMyGroupPurchases("member-1", null))
+                .thenReturn(List.of(listRow(1L, "OPEN", futureDeadline, 30000, 25000, 3, 10)));
+
+        List<GroupPurchaseMyItemResponse> result = service.getMyList("member-1", null);
+
+        assertEquals(1, result.size());
+        GroupPurchaseMyItemResponse item = result.get(0);
+        assertEquals(1L, item.getGpId());
+        assertEquals(3L, item.getMemberId());
+        assertEquals("사료 5kg", item.getProductName());
+        assertEquals("OPEN", item.getStatus());
+        assertEquals(3, item.getCurrentQuantity());
+        assertEquals(10, item.getTargetQuantity());
+        assertEquals(futureDeadline, item.getDeadline());
+    }
+
+    @Test
+    @DisplayName("마감 후 목표 수량을 채웠으면 COMPLETED로 응답한다")
+    void should_returnCompleted_when_deadlinePassedAndTargetReached_onGetMyList() {
+        GroupPurchaseServiceImpl service = service();
+        LocalDateTime pastDeadline = LocalDateTime.now().minusDays(1);
+        when(groupPurchaseMapper.findMyGroupPurchases("member-1", null))
+                .thenReturn(List.of(listRow(1L, "OPEN", pastDeadline, 30000, 25000, 10, 10)));
+
+        List<GroupPurchaseMyItemResponse> result = service.getMyList("member-1", null);
+
+        assertEquals("COMPLETED", result.get(0).getStatus());
+    }
+
+    @Test
+    @DisplayName("마감 전이어도 목표 수량을 채웠으면 COMPLETED로 응답한다")
+    void should_returnCompleted_when_targetQuantityReachedBeforeDeadline_onGetMyList() {
+        GroupPurchaseServiceImpl service = service();
+        LocalDateTime futureDeadline = LocalDateTime.now().plusDays(5);
+        when(groupPurchaseMapper.findMyGroupPurchases("member-1", null))
+                .thenReturn(List.of(listRow(1L, "OPEN", futureDeadline, 30000, 25000, 10, 10)));
+
+        List<GroupPurchaseMyItemResponse> result = service.getMyList("member-1", null);
+
+        assertEquals("COMPLETED", result.get(0).getStatus());
+    }
+
+    @Test
+    @DisplayName("마감 후 목표 수량을 못 채웠으면 CANCELLED로 응답한다")
+    void should_returnCancelled_when_deadlinePassedAndTargetNotReached_onGetMyList() {
+        GroupPurchaseServiceImpl service = service();
+        LocalDateTime pastDeadline = LocalDateTime.now().minusDays(1);
+        when(groupPurchaseMapper.findMyGroupPurchases("member-1", null))
+                .thenReturn(List.of(listRow(1L, "OPEN", pastDeadline, 30000, 25000, 4, 10)));
+
+        List<GroupPurchaseMyItemResponse> result = service.getMyList("member-1", null);
+
+        assertEquals("CANCELLED", result.get(0).getStatus());
+    }
+
+    @Test
+    @DisplayName("작성자가 취소했으면 마감 전이어도 CANCELLED로 응답한다")
+    void should_returnCancelled_when_groupPurchaseIsCancelled_onGetMyList() {
+        GroupPurchaseServiceImpl service = service();
+        LocalDateTime futureDeadline = LocalDateTime.now().plusDays(5);
+        when(groupPurchaseMapper.findMyGroupPurchases("member-1", null))
+                .thenReturn(List.of(listRow(1L, "CANCELLED", futureDeadline, 30000, 25000, 2, 10)));
+
+        List<GroupPurchaseMyItemResponse> result = service.getMyList("member-1", null);
+
+        assertEquals("CANCELLED", result.get(0).getStatus());
+    }
+
+    @Test
+    @DisplayName("status 필터를 매퍼에 그대로 전달한다")
+    void should_passStatusFilter_toMapper_onGetMyList() {
+        GroupPurchaseServiceImpl service = service();
+        when(groupPurchaseMapper.findMyGroupPurchases("member-1", "CANCELLED")).thenReturn(List.of());
+
+        service.getMyList("member-1", "CANCELLED");
+
+        verify(groupPurchaseMapper).findMyGroupPurchases("member-1", "CANCELLED");
+    }
+
+    @Test
+    @DisplayName("결과가 없으면 빈 목록을 반환한다")
+    void should_returnEmptyList_when_noRowsMatch_onGetMyList() {
+        GroupPurchaseServiceImpl service = service();
+        when(groupPurchaseMapper.findMyGroupPurchases("member-1", null)).thenReturn(List.of());
+
+        List<GroupPurchaseMyItemResponse> result = service.getMyList("member-1", null);
+
+        assertTrue(result.isEmpty());
     }
 
     @Test

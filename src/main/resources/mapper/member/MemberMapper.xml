@@ -7,8 +7,35 @@
         SELECT * FROM member WHERE member_id = #{memberId}
     </select>
 
+    <select id="findAuthStateById" resultType="map">
+        SELECT is_active,
+               role,
+               UNIX_TIMESTAMP(withdrawn_at) AS withdrawn_at_epoch
+        FROM member
+        WHERE member_id = #{memberId}
+    </select>
+
     <select id="findByEmail" resultType="map">
         SELECT * FROM member WHERE email = #{email}
+    </select>
+
+    <select id="findActiveByEmail" resultType="map">
+        SELECT *
+        FROM member
+        WHERE email = #{email}
+          AND is_active = 1
+        LIMIT 1
+    </select>
+
+    <select id="findActiveKakaoByIdentity" resultType="map">
+        SELECT *
+        FROM member
+        WHERE provider = 'KAKAO'
+          AND is_active = 1
+          AND (provider_id = #{providerId}
+               OR (#{email} IS NOT NULL AND TRIM(#{email}) &lt;&gt; '' AND email = #{email}))
+        ORDER BY member_id DESC
+        LIMIT 1
     </select>
 
     <select id="existsActiveByEmail" resultType="boolean">
@@ -16,6 +43,21 @@
         FROM member
         WHERE email = #{email}
           AND is_active = 1
+    </select>
+
+    <select id="existsActiveById" resultType="boolean">
+        SELECT COUNT(*) > 0
+        FROM member
+        WHERE member_id = #{memberId}
+          AND is_active = 1
+    </select>
+
+    <select id="existsInactiveByKakaoIdentity" resultType="boolean">
+        SELECT COUNT(*) > 0
+        FROM member
+        WHERE is_active = 0
+          AND (provider_id = #{providerId}
+               OR (#{email} IS NOT NULL AND TRIM(#{email}) &lt;&gt; '' AND email = #{email}))
     </select>
 
     <!-- 동시 복구 요청이 같은 회원을 중복 활성화하지 못하도록 복구 대상 행을 잠근다. -->
@@ -45,6 +87,7 @@
     </insert>
 
     <update id="restoreLocalMember" parameterType="map">
+        <!-- 복구 후에도 마지막 탈퇴 시각을 토큰 발급 시각과 비교할 수 있도록 유지한다. -->
         UPDATE member
         SET password = #{password},
             name = #{name},
@@ -53,7 +96,6 @@
             provider_id = NULL,
             email_verified = 'Y',
             is_active = 1,
-            withdrawn_at = NULL,
             zip_code = #{zipCode},
             address = #{address},
             address_detail = #{addressDetail},
@@ -61,6 +103,15 @@
         WHERE member_id = #{memberId}
           AND provider = 'LOCAL'
           AND is_active = 0
+    </update>
+
+    <update id="deactivateActiveMember">
+        UPDATE member
+        SET is_active = 0,
+            withdrawn_at = NOW(),
+            updated_at = NOW()
+        WHERE member_id = #{memberId}
+          AND is_active = 1
     </update>
 
     <update id="update" parameterType="map">
@@ -72,11 +123,6 @@
             address = #{address},
             address_detail = #{addressDetail},
             updated_at = NOW()
-        WHERE member_id = #{memberId}
-    </update>
-
-    <update id="markEmailVerified">
-        UPDATE member SET email_verified = 'Y', updated_at = NOW()
         WHERE member_id = #{memberId}
     </update>
 

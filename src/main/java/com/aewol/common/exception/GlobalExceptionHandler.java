@@ -10,6 +10,7 @@ import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
+import org.springframework.web.multipart.MaxUploadSizeExceededException;
 
 @Slf4j
 @RestControllerAdvice
@@ -58,13 +59,25 @@ public class GlobalExceptionHandler {
                 .body(ApiResponse.error(400, message));
     }
 
-    @ExceptionHandler(MethodArgumentTypeMismatchException.class)
+@ExceptionHandler(MethodArgumentTypeMismatchException.class)
     public ResponseEntity<ApiResponse<Void>> handleMethodArgumentTypeMismatchException(
             MethodArgumentTypeMismatchException e) {
         log.warn("MethodArgumentTypeMismatchException: {}", e.getMessage());
         return ResponseEntity
                 .badRequest()
                 .body(ApiResponse.error(400, e.getName() + " 값이 올바르지 않아요"));
+    }
+
+    // 첨부파일 용량 초과(spring.servlet.multipart.max-file-size/max-request-size)를 처리해주지
+    // 않으면 아래 handleException으로 떨어져서 500으로 응답한다 — 1:1 문의 첨부파일은
+    // "용량 초과 시 400(Bad Request) 반환"이 api_명세서.md 요구사항이라 따로 처리한다
+    // (2026-08-08).
+    @ExceptionHandler(MaxUploadSizeExceededException.class)
+    public ResponseEntity<ApiResponse<Void>> handleMaxUploadSizeExceededException(MaxUploadSizeExceededException e) {
+        log.warn("MaxUploadSizeExceededException: {}", e.getMessage());
+        return ResponseEntity
+                .badRequest()
+                .body(ApiResponse.error(400, "업로드 가능한 파일 용량을 초과했어요"));
     }
 
     @ExceptionHandler(Exception.class)

@@ -12,12 +12,16 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.ResponseEntity;
 import org.springframework.test.util.ReflectionTestUtils;
+import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 class AuthControllerEmailVerificationTest {
 
@@ -75,5 +79,15 @@ class AuthControllerEmailVerificationTest {
         assertEquals("홍길동", json.get("result").get("name").asText());
         assertTrue(!json.get("result").has("accessToken"));
         verify(authService).signup(request);
+    }
+
+    @Test
+    void legacySignupVerifyMappingIsNotExposed() throws Exception {
+        MockMvc mockMvc = MockMvcBuilders.standaloneSetup(controller).build();
+
+        mockMvc.perform(post("/api/auth/signup/verify")
+                        .contentType("application/json")
+                        .content("{\"email\":\"user@example.com\",\"code\":\"123456\"}"))
+                .andExpect(status().isNotFound());
     }
 }

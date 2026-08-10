@@ -14,7 +14,10 @@ spring:
   servlet:
     multipart:
       max-file-size: 10MB
-      max-request-size: 10MB
+      # 1:1 문의 첨부파일이 파일당 10MB, 최대 3개까지 허용되어(api_명세서.md) 전체 요청
+      # 크기가 10MB를 넘을 수 있다 — max-file-size(파일 1개당 제한)와 별개로
+      # max-request-size(요청 전체 제한)도 3개분 + 여유를 두고 올린다(2026-08-08).
+      max-request-size: 35MB
 
 # Server
 server:

@@ -23,6 +23,11 @@
         WHERE wallet_id = #{walletId}
     </update>
 
+    <update id="addBalance">
+        UPDATE wallet SET balance = balance + #{amount}, updated_at = NOW()
+        WHERE wallet_id = #{walletId}
+    </update>
+
     <!-- balance - amount, balance >= amount 검증을 한 UPDATE 안에서 원자적으로 수행한다.
          조회 후 절대값을 저장하는 방식은 동시 결제 시 갱신 유실(lost update)로 이어진다. -->
     <update id="deductBalance">

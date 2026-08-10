@@ -13,8 +13,8 @@ public interface PetService {
     PetResponse getPet(String memberId, String petId);
     void updatePet(String memberId, String petId, PetCreateRequest request);
     void deactivatePet(String memberId, String petId);
-    PetDocumentResponse uploadVaccinationDocument(String memberId, String petId,
-                                                   MultipartFile file, LocalDate issuedDate);
+    PetDocumentResponse uploadPetDocument(String memberId, String petId, String docType,
+                                          MultipartFile file, LocalDate issuedDate);
     List<PetDocumentResponse> getPetDocuments(String memberId, String petId);
     void deletePetDocument(String memberId, String petId, String docId);
 }
