@@ -61,4 +61,16 @@ public class RestTemplateConfig {
         factory.setReadTimeout(20000);
         return new RestTemplate(factory);
     }
+
+    // 이미지 생성 전용 — OCR과 달리 응답까지 10~15초가 걸린다(실측 전신 10.3초 / 프로필 12.2초).
+    // geminiRestTemplate의 20초로는 여유가 없어 정상 응답도 타임아웃으로 끊길 수 있다.
+    // 이 호출은 반드시 @Transactional 밖에서 이뤄져야 한다. 느린 외부 호출을 트랜잭션 안에
+    // 두면 DB 커넥션이 그동안 점유돼 풀이 고갈될 수 있다(CODEF 사례, 2026-08-06).
+    @Bean(name = "geminiImageRestTemplate")
+    public RestTemplate geminiImageRestTemplate() {
+        SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
+        factory.setConnectTimeout(5_000);
+        factory.setReadTimeout(60_000);
+        return new RestTemplate(factory);
+    }
 }
