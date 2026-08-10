@@ -19,12 +19,20 @@ DATE_PATTERNS = [
     re.compile(r"(\d{4})년\s*(\d{1,2})월\s*(\d{1,2})일"),
 ]
 
-TOTAL_KEYWORDS = ["합계", "총액", "총 금액", "청구금액", "결제금액", "총진료비", "총 진료비"]
+# 우선순위 순서: "합계"는 "비과세품목합계" 같은 다른 소계 줄에도 걸리는 일반 키워드라
+# 가장 낮은 우선순위로 둔다. 실제 영수증에서 "청구금액"이 가장 신뢰할 수 있는 최종 금액이었다.
+TOTAL_KEYWORD_TIERS = [
+    ["청구금액", "청구 금액"],
+    ["결제금액", "결제 금액", "총금액", "총 금액", "총액", "총진료비", "총 진료비"],
+    ["합계"],
+]
+TOTAL_KEYWORDS = [keyword for tier in TOTAL_KEYWORD_TIERS for keyword in tier]
 VET_KEYWORDS = ["수의사", "원장", "담당의"]
 HOSPITAL_KEYWORDS = ["동물병원", "동물의료센터", "동물메디컬센터"]
 
 AMOUNT_RE = re.compile(r"[\d,]+")
 ITEM_LINE_RE = re.compile(r"^(?P<name>.+?)\s+(?P<qty>\d+)\s+(?P<amount>[\d,]+)\s*원?$")
+TIME_RE = re.compile(r"\d{1,2}:\d{2}:\d{2}")
 
 
 def _line_y(line: OcrLine) -> float:
@@ -51,17 +59,46 @@ def extract_treatment_date(lines: List[OcrLine]) -> Optional[str]:
     return None
 
 
+def _looks_like_time_or_date(text: str) -> bool:
+    if TIME_RE.search(text):
+        return True
+    return any(pattern.search(text) for pattern in DATE_PATTERNS)
+
+
+def _numeric_value_at(lines: List[OcrLine], index: int) -> Optional[str]:
+    if index < 0 or index >= len(lines):
+        return None
+    text = lines[index]["text"]
+    if _looks_like_time_or_date(text):
+        return None
+    digits = re.sub(r"[^0-9]", "", text)
+    if not digits:
+        return None
+    # 큰 금액이 "35"+"000"처럼 인접한 줄로 쪼개져 인식되는 경우를 이어붙인다.
+    next_index = index + 1
+    if next_index < len(lines) and not _looks_like_time_or_date(lines[next_index]["text"]):
+        next_digits = re.sub(r"[^0-9]", "", lines[next_index]["text"])
+        if next_digits and len(digits) <= 3 and len(next_digits) == 3:
+            return digits + next_digits
+    return digits
+
+
 def extract_total_amount(lines: List[OcrLine]) -> Optional[float]:
-    for index, line in enumerate(lines):
-        text = line["text"]
-        if any(keyword in text for keyword in TOTAL_KEYWORDS):
-            amount = _to_number(text)
-            if amount is not None:
-                return amount
-            if index + 1 < len(lines):
-                amount = _to_number(lines[index + 1]["text"])
-                if amount is not None:
-                    return amount
+    for keywords in TOTAL_KEYWORD_TIERS:
+        for index, line in enumerate(lines):
+            if not any(keyword in line["text"] for keyword in keywords):
+                continue
+            # 라벨과 금액의 상대 위치가 영수증마다 달라(라벨 다음 줄일 수도, 이전 줄일
+            # 수도 있음) 같은 줄 -> 다음 줄 -> 이전 줄 순으로 찾는다. 시간/날짜 줄은
+            # _numeric_value_at에서 걸러지므로 다음 줄이 타임스탬프인 경우 자동으로
+            # 이전 줄로 넘어간다.
+            for candidate_index in (index, index + 1, index - 1):
+                digits = _numeric_value_at(lines, candidate_index)
+                if digits:
+                    try:
+                        return float(digits)
+                    except ValueError:
+                        continue
     return None
 
 
