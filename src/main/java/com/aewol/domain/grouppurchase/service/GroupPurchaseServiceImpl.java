@@ -279,6 +279,38 @@ public class GroupPurchaseServiceImpl implements GroupPurchaseService {
                 .build();
     }
 
+    /**
+     * 마감 후 목표 미달 자동 환불 배치(Notion 순서19). leave()/작성자 취소(cancel) API는 유저·관리자가
+     * 직접 호출해야 환불되지만, 마감이 지나도록 아무도 호출하지 않은 "마감(미달)" 참여자는 이 배치가 대신 처리한다.
+     * cancelParticipant를 먼저 호출해 영향 행이 0인 후보(동시에 leave/cancel로 이미 처리된 건)는 건너뛰므로,
+     * 이 메서드를 몇 번 재실행해도 같은 참여자를 중복 환불하지 않는다.
+     * REFUND 타입 신설은 범위 밖이라 leave()와 동일하게 DEPOSIT으로 환급한다.
+     */
+    @Override
+    @Transactional
+    public int processExpiredRefunds() {
+        int refundedCount = 0;
+        for (Map<String, Object> participant : groupPurchaseMapper.findExpiredUnfulfilledPaidParticipants()) {
+            String gpId = String.valueOf(participant.get("gp_id"));
+            String memberId = String.valueOf(participant.get("member_id"));
+
+            if (groupPurchaseMapper.cancelParticipant(gpId, memberId, LocalDateTime.now()) == 0) {
+                continue;
+            }
+
+            int quantity = toInt(participant.get("purchase_quantity"));
+            groupPurchaseMapper.decreaseQuantityForExpired(gpId, quantity);
+
+            BigDecimal refundedAmount = toDecimal(participant.get("paid_amount"));
+            if (refundedAmount != null) {
+                Map<String, Object> gp = groupPurchaseMapper.findById(gpId);
+                refundWallet(memberId, gpId, gp, refundedAmount);
+            }
+            refundedCount++;
+        }
+        return refundedCount;
+    }
+
     /** 지갑 잔액을 환급하고 환불 거래내역을 생성한 뒤 갱신된 지갑 잔액을 반환한다. REFUND 타입은 없으므로 WalletServiceImpl#deposit과 동일하게 DEPOSIT으로 기록한다. */
     private BigDecimal refundWallet(String memberId, String gpId, Map<String, Object> gp, BigDecimal amount) {
         Map<String, Object> wallet = walletMapper.findByMemberId(memberId);
