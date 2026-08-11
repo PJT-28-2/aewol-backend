@@ -76,7 +76,8 @@ public class RecurringPaymentExecutor {
             return false;
         }
         Object nextPaymentDate = recurring.get("next_payment_date");
-        return nextPaymentDate != null && today.equals(LocalDate.parse(String.valueOf(nextPaymentDate)));
+        return nextPaymentDate != null
+                && !LocalDate.parse(String.valueOf(nextPaymentDate)).isAfter(today);
     }
 
     private static boolean isActive(Object value) {

@@ -43,7 +43,7 @@
     </update>
 
     <select id="findDuePayments" resultType="map">
-        SELECT * FROM recurring_payment WHERE is_active = 1 AND next_payment_date = #{date}
+        SELECT * FROM recurring_payment WHERE is_active = 1 AND next_payment_date &lt;= #{date}
     </select>
 
 </mapper>

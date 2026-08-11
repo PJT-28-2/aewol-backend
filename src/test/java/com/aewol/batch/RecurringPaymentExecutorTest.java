@@ -87,6 +87,21 @@ class RecurringPaymentExecutorTest {
     }
 
     @Test
+    void should_retryOverduePayment_when_balanceBecomesSufficient() {
+        Map<String, Object> overdue = due(15);
+        overdue.put("next_payment_date", LocalDate.now().minusDays(1));
+        when(recurringMapper.findByIdForUpdate("1")).thenReturn(overdue);
+        when(walletMapper.deductBalance(eq("wallet-1"), any(BigDecimal.class))).thenReturn(1);
+
+        boolean result = executor().execute(overdue);
+
+        assertTrue(result);
+        verify(walletMapper).deductBalance(eq("wallet-1"), eq(new BigDecimal("32000")));
+        verify(transactionMapper).insert(anyMap());
+        verify(recurringMapper).updateNextPaymentDate(eq("1"), any(LocalDate.class));
+    }
+
+    @Test
     void should_skipWithoutDeduction_when_recurringWasDeactivatedBeforeLock() {
         Map<String, Object> locked = due(15);
         locked.put("is_active", 0);
