@@ -109,6 +109,17 @@ class LocalFileStorageTest {
     }
 
     @Test
+    @DisplayName("기존 /uploads/ URL도 정규화한 키로 서명한다")
+    void should_normalizeLegacyPath_when_buildingSignedUrl() {
+        String key = storage.store("hello".getBytes(), "diary", "png");
+
+        String url = storage.signedUrl("/uploads/" + key);
+
+        assertTrue(url.startsWith("/api/files/" + key + "?"), url);
+        assertFalse(url.contains("/api/files//uploads/"), url);
+    }
+
+    @Test
     @DisplayName("키가 없으면 서명 URL도 없다")
     void should_returnNull_when_keyIsMissing() {
         assertNull(storage.signedUrl(null));

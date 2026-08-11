@@ -5,6 +5,7 @@ import static org.mockito.Mockito.*;
 
 import com.aewol.common.exception.BusinessException;
 import com.aewol.common.util.FileUtil;
+import com.aewol.common.storage.FileStorage;
 import com.aewol.domain.pet.dto.PetDocumentResponse;
 import com.aewol.domain.pet.mapper.PetDocumentMapper;
 import com.aewol.domain.pet.mapper.PetMapper;
@@ -26,12 +27,13 @@ class PetDocumentQueryDeleteServiceTest {
     @Mock PetMapper petMapper;
     @Mock PetDocumentMapper petDocumentMapper;
     @Mock FileUtil fileUtil;
+    @Mock FileStorage fileStorage;
 
     private PetServiceImpl service;
 
     @BeforeEach
     void setUp() {
-        service = new PetServiceImpl(petMapper, petDocumentMapper, fileUtil);
+        service = new PetServiceImpl(petMapper, petDocumentMapper, fileUtil, fileStorage);
     }
 
     @Test

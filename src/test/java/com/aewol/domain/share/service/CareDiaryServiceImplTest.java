@@ -110,6 +110,22 @@ class CareDiaryServiceImplTest {
     }
 
     @Test
+    @DisplayName("이미지 저장 후 DB 반영이 실패하면 고아 파일을 정리한다")
+    void should_deleteStoredImage_whenDatabaseInsertFails() {
+        CareDiaryServiceImpl service = service();
+        givenPetOwnedBy("pet-1", "owner-1");
+        givenInsertAssignsDiaryId("diary-1");
+        when(fileStorage.store(any(), eq("diary"), eq("png"))).thenReturn("diary/a.png");
+        doThrow(new IllegalStateException("db failure"))
+                .when(careDiaryMapper).insertImage(anyMap());
+
+        assertThrows(IllegalStateException.class,
+                () -> service.create("owner-1", "pet-1", "2026-08-10", "글", image()));
+
+        verify(fileStorage).delete("diary/a.png");
+    }
+
+    @Test
     @DisplayName("사진과 내용이 모두 없으면 일기를 저장하지 않는다")
     void should_reject_when_bothContentAndImageAreEmpty() {
         CareDiaryServiceImpl service = service();
@@ -178,6 +194,8 @@ class CareDiaryServiceImplTest {
         when(careDiaryMapper.findById("diary-1"))
                 .thenReturn(diaryRow("diary-1", "pet-1", "member-2", "2026-08-10", "밥"));
         when(careDiaryMapper.softDelete("diary-1")).thenReturn(1);
+        when(careDiaryMapper.findImagesByDiaryIds(List.of("diary-1"))).thenReturn(List.of(
+                map("diaryId", "diary-1", "imageUrl", "diary/a.png")));
 
         CareDiaryUpdateRequest request = new CareDiaryUpdateRequest();
         ReflectionTestUtils.setField(request, "content", "몰래 수정");
@@ -187,6 +205,7 @@ class CareDiaryServiceImplTest {
 
         service.delete("owner-1", "diary-1");
         verify(careDiaryMapper).softDelete("diary-1");
+        verify(fileStorage).delete("diary/a.png");
     }
 
     @Test
