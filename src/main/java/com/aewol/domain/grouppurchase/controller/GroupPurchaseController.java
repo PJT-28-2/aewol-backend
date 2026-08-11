@@ -5,6 +5,7 @@ import com.aewol.domain.grouppurchase.dto.GroupPurchaseCreateRequest;
 import com.aewol.domain.grouppurchase.dto.GroupPurchaseImageUploadResponse;
 import com.aewol.domain.grouppurchase.dto.GroupPurchaseJoinRequest;
 import com.aewol.domain.grouppurchase.dto.GroupPurchaseJoinResponse;
+import com.aewol.domain.grouppurchase.dto.GroupPurchaseLeaveResponse;
 import com.aewol.domain.grouppurchase.dto.GroupPurchaseListResponse;
 import com.aewol.domain.grouppurchase.dto.GroupPurchaseMyItemResponse;
 import com.aewol.domain.grouppurchase.dto.GroupPurchaseResponse;
@@ -45,7 +46,8 @@ public class GroupPurchaseController {
                 groupPurchaseService.list(memberId, status, keyword, category, page, size)));
     }
 
-    @Operation(summary = "참여했던 공동구매 게시글 조회(마이페이지)")
+    /** 일반 유저(role=USER) 전용. SecurityConfig에서 GET /api/group-purchase/my에 ROLE_USER를 요구한다(관리자의 작성글 관리는 별도 엔드포인트 예정). */
+    @Operation(summary = "참여했던 공동구매 게시글 조회(마이페이지, 일반 유저 전용)")
     @GetMapping("/my")
     public ResponseEntity<ApiResponse<List<GroupPurchaseMyItemResponse>>> myList(
             @AuthenticationPrincipal String memberId,
@@ -54,7 +56,8 @@ public class GroupPurchaseController {
                 groupPurchaseService.getMyList(memberId, status)));
     }
 
-    @Operation(summary = "공동구매 생성")
+    /** 관리자(role=ADMIN) 전용. SecurityConfig에서 POST /api/group-purchase에 ROLE_ADMIN을 요구한다. */
+    @Operation(summary = "공동구매 생성 (관리자 전용)")
     @PostMapping
     public ResponseEntity<ApiResponse<GroupPurchaseResponse>> create(@AuthenticationPrincipal String memberId,
                                                                        @Valid @RequestBody GroupPurchaseCreateRequest request) {
@@ -64,8 +67,9 @@ public class GroupPurchaseController {
 
     @Operation(summary = "공동구매 게시글 상세보기")
     @GetMapping("/{gpId}")
-    public ResponseEntity<ApiResponse<GroupPurchaseResponse>> detail(@PathVariable String gpId) {
-        return ResponseEntity.ok(ApiResponse.success("공동구매 상세 조회 성공", groupPurchaseService.getDetail(gpId)));
+    public ResponseEntity<ApiResponse<GroupPurchaseResponse>> detail(@AuthenticationPrincipal String memberId,
+                                                                        @PathVariable String gpId) {
+        return ResponseEntity.ok(ApiResponse.success("공동구매 상세 조회 성공", groupPurchaseService.getDetail(memberId, gpId)));
     }
 
     @Operation(summary = "공동구매 상태 화면")
@@ -76,7 +80,8 @@ public class GroupPurchaseController {
                 groupPurchaseService.getStatus(memberId, gpId)));
     }
 
-    @Operation(summary = "공동구매 참여")
+    /** 일반 유저(role=USER) 전용. SecurityConfig에서 POST /api/group-purchase/{gpId}/join에 ROLE_USER를 요구한다(관리자는 참여 불가). */
+    @Operation(summary = "공동구매 참여 (일반 유저 전용)")
     @PostMapping("/{gpId}/join")
     public ResponseEntity<ApiResponse<GroupPurchaseJoinResponse>> join(@AuthenticationPrincipal String memberId,
                                                    @PathVariable String gpId,
@@ -86,7 +91,20 @@ public class GroupPurchaseController {
                 groupPurchaseService.join(memberId, gpId, quantity, request)));
     }
 
-    @Operation(summary = "공동구매 이미지 업로드")
+    /**
+     * 일반 유저(role=USER) 전용. SecurityConfig에서 POST /api/group-purchase/{gpId}/leave에 ROLE_USER를 요구한다.
+     * "진행중"(waiting) 상태에서만 취소 가능하며, 목표 수량 달성(confirmed) 이후에는 관리자 문의로만 취소할 수 있다.
+     */
+    @Operation(summary = "공동구매 참여 취소 (일반 유저 전용)")
+    @PostMapping("/{gpId}/leave")
+    public ResponseEntity<ApiResponse<GroupPurchaseLeaveResponse>> leave(@AuthenticationPrincipal String memberId,
+                                                                            @PathVariable String gpId) {
+        return ResponseEntity.ok(ApiResponse.success("공동구매 참여가 취소되었습니다.",
+                groupPurchaseService.leave(memberId, gpId)));
+    }
+
+    /** 관리자(role=ADMIN) 전용. SecurityConfig에서 POST /api/group-purchase/images에 ROLE_ADMIN을 요구한다. */
+    @Operation(summary = "공동구매 이미지 업로드 (관리자 전용)")
     @PostMapping("/images")
     public ResponseEntity<ApiResponse<GroupPurchaseImageUploadResponse>> uploadImage(
             @RequestParam("image") MultipartFile image) {
