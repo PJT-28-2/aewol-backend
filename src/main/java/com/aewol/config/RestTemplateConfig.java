@@ -62,13 +62,13 @@ public class RestTemplateConfig {
         return new RestTemplate(factory);
     }
 
-    // ocr-service(PaddleOCR) 전용 RestTemplate — CPU 추론이라 Gemini보다 느릴 수 있어
-    // read timeout을 30초로 넉넉히 잡는다.
+    // ocr-service(PaddleOCR) 전용 RestTemplate — PP-OCRv6(CPU) 실측 응답 시간이
+    // 영수증당 30~70초대라 read timeout을 120초로 넉넉히 잡는다.
     @Bean(name = "ocrServiceRestTemplate")
     public RestTemplate ocrServiceRestTemplate() {
         SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
         factory.setConnectTimeout(5000);
-        factory.setReadTimeout(30000);
+        factory.setReadTimeout(120000);
         return new RestTemplate(factory);
     }
 }
