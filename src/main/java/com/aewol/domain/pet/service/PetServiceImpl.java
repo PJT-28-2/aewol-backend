@@ -288,7 +288,7 @@ public class PetServiceImpl implements PetService {
                 .petId(String.valueOf(value(document, "pet_id", "petId")))
                 .docName((String) value(document, "doc_name", "docName"))
                 .docType(String.valueOf(value(document, "doc_type", "docType")))
-                .fileUrl((String) value(document, "file_url", "fileUrl"))
+                .fileUrl(fileStorage.signedUrl((String) value(document, "file_url", "fileUrl")))
                 .issuedDate(issuedDate == null ? null : issuedDate.toString())
                 .build();
     }
