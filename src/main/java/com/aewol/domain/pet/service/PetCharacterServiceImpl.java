@@ -88,21 +88,29 @@ public class PetCharacterServiceImpl implements PetCharacterService {
             log.warn("[PET_CHARACTER_PROFILE_FAILED] 프로필 생성 실패 - petId: {}", petId);
         }
 
-        String characterKey = store(chromaKeyRemover.removeGreenBackground(fullbodyRaw));
-        String profileKey = profileRaw == null
-                ? null
-                : store(chromaKeyRemover.removeGreenBackground(profileRaw));
+        String characterKey = null;
+        String profileKey = null;
+        try {
+            characterKey = store(chromaKeyRemover.removeGreenBackground(fullbodyRaw));
+            if (profileRaw != null) {
+                profileKey = store(chromaKeyRemover.removeGreenBackground(profileRaw));
+            }
 
-        // UPDATE 한 문장이라 별도 트랜잭션이 필요 없다. 같은 클래스 안에서 @Transactional
-        // 메서드를 직접 부르면 프록시를 거치지 않아 어차피 적용되지도 않는다.
-        if (petMapper.updateCharacterImages(petId, memberId, profileKey, characterKey) != 1) {
-            throw BusinessException.notFound("반려동물을 찾을 수 없습니다.");
+            // UPDATE 한 문장이라 별도 트랜잭션이 필요 없다. 같은 클래스 안에서 @Transactional
+            // 메서드를 직접 부르면 프록시를 거치지 않아 어차피 적용되지도 않는다.
+            if (petMapper.updateCharacterImages(petId, memberId, profileKey, characterKey) != 1) {
+                throw BusinessException.notFound("반려동물을 찾을 수 없습니다.");
+            }
+        } catch (RuntimeException e) {
+            // 저장이나 DB 갱신이 실패하면 방금 만든 파일은 아무도 참조하지 않는다.
+            deleteQuietly(characterKey);
+            deleteQuietly(profileKey);
+            throw e;
         }
 
-        // 새 이미지를 DB에 반영한 뒤에 지운다. 먼저 지우면 갱신이 실패했을 때
-        // 이전 이미지까지 잃는다.
-        deleteIfPresent(pet, "profile_img", "profileImg");
-        deleteIfPresent(pet, "character_img", "characterImg");
+        // 갱신이 끝난 뒤에 지운다. 먼저 지우면 갱신 실패 시 이전 이미지까지 잃는다.
+        deleteQuietly(text(pet, "profile_img", "profileImg"));
+        deleteQuietly(text(pet, "character_img", "characterImg"));
 
         return PetCharacterResponse.builder()
                 .petId(petId)
@@ -169,17 +177,24 @@ public class PetCharacterServiceImpl implements PetCharacterService {
         return fileStorage.store(image, UPLOAD_SUB_DIR, "png");
     }
 
-    /** 재생성 전에 쓰던 이미지를 지운다. 놔두면 호출할 때마다 고아 파일이 쌓인다. */
-    private void deleteIfPresent(Map<String, Object> pet, String... keys) {
-        Object previous = value(pet, keys);
-        if (previous != null && !String.valueOf(previous).isBlank()) {
-            fileStorage.delete(String.valueOf(previous));
+    /** 파일 정리는 부가 작업이라 실패해도 본 흐름을 막지 않는다. */
+    private void deleteQuietly(String path) {
+        if (path == null || path.isBlank()) {
+            return;
+        }
+        try {
+            fileStorage.delete(path);
+        } catch (RuntimeException e) {
+            log.warn("[PET_CHARACTER_CLEANUP_FAILED] 이미지 정리 실패 - path: {}", path, e);
         }
     }
 
-    private static Object value(Map<String, Object> map, String... keys) {
+    private static String text(Map<String, Object> map, String... keys) {
         for (String key : keys) {
-            if (map.containsKey(key)) return map.get(key);
+            if (map.containsKey(key)) {
+                Object value = map.get(key);
+                return value == null ? null : String.valueOf(value);
+            }
         }
         return null;
     }

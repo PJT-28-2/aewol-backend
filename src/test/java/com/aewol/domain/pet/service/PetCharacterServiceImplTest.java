@@ -163,52 +163,54 @@ class PetCharacterServiceImplTest {
     }
 
     @Test
-    @DisplayName("재생성하면 이전 이미지를 지워 고아 파일이 쌓이지 않게 한다")
-    void should_deletePreviousImages_when_regenerated() {
-        Map<String, Object> pet = new HashMap<>();
-        pet.put("pet_id", "pet-1");
-        pet.put("member_id", "member-1");
-        pet.put("profile_img", "pet-character/old-face.png");
-        pet.put("character_img", "pet-character/old-full.png");
-        when(petMapper.findByIdAndMemberId("pet-1", "member-1")).thenReturn(pet);
-        when(geminiImageClient.isConfigured()).thenReturn(true);
-        when(rateLimiter.incrementWithExpiry(anyString(), anyLong())).thenReturn(1L);
-        when(geminiImageClient.generate(any(), anyString(), anyString()))
-                .thenReturn("fullbody".getBytes(), "profile".getBytes());
-        when(chromaKeyRemover.removeGreenBackground(any()))
-                .thenAnswer(invocation -> invocation.getArgument(0));
-        when(fileStorage.store(any(), anyString(), anyString()))
-                .thenReturn("pet-character/new-full.png", "pet-character/new-face.png");
+    @DisplayName("재생성하면 이전 이미지를 지워 파일이 쌓이지 않게 한다")
+    void should_deletePreviousImages_when_regenerated() throws IOException {
+        givenPetWithImages("pet-character/old-face.png", "pet-character/old-full.png");
+        givenSuccessfulGeneration("pet-character/new-full.png", "pet-character/new-face.png");
         when(petMapper.updateCharacterImages(any(), any(), any(), any())).thenReturn(1);
-        givenSignedUrls();
 
         service.generate("member-1", "pet-1", photo());
 
         verify(fileStorage).delete("pet-character/old-face.png");
         verify(fileStorage).delete("pet-character/old-full.png");
         verify(fileStorage, never()).delete("pet-character/new-full.png");
+        verify(fileStorage, never()).delete("pet-character/new-face.png");
     }
 
     @Test
-    @DisplayName("DB 갱신에 실패하면 이전 이미지를 지우지 않는다")
-    void should_keepPreviousImages_when_updateFails() {
-        Map<String, Object> pet = new HashMap<>();
-        pet.put("pet_id", "pet-1");
-        pet.put("member_id", "member-1");
-        pet.put("profile_img", "pet-character/old-face.png");
-        when(petMapper.findByIdAndMemberId("pet-1", "member-1")).thenReturn(pet);
+    @DisplayName("DB 갱신에 실패하면 새로 만든 파일을 지우고 이전 이미지는 남긴다")
+    void should_cleanUpNewFiles_when_updateFails() throws IOException {
+        givenPetWithImages("pet-character/old-face.png", "pet-character/old-full.png");
+        givenSuccessfulGeneration("pet-character/new-full.png", "pet-character/new-face.png");
+        when(petMapper.updateCharacterImages(any(), any(), any(), any())).thenReturn(0);
+
+        assertThrows(BusinessException.class, () -> service.generate("member-1", "pet-1", photo()));
+
+        verify(fileStorage).delete("pet-character/new-full.png");
+        verify(fileStorage).delete("pet-character/new-face.png");
+        verify(fileStorage, never()).delete("pet-character/old-face.png");
+        verify(fileStorage, never()).delete("pet-character/old-full.png");
+    }
+
+    @Test
+    @DisplayName("이미지 저장에 실패하면 그때까지 만든 파일을 정리한다")
+    void should_cleanUpPartialFiles_when_storeFails() throws IOException {
+        givenOwnedPet();
         when(geminiImageClient.isConfigured()).thenReturn(true);
         when(rateLimiter.incrementWithExpiry(anyString(), anyLong())).thenReturn(1L);
         when(geminiImageClient.generate(any(), anyString(), anyString()))
                 .thenReturn("fullbody".getBytes(), "profile".getBytes());
         when(chromaKeyRemover.removeGreenBackground(any()))
                 .thenAnswer(invocation -> invocation.getArgument(0));
-        when(fileStorage.store(any(), anyString(), anyString())).thenReturn("pet-character/new.png");
-        when(petMapper.updateCharacterImages(any(), any(), any(), any())).thenReturn(0);
+        // 전신은 저장되고 프로필 저장에서 실패하는 상황
+        when(fileStorage.store(any(), anyString(), anyString()))
+                .thenReturn("pet-character/new-full.png")
+                .thenThrow(new BusinessException("파일을 저장하지 못했어요."));
 
         assertThrows(BusinessException.class, () -> service.generate("member-1", "pet-1", photo()));
 
-        verify(fileStorage, never()).delete("pet-character/old-face.png");
+        verify(fileStorage).delete("pet-character/new-full.png");
+        verify(petMapper, never()).updateCharacterImages(any(), any(), any(), any());
     }
 
     @Test
@@ -224,11 +226,32 @@ class PetCharacterServiceImplTest {
 
     // ── helpers ──────────────────────────────────────────────────
 
-    /** signedUrl은 조회 시점에 붙이는 임시 주소라 키를 알아볼 수 있게만 흉내 낸다. */
+    /** signedUrl은 조회 시점에 붙는 임시 주소라 키를 알아볼 수 있게만 흉내 낸다. */
     private void givenSignedUrls() {
         lenient().when(fileStorage.signedUrl(anyString()))
                 .thenAnswer(invocation -> "signed:" + invocation.getArgument(0));
         lenient().when(fileStorage.signedUrl(isNull())).thenReturn(null);
+    }
+
+    private void givenPetWithImages(String profileImg, String characterImg) {
+        Map<String, Object> pet = new HashMap<>();
+        pet.put("pet_id", "pet-1");
+        pet.put("member_id", "member-1");
+        pet.put("profile_img", profileImg);
+        pet.put("character_img", characterImg);
+        when(petMapper.findByIdAndMemberId("pet-1", "member-1")).thenReturn(pet);
+    }
+
+    private void givenSuccessfulGeneration(String fullbodyKey, String profileKey) {
+        when(geminiImageClient.isConfigured()).thenReturn(true);
+        when(rateLimiter.incrementWithExpiry(anyString(), anyLong())).thenReturn(1L);
+        when(geminiImageClient.generate(any(), anyString(), anyString()))
+                .thenReturn("fullbody".getBytes(), "profile".getBytes());
+        when(chromaKeyRemover.removeGreenBackground(any()))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+        when(fileStorage.store(any(), anyString(), anyString()))
+                .thenReturn(fullbodyKey, profileKey);
+        givenSignedUrls();
     }
 
     private void givenOwnedPet() {
