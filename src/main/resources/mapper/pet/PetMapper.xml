@@ -24,6 +24,17 @@
                 #{weight}, #{neutered}, #{medicalHistory})
     </insert>
 
+    <!-- 소유자 본인의 반려동물만 갱신되도록 member_id를 함께 건다 -->
+    <update id="updateCharacterImages">
+        UPDATE pet
+           SET profile_img = #{profileImg},
+               character_img = #{characterImg},
+               updated_at = NOW()
+        WHERE pet_id = #{petId}
+          AND member_id = #{memberId}
+          AND is_active = 1
+    </update>
+
     <update id="update" parameterType="map">
         UPDATE pet
         SET name = #{name}, species = #{species}, breed = #{breed},

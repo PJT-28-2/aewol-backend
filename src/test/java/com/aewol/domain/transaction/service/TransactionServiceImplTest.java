@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.mockito.Mockito.*;
 
+import com.aewol.domain.transaction.dto.PaymentRecordCommand;
 import com.aewol.domain.transaction.dto.PaymentRequest;
 import com.aewol.domain.transaction.mapper.TransactionMapper;
 import com.aewol.domain.transaction.dto.TransactionTagUpdateRequest;
@@ -59,6 +60,13 @@ class TransactionServiceImplTest {
         ArgumentCaptor<Map<String, Object>> captor = ArgumentCaptor.forClass(Map.class);
         verify(transactionMapper).insert(captor.capture());
         assertEquals("pet-1", captor.getValue().get("petId"));
+        assertEquals("애월동물병원", captor.getValue().get("merchantName"));
+        assertEquals(null, captor.getValue().get("memo"));
+        assertEquals("HOSPITAL", captor.getValue().get("category"));
+        assertEquals(new BigDecimal("72000"), captor.getValue().get("price"));
+        assertEquals("PAYMENT", captor.getValue().get("txnType"));
+        assertEquals("wallet-1", captor.getValue().get("walletId"));
+        assertEquals("Y", captor.getValue().get("autoTagged"));
     }
 
     @Test
@@ -273,6 +281,30 @@ class TransactionServiceImplTest {
 
         assertEquals(HttpStatus.NOT_FOUND, exception.getStatus());
         verify(transactionMapper, never()).updateTag(any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("지갑 결제 경로는 공유 insert 문만 사용한다(충전 전용 insertTossPayment를 타지 않는다)")
+    void should_useSharedInsert_when_processingLegacyPayment() {
+        TransactionServiceImpl service = service();
+        PaymentRequest request = new PaymentRequest();
+        ReflectionTestUtils.setField(request, "merchantName", "애월동물병원");
+        ReflectionTestUtils.setField(request, "amount", new BigDecimal("72000"));
+        when(walletMapper.findByMemberId("member-1")).thenReturn(map(
+                "wallet_id", "wallet-1", "balance", new BigDecimal("100000")));
+        when(walletMapper.findById("wallet-1")).thenReturn(map("member_id", "member-1"));
+        when(walletMapper.deductBalance("wallet-1", new BigDecimal("72000"))).thenReturn(1);
+        when(autoTaggingService.categorize("애월동물병원")).thenReturn("HOSPITAL");
+        when(transactionMapper.findById(any())).thenAnswer(invocation -> map(
+                "txn_id", 1L, "wallet_id", "wallet-1", "txn_type", "PAYMENT",
+                "price", new BigDecimal("72000"), "category", "HOSPITAL",
+                "merchant_name", "애월동물병원", "auto_tagged", "Y",
+                "txn_date", LocalDateTime.now()));
+
+        service.processPayment("member-1", request);
+
+        verify(transactionMapper).insert(any());
+        verify(transactionMapper, never()).insertTossPayment(any());
     }
 
     private TransactionServiceImpl service() {

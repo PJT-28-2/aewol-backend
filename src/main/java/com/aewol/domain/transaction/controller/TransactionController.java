@@ -56,18 +56,18 @@ public class TransactionController {
     }
 
     @Operation(summary = "거래 상세 조회")
-    @GetMapping("/{txnId}")
+    @GetMapping("/{transactionId}")
     public ResponseEntity<ApiResponse<TransactionResponse>> getTransaction(
-            @AuthenticationPrincipal String memberId, @PathVariable String txnId) {
-        return ResponseEntity.ok(ApiResponse.success(transactionService.getTransaction(memberId, txnId)));
+            @AuthenticationPrincipal String memberId, @PathVariable String transactionId) {
+        return ResponseEntity.ok(ApiResponse.success(transactionService.getTransaction(memberId, transactionId)));
     }
 
     @Operation(summary = "거래 카테고리·반려동물 태그 수정")
-    @PutMapping("/{txnId}/tag")
+    @PutMapping("/{transactionId}/tag")
     public ResponseEntity<ApiResponse<TransactionResponse>> updateTag(
             @AuthenticationPrincipal String memberId,
-            @PathVariable String txnId,
+            @PathVariable String transactionId,
             @Valid @RequestBody TransactionTagUpdateRequest request) {
-        return ResponseEntity.ok(ApiResponse.success(transactionService.updateTag(memberId, txnId, request)));
+        return ResponseEntity.ok(ApiResponse.success(transactionService.updateTag(memberId, transactionId, request)));
     }
 }

@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.aewol.domain.share.mapper.CareDiaryMapper">
+
+    <insert id="insert" parameterType="map" useGeneratedKeys="true" keyProperty="diaryId" keyColumn="diary_id">
+        INSERT INTO care_diary (pet_id, author_member_id, diary_date, content)
+        VALUES (#{petId}, #{authorMemberId}, #{diaryDate}, #{content})
+    </insert>
+
+    <insert id="insertImage" parameterType="map" useGeneratedKeys="true" keyProperty="imageId" keyColumn="image_id">
+        INSERT INTO care_diary_image (diary_id, image_url, sort_order)
+        VALUES (#{diaryId}, #{imageUrl}, #{sortOrder})
+    </insert>
+
+    <!-- 작성자 이름을 함께 내려 화면에서 회원 조회를 다시 하지 않도록 한다 -->
+    <select id="findByPetIdAndMonth" resultType="map">
+        SELECT d.diary_id         AS diaryId,
+               d.pet_id           AS petId,
+               d.author_member_id AS authorMemberId,
+               m.name             AS authorName,
+               d.diary_date       AS diaryDate,
+               d.content          AS content,
+               d.created_at       AS createdAt,
+               d.updated_at       AS updatedAt
+        FROM care_diary d
+        JOIN member m ON m.member_id = d.author_member_id
+        WHERE d.pet_id = #{petId}
+          AND d.deleted_at IS NULL
+          AND DATE_FORMAT(d.diary_date, '%Y-%m') = #{yearMonth}
+        ORDER BY d.diary_date DESC, d.diary_id DESC
+    </select>
+
+    <select id="findById" resultType="map">
+        SELECT d.diary_id         AS diaryId,
+               d.pet_id           AS petId,
+               d.author_member_id AS authorMemberId,
+               m.name             AS authorName,
+               d.diary_date       AS diaryDate,
+               d.content          AS content,
+               d.created_at       AS createdAt,
+               d.updated_at       AS updatedAt
+        FROM care_diary d
+        JOIN member m ON m.member_id = d.author_member_id
+        WHERE d.diary_id = #{diaryId}
+          AND d.deleted_at IS NULL
+    </select>
+
+    <!-- 목록 조회에서 일기마다 이미지를 따로 조회하지 않도록 한 번에 가져온다 (N+1 방지) -->
+    <select id="findImagesByDiaryIds" resultType="map">
+        SELECT diary_id  AS diaryId,
+               image_url AS imageUrl
+        FROM care_diary_image
+        WHERE diary_id IN
+        <foreach collection="diaryIds" item="diaryId" open="(" separator="," close=")">
+            #{diaryId}
+        </foreach>
+        ORDER BY diary_id, sort_order, image_id
+    </select>
+
+    <update id="update">
+        UPDATE care_diary
+           SET diary_date = #{diaryDate},
+               content = #{content}
+        WHERE diary_id = #{diaryId}
+          AND deleted_at IS NULL
+    </update>
+
+    <update id="softDelete">
+        UPDATE care_diary
+           SET deleted_at = NOW()
+        WHERE diary_id = #{diaryId}
+          AND deleted_at IS NULL
+    </update>
+
+</mapper>

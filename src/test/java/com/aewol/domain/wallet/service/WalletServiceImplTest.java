@@ -7,6 +7,8 @@ import static org.mockito.Mockito.*;
 
 import com.aewol.common.exception.BusinessException;
 import com.aewol.domain.transaction.mapper.TransactionMapper;
+import com.aewol.domain.wallet.dto.ExternalChargeCommand;
+import com.aewol.domain.wallet.dto.WalletResponse;
 import com.aewol.domain.wallet.mapper.WalletMapper;
 import java.math.BigDecimal;
 import java.util.HashMap;
@@ -48,6 +50,77 @@ class WalletServiceImplTest {
         verify(transactionMapper).insert(captor.capture());
         assertEquals("DEPOSIT", captor.getValue().get("txnType"));
         assertEquals(new BigDecimal("20000"), captor.getValue().get("price"));
+    }
+
+    @Test
+    void should_creditBalanceViaAddBalanceAndInsertTossPaymentTransaction_when_depositExternalSucceeds() {
+        WalletServiceImpl service = new WalletServiceImpl(walletMapper, transactionMapper);
+        Map<String, Object> before = map("wallet_id", 1L, "member_id", 1L,
+                "balance", new BigDecimal("10000"));
+        Map<String, Object> after = map("wallet_id", 1L, "member_id", 1L,
+                "balance", new BigDecimal("19500"));
+        when(walletMapper.findByMemberId("1")).thenReturn(before, after);
+        when(walletMapper.addBalance("1", new BigDecimal("9500"))).thenReturn(1);
+        ExternalChargeCommand command = ExternalChargeCommand.builder()
+                .memberId("1").amount(new BigDecimal("9500"))
+                .paymentKey("toss-pay-key-001").orderId("order-abc123").build();
+
+        WalletResponse response = service.depositExternal(command);
+
+        assertEquals(new BigDecimal("19500"), response.getTotalBalance());
+        verify(walletMapper).addBalance("1", new BigDecimal("9500"));
+        verify(walletMapper, never()).deductBalance(any(), any());
+        ArgumentCaptor<Map<String, Object>> captor = ArgumentCaptor.forClass(Map.class);
+        verify(transactionMapper).insertTossPayment(captor.capture());
+        Map<String, Object> txn = captor.getValue();
+        assertEquals("DEPOSIT", txn.get("txnType"));
+        assertEquals("toss-pay-key-001", txn.get("paymentKey"));
+        assertEquals("order-abc123", txn.get("orderId"));
+        verify(transactionMapper, never()).insert(any());
+    }
+
+    @Test
+    void should_throwException_when_depositExternalAmountIsNull() {
+        WalletServiceImpl service = new WalletServiceImpl(walletMapper, transactionMapper);
+        ExternalChargeCommand command = ExternalChargeCommand.builder()
+                .memberId("1").amount(null).paymentKey("k").orderId("o").build();
+
+        assertThrows(BusinessException.class, () -> service.depositExternal(command));
+        verifyNoInteractions(walletMapper, transactionMapper);
+    }
+
+    @Test
+    void should_throwException_when_depositExternalAmountIsZero() {
+        WalletServiceImpl service = new WalletServiceImpl(walletMapper, transactionMapper);
+        ExternalChargeCommand command = ExternalChargeCommand.builder()
+                .memberId("1").amount(BigDecimal.ZERO).paymentKey("k").orderId("o").build();
+
+        assertThrows(BusinessException.class, () -> service.depositExternal(command));
+        verifyNoInteractions(walletMapper, transactionMapper);
+    }
+
+    @Test
+    void should_throwException_when_depositExternalAmountIsNegative() {
+        WalletServiceImpl service = new WalletServiceImpl(walletMapper, transactionMapper);
+        ExternalChargeCommand command = ExternalChargeCommand.builder()
+                .memberId("1").amount(new BigDecimal("-100")).paymentKey("k").orderId("o").build();
+
+        assertThrows(BusinessException.class, () -> service.depositExternal(command));
+        verifyNoInteractions(walletMapper, transactionMapper);
+    }
+
+    @Test
+    void should_throwNotFound_when_depositExternalWalletMissing() {
+        WalletServiceImpl service = new WalletServiceImpl(walletMapper, transactionMapper);
+        when(walletMapper.findByMemberId("1")).thenReturn(null);
+        ExternalChargeCommand command = ExternalChargeCommand.builder()
+                .memberId("1").amount(new BigDecimal("1000")).paymentKey("k").orderId("o").build();
+
+        BusinessException ex = assertThrows(BusinessException.class, () -> service.depositExternal(command));
+
+        assertEquals(404, ex.getStatus().value());
+        verify(walletMapper, never()).addBalance(any(), any());
+        verifyNoInteractions(transactionMapper);
     }
 
     private static Map<String, Object> map(Object... values) {

@@ -85,7 +85,7 @@ class UserWithdrawalSecurityTest {
         mockMvc.perform(delete("/api/users/me")
                         .contentType("application/json")
                         .content("{}"))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isUnauthorized());
     }
 
     @Test
@@ -117,7 +117,7 @@ class UserWithdrawalSecurityTest {
         stubActiveAccessToken(true, false);
 
         mockMvc.perform(authenticatedDelete()).andExpect(status().isOk());
-        mockMvc.perform(authenticatedDelete()).andExpect(status().isForbidden());
+        mockMvc.perform(authenticatedDelete()).andExpect(status().isUnauthorized());
 
         verify(memberService, times(1)).withdraw(
                 org.mockito.ArgumentMatchers.eq("member-1"), org.mockito.ArgumentMatchers.any());

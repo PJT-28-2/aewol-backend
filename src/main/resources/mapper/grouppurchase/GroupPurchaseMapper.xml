@@ -71,6 +71,18 @@
           AND status != 'CANCELLED'
     </update>
 
+    <!-- leave()의 decreaseQuantity와 대칭이지만 deadline &lt; NOW()로 뒤집혀 있다 — 마감 후 자동 환불
+         배치(Notion 순서19) 전용이라, 아직 마감 전인 공동구매는 절대 건드리면 안 된다. -->
+    <update id="decreaseQuantityForExpired">
+        UPDATE group_purchase
+        SET current_quantity = current_quantity - #{quantity}
+        WHERE gp_id = #{gpId}
+          AND current_quantity - #{quantity} &gt;= 0
+          AND current_quantity &lt; target_quantity
+          AND deadline &lt; NOW()
+          AND status != 'CANCELLED'
+    </update>
+
     <insert id="insertParticipant" parameterType="map" useGeneratedKeys="true" keyProperty="participantId" keyColumn="participant_id">
         INSERT INTO group_purchase_participant
             (gp_id, member_id, purchase_quantity, recipient_name, recipient_phone, zip_code, address, address_detail,
@@ -118,6 +130,18 @@
             AND gp.status = 'CANCELLED'
         </if>
         ORDER BY gp.created_at DESC
+    </select>
+
+    <!-- 마감이 지났고 목표 수량 미달인 공동구매의 PAID 참여자를 조회한다(마감 자동 환불 배치 전용, Notion 순서19).
+         이미 처리된 참여자는 cancelParticipant로 CANCELLED가 되어 이 조건에서 자연히 빠지므로,
+         배치를 몇 번 재실행해도 같은 참여자를 중복 환불하지 않는다(자연 멱등). -->
+    <select id="findExpiredUnfulfilledPaidParticipants" resultType="map">
+        SELECT gpp.* FROM group_purchase_participant gpp
+        JOIN group_purchase gp ON gp.gp_id = gpp.gp_id
+        WHERE gpp.payment_status = 'PAID'
+          AND gp.status != 'CANCELLED'
+          AND gp.deadline &lt; NOW()
+          AND gp.current_quantity &lt; gp.target_quantity
     </select>
 
 </mapper>
