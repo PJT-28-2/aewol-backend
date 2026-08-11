@@ -28,8 +28,11 @@ import org.springframework.web.client.RestTemplate;
 @Component
 public class GeminiImageClient {
 
+    // 키를 쿼리 파라미터로 붙이면 타임아웃 등 예외 메시지에 URL이 통째로 찍혀 로그로 샌다.
+    // 헤더(x-goog-api-key)로 보내면 URL에는 남지 않는다.
     private static final String ENDPOINT =
-            "https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent?key=%s";
+            "https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent";
+    private static final String API_KEY_HEADER = "x-goog-api-key";
 
     private final RestTemplate restTemplate;
     private final ObjectMapper objectMapper = new ObjectMapper();
@@ -75,8 +78,9 @@ public class GeminiImageClient {
 
             HttpHeaders headers = new HttpHeaders();
             headers.setContentType(MediaType.APPLICATION_JSON);
+            headers.set(API_KEY_HEADER, apiKey);
             String response = restTemplate.postForObject(
-                    String.format(ENDPOINT, imageModel, apiKey),
+                    String.format(ENDPOINT, imageModel),
                     new HttpEntity<>(body, headers),
                     String.class);
 

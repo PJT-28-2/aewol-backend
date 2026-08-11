@@ -161,6 +161,57 @@ class PetCharacterServiceImplTest {
     }
 
     @Test
+    @DisplayName("재생성하면 이전 이미지를 지워 파일이 쌓이지 않게 한다")
+    void should_deletePreviousImages_when_regenerated() throws IOException {
+        givenPetWithImages("pet-character/old-face.png", "pet-character/old-full.png");
+        givenSuccessfulGeneration("pet-character/new-full.png", "pet-character/new-face.png");
+        when(petMapper.updateCharacterImages(any(), any(), any(), any())).thenReturn(1);
+
+        service.generate("member-1", "pet-1", photo());
+
+        verify(fileUtil).delete("pet-character/old-face.png");
+        verify(fileUtil).delete("pet-character/old-full.png");
+        verify(fileUtil, never()).delete("pet-character/new-full.png");
+        verify(fileUtil, never()).delete("pet-character/new-face.png");
+    }
+
+    @Test
+    @DisplayName("DB 갱신에 실패하면 새로 만든 파일을 지우고 이전 이미지는 남긴다")
+    void should_cleanUpNewFiles_when_updateFails() throws IOException {
+        givenPetWithImages("pet-character/old-face.png", "pet-character/old-full.png");
+        givenSuccessfulGeneration("pet-character/new-full.png", "pet-character/new-face.png");
+        when(petMapper.updateCharacterImages(any(), any(), any(), any())).thenReturn(0);
+
+        assertThrows(BusinessException.class, () -> service.generate("member-1", "pet-1", photo()));
+
+        verify(fileUtil).delete("pet-character/new-full.png");
+        verify(fileUtil).delete("pet-character/new-face.png");
+        verify(fileUtil, never()).delete("pet-character/old-face.png");
+        verify(fileUtil, never()).delete("pet-character/old-full.png");
+    }
+
+    @Test
+    @DisplayName("이미지 저장에 실패하면 그때까지 만든 파일을 정리한다")
+    void should_cleanUpPartialFiles_when_storeFails() throws IOException {
+        givenOwnedPet();
+        when(geminiImageClient.isConfigured()).thenReturn(true);
+        when(rateLimiter.incrementWithExpiry(anyString(), anyLong())).thenReturn(1L);
+        when(geminiImageClient.generate(any(), anyString(), anyString()))
+                .thenReturn("fullbody".getBytes(), "profile".getBytes());
+        when(chromaKeyRemover.removeGreenBackground(any()))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+        // 전신은 저장되고 프로필 저장에서 실패하는 상황
+        when(fileUtil.uploadBytes(any(), anyString(), anyString()))
+                .thenReturn("pet-character/new-full.png")
+                .thenThrow(new IOException("disk full"));
+
+        assertThrows(BusinessException.class, () -> service.generate("member-1", "pet-1", photo()));
+
+        verify(fileUtil).delete("pet-character/new-full.png");
+        verify(petMapper, never()).updateCharacterImages(any(), any(), any(), any());
+    }
+
+    @Test
     @DisplayName("API 키가 없으면 한도를 소모하지 않고 안내한다")
     void should_rejectWithoutConsumingQuota_when_apiKeyMissing() {
         givenOwnedPet();
@@ -172,6 +223,26 @@ class PetCharacterServiceImplTest {
     }
 
     // ── helpers ──────────────────────────────────────────────────
+
+    private void givenPetWithImages(String profileImg, String characterImg) {
+        Map<String, Object> pet = new HashMap<>();
+        pet.put("pet_id", "pet-1");
+        pet.put("member_id", "member-1");
+        pet.put("profile_img", profileImg);
+        pet.put("character_img", characterImg);
+        when(petMapper.findByIdAndMemberId("pet-1", "member-1")).thenReturn(pet);
+    }
+
+    private void givenSuccessfulGeneration(String fullbodyPath, String profilePath) throws IOException {
+        when(geminiImageClient.isConfigured()).thenReturn(true);
+        when(rateLimiter.incrementWithExpiry(anyString(), anyLong())).thenReturn(1L);
+        when(geminiImageClient.generate(any(), anyString(), anyString()))
+                .thenReturn("fullbody".getBytes(), "profile".getBytes());
+        when(chromaKeyRemover.removeGreenBackground(any()))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+        when(fileUtil.uploadBytes(any(), anyString(), anyString()))
+                .thenReturn(fullbodyPath, profilePath);
+    }
 
     private void givenOwnedPet() {
         Map<String, Object> pet = new HashMap<>();
