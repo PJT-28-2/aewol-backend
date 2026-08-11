@@ -238,6 +238,8 @@ class GroupPurchaseServiceImplTest {
         assertEquals(10, result.getTargetQuantity());
         assertEquals(new BigDecimal("30000"), result.getUnitPrice());
         assertEquals(new BigDecimal("25000"), result.getGroupPrice());
+        assertEquals(LocalDate.of(2026, 8, 20), result.getDeliveryDate());
+        assertEquals(5, result.getDeliveryEstimateDays());
         assertNotNull(result.getParticipantInfo());
         assertEquals(10523L, result.getParticipantInfo().getParticipantId());
         assertEquals(2, result.getParticipantInfo().getPurchaseQuantity());
