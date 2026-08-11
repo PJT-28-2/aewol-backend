@@ -1,6 +1,7 @@
 package com.aewol.domain.inquiry.service;
 
 import com.aewol.common.exception.BusinessException;
+import com.aewol.common.storage.FileStorage;
 import com.aewol.common.util.FileUtil;
 import com.aewol.domain.inquiry.dto.InquiryCreateResponse;
 import com.aewol.domain.inquiry.dto.InquiryDetailResponse;
@@ -46,6 +47,7 @@ public class InquiryServiceImpl implements InquiryService {
 
     private final InquiryMapper inquiryMapper;
     private final FileUtil fileUtil;
+    private final FileStorage fileStorage;
 
     @Override
     @Transactional
@@ -156,6 +158,7 @@ public class InquiryServiceImpl implements InquiryService {
         }
         List<String> attachments = inquiryMapper.findAttachmentsByInquiryId(inquiryId).stream()
                 .map(a -> (String) a.get("file_url"))
+                .map(fileStorage::signedUrl)
                 .collect(Collectors.toList());
         return toDetailResponse(inquiry, attachments);
     }

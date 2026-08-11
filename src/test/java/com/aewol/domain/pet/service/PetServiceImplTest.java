@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.Mockito.*;
 
 import com.aewol.common.exception.BusinessException;
+import com.aewol.common.storage.FileStorage;
 import com.aewol.domain.pet.dto.PetCreateRequest;
 import com.aewol.domain.pet.mapper.PetMapper;
 import com.aewol.domain.pet.mapper.PetDocumentMapper;
@@ -23,17 +24,24 @@ class PetServiceImplTest {
     @Mock PetMapper petMapper;
     @Mock PetDocumentMapper petDocumentMapper;
     @Mock FileUtil fileUtil;
+    @Mock FileStorage fileStorage;
 
     private PetServiceImpl service() {
-        return new PetServiceImpl(petMapper, petDocumentMapper, fileUtil);
+        return new PetServiceImpl(petMapper, petDocumentMapper, fileUtil, fileStorage);
     }
 
     @Test
     void should_returnPet_when_memberOwnsPet() {
         PetServiceImpl service = service();
-        when(petMapper.findById("pet-1")).thenReturn(pet("member-1"));
+        Map<String, Object> pet = pet("member-1");
+        pet.put("profile_img", "pet-character/profile.png");
+        when(petMapper.findById("pet-1")).thenReturn(pet);
+        when(fileStorage.signedUrl("pet-character/profile.png"))
+                .thenReturn("/api/files/pet-character/profile.png?signed");
 
         assertEquals("pet-1", service.getPet("member-1", "pet-1").getPetId());
+        assertEquals("/api/files/pet-character/profile.png?signed",
+                service.getPet("member-1", "pet-1").getProfileImg());
     }
 
     @Test

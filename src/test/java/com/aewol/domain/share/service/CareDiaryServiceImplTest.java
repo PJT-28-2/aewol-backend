@@ -5,7 +5,7 @@ import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
 import com.aewol.common.exception.BusinessException;
-import com.aewol.common.util.FileUtil;
+import com.aewol.common.storage.FileStorage;
 import com.aewol.domain.activity.mapper.ActivityLogMapper;
 import com.aewol.domain.pet.mapper.PetMapper;
 import com.aewol.domain.share.dto.CareDiaryResponse;
@@ -17,6 +17,7 @@ import java.time.LocalDate;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -34,7 +35,14 @@ class CareDiaryServiceImplTest {
     @Mock ShareMapper shareMapper;
     @Mock PetMapper petMapper;
     @Mock ActivityLogMapper activityLogMapper;
-    @Mock FileUtil fileUtil;
+    @Mock FileStorage fileStorage;
+
+    @BeforeEach
+    void setUp() {
+        // signedUrl은 조회 시점에 붙는 임시 주소라, 키를 알아볼 수 있게만 흉내 낸다.
+        lenient().when(fileStorage.signedUrl(anyString()))
+                .thenAnswer(invocation -> "signed:" + invocation.getArgument(0));
+    }
 
     @Test
     @DisplayName("공동육아 구성원도 사진과 글로 일기를 남길 수 있다")
@@ -42,8 +50,7 @@ class CareDiaryServiceImplTest {
         CareDiaryServiceImpl service = service();
         givenPetOwnedBy("pet-1", "owner-1");
         when(shareMapper.findAcceptedAccess("pet-1", "member-2")).thenReturn(map("access_id", "access-1"));
-        when(fileUtil.upload(any(MultipartFile.class), eq("diary"), anyString()))
-                .thenReturn("/uploads/diary/a.png");
+        when(fileStorage.store(any(), eq("diary"), anyString())).thenReturn("diary/a.png");
         when(shareMapper.findMainWalletByMemberId("owner-1")).thenReturn(map("wallet_id", "wallet-1"));
         givenInsertAssignsDiaryId("diary-1");
         givenDiaryDetail("diary-1", "pet-1", "member-2", "2026-08-10", "밥 줬어요");
@@ -53,7 +60,7 @@ class CareDiaryServiceImplTest {
         assertEquals("diary-1", result.getId());
         ArgumentCaptor<Map<String, Object>> imageCaptor = mapCaptor();
         verify(careDiaryMapper).insertImage(imageCaptor.capture());
-        assertEquals("/uploads/diary/a.png", imageCaptor.getValue().get("imageUrl"));
+        assertEquals("diary/a.png", imageCaptor.getValue().get("imageUrl"));
     }
 
     @Test
@@ -93,14 +100,29 @@ class CareDiaryServiceImplTest {
         givenPetOwnedBy("pet-1", "owner-1");
         // 파일명은 .jpg지만 내용은 PNG다. 저장 확장자는 png여야 한다.
         MultipartFile mislabeled = new MockMultipartFile("image", "photo.jpg", "image/png", pngBytes());
-        when(fileUtil.upload(any(MultipartFile.class), eq("diary"), anyString()))
-                .thenReturn("/uploads/diary/a.png");
+        when(fileStorage.store(any(), eq("diary"), anyString())).thenReturn("diary/a.png");
         givenInsertAssignsDiaryId("diary-1");
         givenDiaryDetail("diary-1", "pet-1", "owner-1", "2026-08-10", "글");
 
         service.create("owner-1", "pet-1", "2026-08-10", "글", mislabeled);
 
-        verify(fileUtil).upload(any(MultipartFile.class), eq("diary"), eq("png"));
+        verify(fileStorage).store(any(), eq("diary"), eq("png"));
+    }
+
+    @Test
+    @DisplayName("이미지 저장 후 DB 반영이 실패하면 고아 파일을 정리한다")
+    void should_deleteStoredImage_whenDatabaseInsertFails() {
+        CareDiaryServiceImpl service = service();
+        givenPetOwnedBy("pet-1", "owner-1");
+        givenInsertAssignsDiaryId("diary-1");
+        when(fileStorage.store(any(), eq("diary"), eq("png"))).thenReturn("diary/a.png");
+        doThrow(new IllegalStateException("db failure"))
+                .when(careDiaryMapper).insertImage(anyMap());
+
+        assertThrows(IllegalStateException.class,
+                () -> service.create("owner-1", "pet-1", "2026-08-10", "글", image()));
+
+        verify(fileStorage).delete("diary/a.png");
     }
 
     @Test
@@ -158,7 +180,8 @@ class CareDiaryServiceImplTest {
         List<CareDiaryResponse> result = service.getMonthly("owner-1", "pet-1", "2026-08");
 
         assertEquals(2, result.size());
-        assertEquals(List.of("/uploads/diary/a.png", "/uploads/diary/b.png"), result.get(0).getImages());
+        assertEquals(List.of("signed:/uploads/diary/a.png", "signed:/uploads/diary/b.png"),
+                result.get(0).getImages());
         assertTrue(result.get(1).getImages().isEmpty());
         verify(careDiaryMapper, times(1)).findImagesByDiaryIds(anyList());
     }
@@ -171,6 +194,8 @@ class CareDiaryServiceImplTest {
         when(careDiaryMapper.findById("diary-1"))
                 .thenReturn(diaryRow("diary-1", "pet-1", "member-2", "2026-08-10", "밥"));
         when(careDiaryMapper.softDelete("diary-1")).thenReturn(1);
+        when(careDiaryMapper.findImagesByDiaryIds(List.of("diary-1"))).thenReturn(List.of(
+                map("diaryId", "diary-1", "imageUrl", "diary/a.png")));
 
         CareDiaryUpdateRequest request = new CareDiaryUpdateRequest();
         ReflectionTestUtils.setField(request, "content", "몰래 수정");
@@ -180,6 +205,7 @@ class CareDiaryServiceImplTest {
 
         service.delete("owner-1", "diary-1");
         verify(careDiaryMapper).softDelete("diary-1");
+        verify(fileStorage).delete("diary/a.png");
     }
 
     @Test
@@ -260,7 +286,7 @@ class CareDiaryServiceImplTest {
     // ── helpers ──────────────────────────────────────────────────
 
     private CareDiaryServiceImpl service() {
-        return new CareDiaryServiceImpl(careDiaryMapper, shareMapper, petMapper, activityLogMapper, fileUtil);
+        return new CareDiaryServiceImpl(careDiaryMapper, shareMapper, petMapper, activityLogMapper, fileStorage);
     }
 
     private void givenPetOwnedBy(String petId, String ownerId) {
