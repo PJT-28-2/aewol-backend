@@ -155,6 +155,8 @@ public class GroupPurchaseServiceImpl implements GroupPurchaseService {
                 .deadline(deadline)
                 .unitPrice(toDecimal(gp.get("unit_price")))
                 .groupPrice(toDecimal(gp.get("group_price")))
+                .deliveryDate(toLocalDate(gp.get("delivery_date")))
+                .deliveryEstimateDays(toInt(gp.get("delivery_estimate_days")))
                 .participantInfo(participantInfo)
                 .noticeMessage(toNoticeMessage(status))
                 .build();
