@@ -43,6 +43,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -207,8 +208,7 @@ class AuthServiceImplPasswordResetTest {
 
     @Test
     void validTokenEncodesAndUpdatesPasswordThenDeletesRefreshAfterCommit() {
-        when(redisTemplate.execute(any(RedisScript.class), eq(List.of("password:reset:token:token"))))
-                .thenReturn("1");
+        stubClaim("1");
         when(memberMapper.findById("1")).thenReturn(member("LOCAL", true, "old-hash"));
         when(passwordEncoder.matches("new-password", "old-hash")).thenReturn(false);
         when(passwordEncoder.encode("new-password")).thenReturn("new-hash");
@@ -221,11 +221,15 @@ class AuthServiceImplPasswordResetTest {
 
         TransactionSynchronizationUtils.triggerAfterCommit();
         verify(authCredentialStore).deleteRefresh("1");
+        verify(redisTemplate, atLeastOnce()).execute(
+                argThat(script -> script.getScriptAsString().contains("redis.call('DEL', KEYS[1])")
+                        && script.getScriptAsString().contains("ARGV[1]")),
+                eq(List.of("password:reset:token:token")), anyString());
     }
 
     @Test
     void invalidExpiredAndUsedTokenFailClosed() {
-        when(redisTemplate.execute(any(RedisScript.class), anyList())).thenReturn(null);
+        when(redisTemplate.execute(any(RedisScript.class), anyList(), anyString())).thenReturn(null);
 
         BusinessException exception = assertThrows(BusinessException.class,
                 () -> service.resetPassword(resetRequest("invalid", "new-password")));
@@ -237,7 +241,7 @@ class AuthServiceImplPasswordResetTest {
 
     @Test
     void resetTokenIsConsumedOnlyOnce() {
-        when(redisTemplate.execute(any(RedisScript.class), anyList())).thenReturn("1", (String) null);
+        stubClaim("1");
         when(memberMapper.findById("1")).thenReturn(member("LOCAL", true, "old-hash"));
         when(passwordEncoder.encode("new-password")).thenReturn("new-hash");
         when(memberMapper.updatePassword("1", "new-hash")).thenReturn(1);
@@ -246,6 +250,7 @@ class AuthServiceImplPasswordResetTest {
         service.resetPassword(resetRequest("token", "new-password"));
         TransactionSynchronizationUtils.triggerAfterCommit();
         TransactionSynchronizationManager.clearSynchronization();
+        when(redisTemplate.execute(any(RedisScript.class), anyList(), anyString())).thenReturn(null);
 
         assertThrows(BusinessException.class,
                 () -> service.resetPassword(resetRequest("token", "another-password")));
@@ -254,9 +259,10 @@ class AuthServiceImplPasswordResetTest {
 
     @Test
     void samePasswordIsRejectedUsingStoredBcryptHash() {
-        when(redisTemplate.execute(any(RedisScript.class), anyList())).thenReturn("1");
+        stubClaim("1");
         when(memberMapper.findById("1")).thenReturn(member("LOCAL", true, "old-hash"));
         when(passwordEncoder.matches("same-password", "old-hash")).thenReturn(true);
+        TransactionSynchronizationManager.initSynchronization();
 
         BusinessException exception = assertThrows(BusinessException.class,
                 () -> service.resetPassword(resetRequest("token", "same-password")));
@@ -264,18 +270,26 @@ class AuthServiceImplPasswordResetTest {
         assertEquals("새 비밀번호는 현재 비밀번호와 달라야 합니다.", exception.getMessage());
         verify(passwordEncoder, never()).encode(anyString());
         verify(memberMapper, never()).updatePassword(anyString(), anyString());
+        TransactionSynchronizationUtils.triggerAfterCompletion(TransactionSynchronization.STATUS_ROLLED_BACK);
+        verifyRestoreUsesClaimedValueAndKeepsTtl();
     }
 
     @Test
     void finalResetRejectsKakaoAndInactiveMemberWithoutCreatingPassword() {
-        when(redisTemplate.execute(any(RedisScript.class), anyList())).thenReturn("2", "3");
+        stubClaim("2");
         when(memberMapper.findById("2")).thenReturn(member("KAKAO", true, null));
         when(memberMapper.findById("3")).thenReturn(member("LOCAL", false, "old-hash"));
+        TransactionSynchronizationManager.initSynchronization();
 
         assertThrows(BusinessException.class,
                 () -> service.resetPassword(resetRequest("kakao-token", "new-password")));
+        TransactionSynchronizationUtils.triggerAfterCompletion(TransactionSynchronization.STATUS_ROLLED_BACK);
+        TransactionSynchronizationManager.clearSynchronization();
+        stubClaim("3");
+        TransactionSynchronizationManager.initSynchronization();
         assertThrows(BusinessException.class,
                 () -> service.resetPassword(resetRequest("inactive-token", "new-password")));
+        TransactionSynchronizationUtils.triggerAfterCompletion(TransactionSynchronization.STATUS_ROLLED_BACK);
 
         verify(passwordEncoder, never()).encode(anyString());
         verify(memberMapper, never()).updatePassword(anyString(), anyString());
@@ -283,7 +297,7 @@ class AuthServiceImplPasswordResetTest {
 
     @Test
     void refreshCleanupFailureDoesNotChangeCommittedPasswordOutcome() {
-        when(redisTemplate.execute(any(RedisScript.class), anyList())).thenReturn("1");
+        stubClaim("1");
         when(memberMapper.findById("1")).thenReturn(member("LOCAL", true, "old-hash"));
         when(passwordEncoder.encode("new-password")).thenReturn("new-hash");
         when(memberMapper.updatePassword("1", "new-hash")).thenReturn(1);
@@ -296,6 +310,90 @@ class AuthServiceImplPasswordResetTest {
         assertDoesNotThrow(TransactionSynchronizationUtils::triggerAfterCommit);
         verify(memberMapper).updatePassword("1", "new-hash");
         verify(authCredentialStore).deleteRefresh("1");
+    }
+
+    @Test
+    void claimIsAtomicAndKeepsOriginalTtl() {
+        stubClaim("1");
+        when(memberMapper.findById("1")).thenReturn(member("LOCAL", true, "old-hash"));
+        when(passwordEncoder.encode("new-password")).thenReturn("new-hash");
+        when(memberMapper.updatePassword("1", "new-hash")).thenReturn(1);
+        TransactionSynchronizationManager.initSynchronization();
+
+        service.resetPassword(resetRequest("token", "new-password"));
+
+        verify(redisTemplate, atLeastOnce()).execute(
+                argThat(script -> {
+                    String lua = script.getScriptAsString();
+                    return lua.contains("string.sub(stored, 1, 8) == 'CLAIMED|'")
+                            && lua.contains("'KEEPTTL'");
+                }), eq(List.of("password:reset:token:token")), anyString());
+    }
+
+    @Test
+    void rowCountAndDbFailureRestoreToken() {
+        stubClaim("1");
+        when(memberMapper.findById("1")).thenReturn(member("LOCAL", true, "old-hash"));
+        when(passwordEncoder.encode("new-password")).thenReturn("new-hash");
+        when(memberMapper.updatePassword("1", "new-hash"))
+                .thenReturn(0)
+                .thenThrow(new RuntimeException("db unavailable"));
+        TransactionSynchronizationManager.initSynchronization();
+
+        assertThrows(BusinessException.class,
+                () -> service.resetPassword(resetRequest("token", "new-password")));
+        TransactionSynchronizationUtils.triggerAfterCompletion(TransactionSynchronization.STATUS_ROLLED_BACK);
+        TransactionSynchronizationManager.clearSynchronization();
+        stubClaim("1");
+        TransactionSynchronizationManager.initSynchronization();
+        assertThrows(RuntimeException.class,
+                () -> service.resetPassword(resetRequest("token", "new-password")));
+        TransactionSynchronizationUtils.triggerAfterCompletion(TransactionSynchronization.STATUS_ROLLED_BACK);
+
+        verifyRestoreUsesClaimedValueAndKeepsTtl();
+    }
+
+    @Test
+    void deleteFailureLeavesClaimedTokenAndDoesNotRestoreIt() {
+        when(redisTemplate.execute(any(RedisScript.class), anyList(), anyString()))
+                .thenAnswer(invocation -> {
+                    RedisScript<?> script = invocation.getArgument(0);
+                    if (script.getResultType() == String.class) {
+                        return "1";
+                    }
+                    throw new RuntimeException("redis unavailable");
+                });
+        when(memberMapper.findById("1")).thenReturn(member("LOCAL", true, "old-hash"));
+        when(passwordEncoder.encode("new-password")).thenReturn("new-hash");
+        when(memberMapper.updatePassword("1", "new-hash")).thenReturn(1);
+        TransactionSynchronizationManager.initSynchronization();
+
+        service.resetPassword(resetRequest("token", "new-password"));
+
+        assertDoesNotThrow(TransactionSynchronizationUtils::triggerAfterCommit);
+        TransactionSynchronizationUtils.triggerAfterCompletion(TransactionSynchronization.STATUS_COMMITTED);
+        verify(redisTemplate, never()).execute(
+                argThat(script -> script.getScriptAsString().contains("ARGV[2]")),
+                anyList(), anyString(), anyString());
+    }
+
+    private void stubClaim(String memberId) {
+        when(redisTemplate.execute(any(RedisScript.class), anyList(), anyString()))
+                .thenAnswer(invocation -> {
+                    RedisScript<?> script = invocation.getArgument(0);
+                    return script.getResultType() == String.class ? memberId : 1L;
+                });
+    }
+
+    private void verifyRestoreUsesClaimedValueAndKeepsTtl() {
+        verify(redisTemplate, atLeastOnce()).execute(
+                argThat(script -> script.getScriptAsString().contains("'KEEPTTL'")
+                        && script.getScriptAsString().contains("ARGV[2]")),
+                anyList(),
+                argThat((Object value) -> value instanceof String
+                        && ((String) value).startsWith("CLAIMED|")
+                        && ((String) value).endsWith("|1")),
+                eq("1"));
     }
 
     private PasswordResetEmailRequest emailRequest(String email) {

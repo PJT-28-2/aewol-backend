@@ -111,13 +111,19 @@ public class AuthServiceImpl implements AuthService {
             "if not created then return -2 end\n" +
             "return 1",
             Long.class);
-    private static final DefaultRedisScript<String> CONSUME_PASSWORD_RESET_TOKEN_SCRIPT =
+    private static final String PASSWORD_RESET_TOKEN_CLAIM_PREFIX = "CLAIMED|";
+    private static final DefaultRedisScript<String> CLAIM_PASSWORD_RESET_TOKEN_SCRIPT =
             new DefaultRedisScript<>(
-                    "local memberId = redis.call('GET', KEYS[1])\n" +
-                    "if not memberId then return nil end\n" +
-                    "redis.call('DEL', KEYS[1])\n" +
-                    "return memberId",
+                    "local stored = redis.call('GET', KEYS[1])\n" +
+                    "if not stored or string.sub(stored, 1, 8) == 'CLAIMED|' then return nil end\n" +
+                    "redis.call('SET', KEYS[1], ARGV[1] .. stored, 'KEEPTTL')\n" +
+                    "return stored",
                     String.class);
+    private static final DefaultRedisScript<Long> COMPARE_AND_RESTORE_SCRIPT = new DefaultRedisScript<>(
+            "if redis.call('GET', KEYS[1]) ~= ARGV[1] then return 0 end\n" +
+            "redis.call('SET', KEYS[1], ARGV[2], 'KEEPTTL')\n" +
+            "return 1",
+            Long.class);
 
     private final MemberMapper memberMapper;
     private final WalletMapper walletMapper;
@@ -241,12 +247,18 @@ public class AuthServiceImpl implements AuthService {
     @Override
     @Transactional
     public void resetPassword(PasswordResetRequest request) {
+        String requestId = UUID.randomUUID().toString();
+        String claimPrefix = PASSWORD_RESET_TOKEN_CLAIM_PREFIX + requestId + VERIFICATION_VALUE_DELIMITER;
+        String tokenKey = passwordResetTokenKey(request.getResetToken());
         String memberId = redisTemplate.execute(
-                CONSUME_PASSWORD_RESET_TOKEN_SCRIPT,
-                List.of(passwordResetTokenKey(request.getResetToken())));
+                CLAIM_PASSWORD_RESET_TOKEN_SCRIPT,
+                List.of(tokenKey),
+                claimPrefix);
         if (memberId == null) {
             throw new BusinessException(INVALID_PASSWORD_RESET_TOKEN_MESSAGE);
         }
+        String claimedValue = claimPrefix + memberId;
+        registerPasswordResetTokenCompletion(tokenKey, claimedValue, memberId);
 
         Map<String, Object> member = memberMapper.findById(memberId);
         if (!isActiveLocalMember(member)) {
@@ -629,6 +641,37 @@ public class AuthServiceImpl implements AuthService {
                     authCredentialStore.deleteRefresh(memberId);
                 } catch (RuntimeException e) {
                     log.warn("비밀번호 재설정 후 Refresh Token 삭제에 실패했습니다. TTL 만료를 기다립니다.", e);
+                }
+            }
+        });
+    }
+
+    private void registerPasswordResetTokenCompletion(
+            String tokenKey, String claimedValue, String memberId) {
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCommit() {
+                try {
+                    redisTemplate.execute(
+                            COMPARE_AND_DELETE_SCRIPT, List.of(tokenKey), claimedValue);
+                } catch (RuntimeException e) {
+                    log.warn("비밀번호 재설정 토큰 사용 완료 처리에 실패했습니다. TTL 만료를 기다립니다.", e);
+                }
+            }
+
+            @Override
+            public void afterCompletion(int status) {
+                if (status == TransactionSynchronization.STATUS_COMMITTED) {
+                    return;
+                }
+                try {
+                    redisTemplate.execute(
+                            COMPARE_AND_RESTORE_SCRIPT,
+                            List.of(tokenKey),
+                            claimedValue,
+                            memberId);
+                } catch (RuntimeException e) {
+                    log.warn("비밀번호 재설정 토큰 복원에 실패했습니다. TTL 만료를 기다립니다.", e);
                 }
             }
         });
