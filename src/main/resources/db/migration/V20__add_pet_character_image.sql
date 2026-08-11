@@ -8,7 +8,7 @@
 -- V1의 pet 테이블에는 이미지 컬럼이 없었다. member에만 profile_img가 있어
 -- PetServiceImpl이 pet.profile_img를 읽어도 항상 null이 나오던 상태를 함께 바로잡는다.
 --
--- V16은 FAQ 시드(PR #65), V17은 공동육아 일기(#87)가 사용한다.
+-- V16~V18은 develop에 이미 있고 V19는 공동육아 일기(#87)가 쓰므로 V20을 쓴다.
 
 ALTER TABLE `pet`
     ADD COLUMN `profile_img`   VARCHAR(500) NULL COMMENT 'AI 생성 정면 얼굴 이미지 경로' AFTER `medical_history`,
