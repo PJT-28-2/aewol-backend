@@ -42,7 +42,8 @@ class CareDiaryServiceImplTest {
         CareDiaryServiceImpl service = service();
         givenPetOwnedBy("pet-1", "owner-1");
         when(shareMapper.findAcceptedAccess("pet-1", "member-2")).thenReturn(map("access_id", "access-1"));
-        when(fileUtil.upload(any(MultipartFile.class), eq("diary"))).thenReturn("/uploads/diary/a.png");
+        when(fileUtil.upload(any(MultipartFile.class), eq("diary"), anyString()))
+                .thenReturn("/uploads/diary/a.png");
         when(shareMapper.findMainWalletByMemberId("owner-1")).thenReturn(map("wallet_id", "wallet-1"));
         givenInsertAssignsDiaryId("diary-1");
         givenDiaryDetail("diary-1", "pet-1", "member-2", "2026-08-10", "밥 줬어요");
@@ -53,6 +54,53 @@ class CareDiaryServiceImplTest {
         ArgumentCaptor<Map<String, Object>> imageCaptor = mapCaptor();
         verify(careDiaryMapper).insertImage(imageCaptor.capture());
         assertEquals("/uploads/diary/a.png", imageCaptor.getValue().get("imageUrl"));
+    }
+
+    @Test
+    @DisplayName("이미지가 아닌 파일은 확장자를 속여도 저장하지 않는다")
+    void should_rejectNonImage_evenWhenExtensionLooksLikeImage() {
+        CareDiaryServiceImpl service = service();
+        givenPetOwnedBy("pet-1", "owner-1");
+        // 업로드 경로로 공개되므로 svg/html이 통과하면 스크립트가 실행될 수 있다.
+        MultipartFile svg = new MockMultipartFile("image", "cute.png", "image/png",
+                "<svg xmlns=\"http://www.w3.org/2000/svg\"><script/></svg>".getBytes());
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.create("owner-1", "pet-1", "2026-08-10", "글", svg));
+
+        assertEquals(400, exception.getStatus().value());
+        verify(careDiaryMapper, never()).insertImage(anyMap());
+    }
+
+    @Test
+    @DisplayName("허용하지 않는 MIME 타입은 거절한다")
+    void should_rejectDisallowedContentType() {
+        CareDiaryServiceImpl service = service();
+        givenPetOwnedBy("pet-1", "owner-1");
+        MultipartFile svg = new MockMultipartFile("image", "a.svg", "image/svg+xml", pngBytes());
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.create("owner-1", "pet-1", "2026-08-10", "글", svg));
+
+        assertEquals(400, exception.getStatus().value());
+        verify(careDiaryMapper, never()).insertImage(anyMap());
+    }
+
+    @Test
+    @DisplayName("확장자는 파일명이 아니라 실제 내용에서 정한다")
+    void should_deriveExtensionFromContent_notFilename() throws IOException {
+        CareDiaryServiceImpl service = service();
+        givenPetOwnedBy("pet-1", "owner-1");
+        // 파일명은 .jpg지만 내용은 PNG다. 저장 확장자는 png여야 한다.
+        MultipartFile mislabeled = new MockMultipartFile("image", "photo.jpg", "image/png", pngBytes());
+        when(fileUtil.upload(any(MultipartFile.class), eq("diary"), anyString()))
+                .thenReturn("/uploads/diary/a.png");
+        givenInsertAssignsDiaryId("diary-1");
+        givenDiaryDetail("diary-1", "pet-1", "owner-1", "2026-08-10", "글");
+
+        service.create("owner-1", "pet-1", "2026-08-10", "글", mislabeled);
+
+        verify(fileUtil).upload(any(MultipartFile.class), eq("diary"), eq("png"));
     }
 
     @Test
@@ -246,7 +294,12 @@ class CareDiaryServiceImplTest {
     }
 
     private static MultipartFile image() {
-        return new MockMultipartFile("image", "pet.png", "image/png", new byte[] {1, 2, 3});
+        return new MockMultipartFile("image", "pet.png", "image/png", pngBytes());
+    }
+
+    /** PNG 시그니처로 시작하는 최소 바이트. 저장 전 실제 이미지인지 확인하므로 필요하다. */
+    private static byte[] pngBytes() {
+        return new byte[] {(byte) 0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A, 0, 0, 0, 0};
     }
 
     @SuppressWarnings("unchecked")

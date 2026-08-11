@@ -18,6 +18,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
@@ -33,6 +34,12 @@ public class CareDiaryServiceImpl implements CareDiaryService {
 
     private static final int MAX_CONTENT_LENGTH = 500;
     private static final String UPLOAD_SUB_DIR = "diary";
+    /** 업로드 경로로 공개되므로 스크립트가 실행될 수 있는 형식(svg, html 등)은 받지 않는다. */
+    private static final Map<String, String> ALLOWED_IMAGE_TYPES = Map.of(
+            "image/jpeg", "jpg",
+            "image/jpg", "jpg",
+            "image/png", "png",
+            "image/webp", "webp");
 
     private final CareDiaryMapper careDiaryMapper;
     private final ShareMapper shareMapper;
@@ -174,13 +181,58 @@ public class CareDiaryServiceImpl implements CareDiaryService {
         return row;
     }
 
+    /**
+     * 업로드한 파일이 실제 이미지인지 확인한 뒤 저장한다.
+     *
+     * <p>원본 확장자를 그대로 쓰면 {@code .svg}나 {@code .html}이 업로드 경로로 공개돼
+     * 스크립트가 실행될 수 있다. 그래서 (1) MIME 타입을 허용 목록으로 제한하고,
+     * (2) 파일 앞머리 시그니처로 실제 이미지인지 확인하고, (3) 확장자는 파일명이 아니라
+     * 검증된 타입에서 결정한다.
+     *
+     * <p>시그니처로 확인하는 이유는 {@code ImageIO}가 WEBP 디코더를 기본 제공하지 않아
+     * 정상 파일까지 거부하기 때문이다.
+     */
     private String storeImage(MultipartFile image) {
+        String contentType = image.getContentType();
+        String declaredExtension = contentType == null
+                ? null
+                : ALLOWED_IMAGE_TYPES.get(contentType.toLowerCase(Locale.ROOT));
+        if (declaredExtension == null) {
+            throw new BusinessException("JPG, PNG, WEBP 이미지만 올릴 수 있어요.");
+        }
+
         try {
-            return fileUtil.upload(image, UPLOAD_SUB_DIR);
+            byte[] bytes = image.getBytes();
+            String actualExtension = detectImageExtension(bytes);
+            if (actualExtension == null) {
+                throw new BusinessException("이미지 파일이 아니거나 손상된 파일이에요.");
+            }
+            // 확장자는 선언된 MIME이 아니라 실제 내용에서 판별한 값을 쓴다.
+            return fileUtil.upload(image, UPLOAD_SUB_DIR, actualExtension);
         } catch (IOException e) {
             log.error("[CARE_DIARY_UPLOAD_FAILED] 일기 이미지 저장 실패 - size: {}", image.getSize(), e);
             throw new BusinessException("사진 저장에 실패했습니다. 잠시 후 다시 시도해 주세요.");
         }
+    }
+
+    /** 파일 앞머리 시그니처로 이미지 형식을 판별한다. 아니면 null. */
+    private static String detectImageExtension(byte[] bytes) {
+        if (bytes.length >= 8
+                && (bytes[0] & 0xFF) == 0x89 && bytes[1] == 'P' && bytes[2] == 'N' && bytes[3] == 'G'
+                && (bytes[4] & 0xFF) == 0x0D && (bytes[5] & 0xFF) == 0x0A
+                && (bytes[6] & 0xFF) == 0x1A && (bytes[7] & 0xFF) == 0x0A) {
+            return "png";
+        }
+        if (bytes.length >= 3
+                && (bytes[0] & 0xFF) == 0xFF && (bytes[1] & 0xFF) == 0xD8 && (bytes[2] & 0xFF) == 0xFF) {
+            return "jpg";
+        }
+        if (bytes.length >= 12
+                && bytes[0] == 'R' && bytes[1] == 'I' && bytes[2] == 'F' && bytes[3] == 'F'
+                && bytes[8] == 'W' && bytes[9] == 'E' && bytes[10] == 'B' && bytes[11] == 'P') {
+            return "webp";
+        }
+        return null;
     }
 
     /**
