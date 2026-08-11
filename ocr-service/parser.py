@@ -28,7 +28,12 @@ TOTAL_KEYWORD_TIERS = [
 ]
 TOTAL_KEYWORDS = [keyword for tier in TOTAL_KEYWORD_TIERS for keyword in tier]
 VET_KEYWORDS = ["수의사", "원장", "담당의"]
-HOSPITAL_KEYWORDS = ["동물병원", "동물의료센터", "동물메디컬센터"]
+# 상호 자체에 들어가는 키워드와, 값 앞에 붙는 라벨 키워드를 구분한다.
+# "가맹점명:미리내동물병원"처럼 라벨과 값이 한 박스로 묶여 인식되는 경우
+# 라벨을 떼어내고 상호만 남기기 위해 필요하다.
+HOSPITAL_NAME_KEYWORDS = ["동물병원", "동물의료센터", "동물메디컬센터", "병원"]
+HOSPITAL_LABEL_KEYWORDS = ["병원명", "가맹점명"]
+HOSPITAL_KEYWORDS = HOSPITAL_NAME_KEYWORDS + HOSPITAL_LABEL_KEYWORDS
 
 AMOUNT_RE = re.compile(r"[\d,]+")
 ITEM_LINE_RE = re.compile(r"^(?P<name>.+?)\s+(?P<qty>\d+)\s+(?P<amount>[\d,]+)\s*원?$")
@@ -104,8 +109,27 @@ def extract_hospital_name(lines: List[OcrLine]) -> Optional[str]:
     # 신뢰도 자체는 높아 신뢰도 필터링으로도 못 거름). 틀린 값을 그럴듯하게 채워
     # 사용자가 오탈지 못하게 하느니, 못 찾으면 null로 남겨 확인을 유도한다.
     for line in lines:
-        if any(keyword in line["text"] for keyword in HOSPITAL_KEYWORDS):
-            return line["text"].strip()
+        if not any(keyword in line["text"] for keyword in HOSPITAL_KEYWORDS):
+            continue
+        name = _strip_label(line["text"])
+        if name:
+            return name
+    return None
+
+
+def _strip_label(text: str) -> Optional[str]:
+    """라벨이 값과 한 박스로 묶여 인식된 줄에서 상호만 남긴다.
+
+    "가맹점명:미리내동물병원" -> "미리내동물병원"
+    ":마음동물병원"          -> "마음동물병원"
+    라벨만 있고 상호가 없는 줄("병원명 :")은 None을 돌려 다음 줄로 넘긴다.
+    """
+    for segment in reversed(text.split(":")):
+        segment = segment.strip(" ·-")
+        if segment in HOSPITAL_LABEL_KEYWORDS:
+            continue
+        if any(keyword in segment for keyword in HOSPITAL_NAME_KEYWORDS):
+            return segment
     return None
 
 
