@@ -21,7 +21,8 @@ import java.util.Map;
 public class GeminiVisionClient {
 
     private static final String GEMINI_ENDPOINT =
-            "https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=%s";
+            "https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent";
+    private static final String API_KEY_HEADER = "x-goog-api-key";
 
     private static final String RECEIPT_PROMPT =
             "당신은 반려동물 병원 영수증에서 정보를 추출하는 OCR 어시스턴트입니다. "
@@ -79,10 +80,10 @@ public class GeminiVisionClient {
 
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_JSON);
+        headers.set(API_KEY_HEADER, apiKey);
         HttpEntity<Map<String, Object>> entity = new HttpEntity<>(requestBody, headers);
 
-        String url = String.format(GEMINI_ENDPOINT, apiKey);
-        return restTemplate.postForObject(url, entity, String.class);
+        return restTemplate.postForObject(GEMINI_ENDPOINT, entity, String.class);
     }
 
     private String extractJsonFromResponse(String responseBody) throws Exception {

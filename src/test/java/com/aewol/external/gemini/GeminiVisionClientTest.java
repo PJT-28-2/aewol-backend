@@ -62,6 +62,13 @@ class GeminiVisionClientTest {
         return request -> assertEquals(HttpMethod.POST, request.getMethod());
     }
 
+    private RequestMatcher hasApiKeyHeader(String expectedApiKey) {
+        return request -> assertEquals(
+                expectedApiKey,
+                request.getHeaders().getFirst("x-goog-api-key")
+        );
+    }
+
     private RequestMatcher requestBodyMatchesImage(String expectedMimeType, byte[] expectedImageBytes) {
         return request -> {
             MockClientHttpRequest mockRequest = (MockClientHttpRequest) request;
@@ -75,13 +82,14 @@ class GeminiVisionClientTest {
     }
 
     @Test
-    @DisplayName("정상 응답이면 candidates[0].content.parts[0].text를 파싱해 반환하고 요청 바디에 이미지/프롬프트가 포함된다")
+    @DisplayName("정상 응답이면 API 키를 헤더로 전송하고 응답 JSON을 파싱한다")
     void should_returnParsedJson_whenResponseIsValid() throws Exception {
         byte[] imageBytes = "dummy-image".getBytes(StandardCharsets.UTF_8);
         String extractedJson = "{\"hospital_name\":\"애월동물병원\",\"total_amount\":15000}";
 
-        mockServer.expect(requestToUri(ENDPOINT_PREFIX + "?key=test-key"))
+        mockServer.expect(requestToUri(ENDPOINT_PREFIX))
                 .andExpect(isPostMethod())
+                .andExpect(hasApiKeyHeader("test-key"))
                 .andExpect(requestBodyMatchesImage("image/jpeg", imageBytes))
                 .andRespond(withSuccess(geminiResponseWithText(extractedJson), MediaType.APPLICATION_JSON));
 
@@ -98,7 +106,7 @@ class GeminiVisionClientTest {
         String extractedJson = "{\"hospital_name\":\"애월동물병원\"}";
         String wrapped = "```json\n" + extractedJson + "\n```";
 
-        mockServer.expect(requestToUri(ENDPOINT_PREFIX + "?key=test-key"))
+        mockServer.expect(requestToUri(ENDPOINT_PREFIX))
                 .andRespond(withSuccess(geminiResponseWithText(wrapped), MediaType.APPLICATION_JSON));
 
         String result = client.extractReceiptData(imageBytes, "image/jpeg");
@@ -112,7 +120,7 @@ class GeminiVisionClientTest {
     void should_returnEmptyJson_whenNetworkErrorOccurs() {
         byte[] imageBytes = "dummy-image".getBytes(StandardCharsets.UTF_8);
 
-        mockServer.expect(requestToUri(ENDPOINT_PREFIX + "?key=test-key"))
+        mockServer.expect(requestToUri(ENDPOINT_PREFIX))
                 .andRespond(request -> {
                     throw new IOException("connection reset");
                 });
@@ -128,7 +136,7 @@ class GeminiVisionClientTest {
     void should_returnEmptyJson_whenResponseCannotBeParsed() {
         byte[] imageBytes = "dummy-image".getBytes(StandardCharsets.UTF_8);
 
-        mockServer.expect(requestToUri(ENDPOINT_PREFIX + "?key=test-key"))
+        mockServer.expect(requestToUri(ENDPOINT_PREFIX))
                 .andRespond(withSuccess("{\"candidates\":[]}", MediaType.APPLICATION_JSON));
 
         String result = client.extractReceiptData(imageBytes, "image/jpeg");
@@ -142,7 +150,7 @@ class GeminiVisionClientTest {
     void should_returnEmptyJson_whenResponseTextIsJsonArray() throws Exception {
         byte[] imageBytes = "dummy-image".getBytes(StandardCharsets.UTF_8);
 
-        mockServer.expect(requestToUri(ENDPOINT_PREFIX + "?key=test-key"))
+        mockServer.expect(requestToUri(ENDPOINT_PREFIX))
                 .andRespond(withSuccess(geminiResponseWithText("[]"), MediaType.APPLICATION_JSON));
 
         String result = client.extractReceiptData(imageBytes, "image/jpeg");
