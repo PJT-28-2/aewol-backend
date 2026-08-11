@@ -124,6 +124,13 @@ dependencies {
 
 tasks.withType<Test> {
     useJUnitPlatform()
+    // [임시] CI에서만 재현되는 실패의 원인을 보기 위해 예외 전문을 출력한다. 확인 후 되돌린다.
+    testLogging {
+        events("failed")
+        exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
+        showStackTraces = true
+        showCauses = true
+    }
 }
 
 tasks.withType<JavaCompile> {
