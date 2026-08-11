@@ -149,4 +149,13 @@
           AND is_active = 1
     </update>
 
+    <!-- 탈퇴한 회원이 PIN을 설정/재설정하지 못하도록 활성 회원만 대상으로 한다 -->
+    <update id="updateSimplePassword">
+        UPDATE member
+        SET simple_password = #{simplePassword},
+            updated_at = NOW()
+        WHERE member_id = #{memberId}
+          AND is_active = 1
+    </update>
+
 </mapper>

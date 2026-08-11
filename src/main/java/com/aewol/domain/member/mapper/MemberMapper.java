@@ -25,4 +25,5 @@ public interface MemberMapper {
     int deactivateActiveMember(@Param("memberId") String memberId);
     void updateProfile(Map<String, Object> member);
     int updatePassword(@Param("memberId") String memberId, @Param("password") String password);
+    int updateSimplePassword(@Param("memberId") String memberId, @Param("simplePassword") String simplePassword);
 }

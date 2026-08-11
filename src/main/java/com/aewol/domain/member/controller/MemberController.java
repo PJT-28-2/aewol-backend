@@ -5,6 +5,7 @@ import com.aewol.domain.member.dto.MemberResponse;
 import com.aewol.domain.member.dto.MemberPasswordChangeRequest;
 import com.aewol.domain.member.dto.MemberPasswordVerifyRequest;
 import com.aewol.domain.member.dto.MemberUpdateRequest;
+import com.aewol.domain.member.dto.SimplePasswordRequest;
 import com.aewol.domain.member.service.MemberService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -52,5 +53,13 @@ public class MemberController {
             @Valid @RequestBody MemberPasswordChangeRequest request) {
         memberService.changePassword(memberId, request);
         return ResponseEntity.ok(ApiResponse.success());
+    }
+
+    @Operation(summary = "간편 비밀번호 설정")
+    @PostMapping("/simple-password")
+    public ResponseEntity<ApiResponse<Void>> setSimplePassword(@AuthenticationPrincipal String memberId,
+                                                                 @Valid @RequestBody SimplePasswordRequest request) {
+        memberService.setSimplePassword(memberId, request);
+        return ResponseEntity.ok(ApiResponse.success("간편 비밀번호가 설정되었습니다.", null));
     }
 }
