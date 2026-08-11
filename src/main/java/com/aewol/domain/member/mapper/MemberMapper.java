@@ -14,11 +14,15 @@ public interface MemberMapper {
             @Param("email") String email, @Param("providerId") String providerId);
     boolean existsActiveByEmail(@Param("email") String email);
     boolean existsActiveById(@Param("memberId") String memberId);
+    boolean existsActiveByPhone(@Param("phone") String phone);
+    boolean existsActiveByPhoneExcludingMember(
+            @Param("phone") String phone, @Param("memberId") String memberId);
     boolean existsInactiveByKakaoIdentity(
             @Param("email") String email, @Param("providerId") String providerId);
     Map<String, Object> findLatestInactiveByEmailForUpdate(@Param("email") String email);
     void insert(Map<String, Object> member);
     int restoreLocalMember(Map<String, Object> member);
     int deactivateActiveMember(@Param("memberId") String memberId);
-    void update(Map<String, Object> member);
+    void updateProfile(Map<String, Object> member);
+    int updatePassword(@Param("memberId") String memberId, @Param("password") String password);
 }

@@ -25,4 +25,5 @@ public class GroupPurchaseResponse {
     private String status;
     private LocalDateTime deadline;
     private LocalDateTime createdAt;
+    private Boolean isParticipating;
 }
