@@ -58,14 +58,16 @@ public class GroupPurchaseRefundExecutor {
             throw BusinessException.notFound("지갑을 찾을 수 없습니다. memberId=" + memberId);
         }
         String walletId = String.valueOf(wallet.get("wallet_id"));
-        walletMapper.addBalance(walletId, amount);
+        if (walletMapper.addBalance(walletId, amount) == 0) {
+            throw BusinessException.notFound("지갑을 찾을 수 없습니다. memberId=" + memberId);
+        }
 
         Map<String, Object> txn = new HashMap<>();
         txn.put("walletId", walletId);
         txn.put("petId", null);
         txn.put("txnType", "DEPOSIT");
         txn.put("price", amount);
-        txn.put("category", null);
+        txn.put("category", toTxnCategory((String) gp.get("category")));
         txn.put("merchantName", gp.get("product_name"));
         txn.put("merchantCategoryCode", null);
         // 유저가 직접 취소한 게 아니라 마감 미달로 시스템이 자동 환불한 것이므로, leave()의
@@ -74,6 +76,14 @@ public class GroupPurchaseRefundExecutor {
         txn.put("autoTagged", "N");
         txn.put("txnDate", LocalDateTime.now());
         transactionMapper.insert(txn);
+    }
+
+    /** GroupPurchaseServiceImpl#toTxnCategory와 동일한 분류 — 배치를 독립 트랜잭션으로 분리하며 함께 옮겨온 소규모 로직이라 중복을 그대로 둔다. */
+    private static String toTxnCategory(String groupPurchaseCategory) {
+        if ("사료".equals(groupPurchaseCategory) || "간식".equals(groupPurchaseCategory)) {
+            return "FOOD";
+        }
+        return "ETC";
     }
 
     private static Integer toInt(Object value) {

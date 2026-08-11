@@ -2,14 +2,17 @@ package com.aewol.batch;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.aewol.common.exception.BusinessException;
 import com.aewol.domain.grouppurchase.mapper.GroupPurchaseMapper;
 import com.aewol.domain.transaction.mapper.TransactionMapper;
 import com.aewol.domain.wallet.mapper.WalletMapper;
@@ -46,6 +49,7 @@ class GroupPurchaseRefundExecutorTest {
         Map<String, Object> row = new HashMap<>();
         row.put("gp_id", gpId);
         row.put("product_name", "사료 5kg");
+        row.put("category", "사료");
         return row;
     }
 
@@ -57,6 +61,7 @@ class GroupPurchaseRefundExecutorTest {
         Map<String, Object> wallet = new HashMap<>();
         wallet.put("wallet_id", "wallet-1");
         when(walletMapper.findByMemberId("member-1")).thenReturn(wallet);
+        when(walletMapper.addBalance("wallet-1", new BigDecimal("50000"))).thenReturn(1);
 
         boolean result = executor().execute(candidate);
 
@@ -67,6 +72,7 @@ class GroupPurchaseRefundExecutorTest {
         verify(transactionMapper).insert(txnCaptor.capture());
         assertEquals("DEPOSIT", txnCaptor.getValue().get("txnType"));
         assertEquals(new BigDecimal("50000"), txnCaptor.getValue().get("price"));
+        assertEquals("FOOD", txnCaptor.getValue().get("category"));
         String memo = (String) txnCaptor.getValue().get("memo");
         assertTrue(memo.contains("마감 미달 자동환불"), "leave()의 '참여 취소 환불' 문구와 구분되는 메모여야 한다: " + memo);
     }
@@ -80,8 +86,25 @@ class GroupPurchaseRefundExecutorTest {
         boolean result = executor().execute(candidate);
 
         assertFalse(result);
-        verify(groupPurchaseMapper, never()).decreaseQuantityForExpired(any(), any(Integer.class));
+        verify(groupPurchaseMapper, never()).decreaseQuantityForExpired(any(), anyInt());
         verify(walletMapper, never()).addBalance(any(), any());
+        verify(transactionMapper, never()).insert(anyMap());
+    }
+
+    @Test
+    void should_throwAndNotInsertTransaction_when_addBalanceAffectsNoRows() {
+        Map<String, Object> candidate = candidate("1", "member-1", 2, "50000");
+        when(groupPurchaseMapper.cancelParticipant(eq("1"), eq("member-1"), any())).thenReturn(1);
+        when(groupPurchaseMapper.findById("1")).thenReturn(gp("1"));
+        Map<String, Object> wallet = new HashMap<>();
+        wallet.put("wallet_id", "wallet-1");
+        when(walletMapper.findByMemberId("member-1")).thenReturn(wallet);
+        // 지갑이 조회 이후 삭제되는 등, 원자적 UPDATE의 영향 행이 0인 상황(잔액 환급 실패)을 재현한다.
+        when(walletMapper.addBalance("wallet-1", new BigDecimal("50000"))).thenReturn(0);
+
+        assertThrows(BusinessException.class, () -> executor().execute(candidate));
+
+        // 실제로 잔액이 안 들어갔는데 거래내역만 남는 유령 환불 기록을 막는다.
         verify(transactionMapper, never()).insert(anyMap());
     }
 
