@@ -13,6 +13,10 @@ import springfox.documentation.service.SecurityReference;
 import springfox.documentation.spi.DocumentationType;
 import springfox.documentation.spi.service.contexts.SecurityContext;
 import springfox.documentation.spring.web.plugins.Docket;
+import springfox.documentation.swagger.web.OperationsSorter;
+import springfox.documentation.swagger.web.TagsSorter;
+import springfox.documentation.swagger.web.UiConfiguration;
+import springfox.documentation.swagger.web.UiConfigurationBuilder;
 
 /**
  * Swagger(OpenAPI 3) 문서 설정.
@@ -53,6 +57,14 @@ public class SwaggerConfig {
                 .select()
                 .apis(RequestHandlerSelectors.basePackage("com.aewol.domain"))
                 .paths(PathSelectors.any())
+                .build();
+    }
+
+    @Bean
+    public UiConfiguration swaggerUiConfiguration() {
+        return UiConfigurationBuilder.builder()
+                .operationsSorter(OperationsSorter.ALPHA)
+                .tagsSorter(TagsSorter.ALPHA)
                 .build();
     }
 }

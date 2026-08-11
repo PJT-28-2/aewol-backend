@@ -4,6 +4,7 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import io.swagger.v3.oas.models.OpenAPI;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.stream.Collectors;
 import javax.servlet.http.HttpServletRequest;
@@ -41,12 +42,15 @@ public class SwaggerTagRemapFilter implements WebMvcOpenApiTransformationFilter 
 
     /** "gov-24-sync-controller"와 "Gov24SyncController"를 같은 키로 맞춘다. */
     private static String normalize(String value) {
-        return value.replaceAll("[^A-Za-z0-9]", "").toLowerCase();
+        return value.replaceAll("[^A-Za-z0-9]", "").toLowerCase(Locale.ROOT);
     }
 
     @Override
     public OpenAPI transform(OpenApiTransformationContext<HttpServletRequest> context) {
         OpenAPI openApi = context.getSpecification();
+        if (openApi.getPaths() == null) {
+            return openApi;
+        }
         openApi.getPaths().values().forEach(pathItem ->
                 pathItem.readOperations().forEach(operation -> {
                     List<String> tags = operation.getTags();
