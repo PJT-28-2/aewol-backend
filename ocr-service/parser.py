@@ -35,10 +35,6 @@ ITEM_LINE_RE = re.compile(r"^(?P<name>.+?)\s+(?P<qty>\d+)\s+(?P<amount>[\d,]+)\s
 TIME_RE = re.compile(r"\d{1,2}:\d{2}:\d{2}")
 
 
-def _line_y(line: OcrLine) -> float:
-    return sum(point[1] for point in line["box"]) / len(line["box"])
-
-
 def _to_number(raw: str) -> Optional[float]:
     digits = AMOUNT_RE.search(raw)
     if not digits:
@@ -103,12 +99,13 @@ def extract_total_amount(lines: List[OcrLine]) -> Optional[float]:
 
 
 def extract_hospital_name(lines: List[OcrLine]) -> Optional[str]:
+    # 이전에는 키워드 매칭에 실패하면 최상단 줄을 병원명으로 추측했는데, 실제
+    # 영수증에서 그 줄이 "Serial No" 같은 전혀 다른 텍스트인 경우가 있었다(모델
+    # 신뢰도 자체는 높아 신뢰도 필터링으로도 못 거름). 틀린 값을 그럴듯하게 채워
+    # 사용자가 오탈지 못하게 하느니, 못 찾으면 null로 남겨 확인을 유도한다.
     for line in lines:
         if any(keyword in line["text"] for keyword in HOSPITAL_KEYWORDS):
             return line["text"].strip()
-    if lines:
-        sorted_by_y = sorted(lines, key=_line_y)
-        return sorted_by_y[0]["text"].strip()
     return None
 
 
