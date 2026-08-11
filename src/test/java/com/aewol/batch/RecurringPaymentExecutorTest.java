@@ -64,6 +64,7 @@ class RecurringPaymentExecutorTest {
         ArgumentCaptor<Map<String, Object>> txnCaptor = ArgumentCaptor.forClass(Map.class);
         verify(transactionMapper).insert(txnCaptor.capture());
         assertEquals("PAYMENT", txnCaptor.getValue().get("txnType"));
+        assertEquals("1", txnCaptor.getValue().get("recurringId"));
         assertEquals("강아지 사료 정기배송", txnCaptor.getValue().get("merchantName"));
         assertEquals("FOOD", txnCaptor.getValue().get("category"));
         // 다음 주기 결제일로 갱신

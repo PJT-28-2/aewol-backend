@@ -58,8 +58,10 @@ public class RecurringServiceImpl implements RecurringService {
     @Override
     @Transactional
     public RecurringResponse updateRecurring(String memberId, String recurringId, RecurringCreateRequest request) {
-        Map<String, Object> recurring = recurringMapper.findById(recurringId);
-        if (recurring == null) throw BusinessException.notFound("정기결제를 찾을 수 없습니다.");
+        Map<String, Object> recurring = recurringMapper.findByIdForUpdate(recurringId);
+        if (recurring == null || !isActive(recurring.get("is_active"))) {
+            throw BusinessException.notFound("정기결제를 찾을 수 없습니다.");
+        }
         Map<String, Object> wallet = walletMapper.findById(String.valueOf(recurring.get("wallet_id")));
         if (wallet == null || !Objects.equals(memberId, String.valueOf(wallet.get("member_id")))) {
             throw BusinessException.forbidden("정기결제를 변경할 권한이 없습니다.");
@@ -89,8 +91,10 @@ public class RecurringServiceImpl implements RecurringService {
     @Override
     @Transactional
     public void cancelRecurring(String memberId, String recurringId) {
-        Map<String, Object> recurring = recurringMapper.findById(recurringId);
-        if (recurring == null) throw BusinessException.notFound("정기결제를 찾을 수 없습니다.");
+        Map<String, Object> recurring = recurringMapper.findByIdForUpdate(recurringId);
+        if (recurring == null || !isActive(recurring.get("is_active"))) {
+            throw BusinessException.notFound("정기결제를 찾을 수 없습니다.");
+        }
         Map<String, Object> wallet = walletMapper.findById(String.valueOf(recurring.get("wallet_id")));
         if (wallet == null || !Objects.equals(memberId, String.valueOf(wallet.get("member_id")))) {
             throw BusinessException.forbidden("정기결제를 해지할 권한이 없습니다.");
@@ -170,5 +174,11 @@ public class RecurringServiceImpl implements RecurringService {
         return value instanceof LocalDate
                 ? (LocalDate) value
                 : LocalDate.parse(String.valueOf(value));
+    }
+
+    private static boolean isActive(Object value) {
+        if (value instanceof Boolean) return (Boolean) value;
+        if (value instanceof Number) return ((Number) value).intValue() == 1;
+        return "1".equals(String.valueOf(value)) || "true".equalsIgnoreCase(String.valueOf(value));
     }
 }

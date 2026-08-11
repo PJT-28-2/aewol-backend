@@ -153,7 +153,8 @@ class RecurringServiceImplTest {
 
     @Test
     void should_deactivateRecurring_when_memberOwnsWallet() {
-        when(recurringMapper.findById("recurring-1")).thenReturn(Map.of("wallet_id", "wallet-1"));
+        when(recurringMapper.findByIdForUpdate("recurring-1"))
+                .thenReturn(Map.of("wallet_id", "wallet-1", "is_active", 1));
         when(walletMapper.findById("wallet-1")).thenReturn(wallet("wallet-1", "member-1"));
         when(recurringMapper.deactivate("recurring-1")).thenReturn(1);
 
@@ -164,7 +165,7 @@ class RecurringServiceImplTest {
 
     @Test
     void should_throwNotFound_when_recurringDoesNotExist() {
-        when(recurringMapper.findById("recurring-404")).thenReturn(null);
+        when(recurringMapper.findByIdForUpdate("recurring-404")).thenReturn(null);
 
         BusinessException exception = assertThrows(BusinessException.class,
                 () -> service.cancelRecurring("member-1", "recurring-404"));
@@ -174,7 +175,8 @@ class RecurringServiceImplTest {
 
     @Test
     void should_throwForbidden_when_memberDoesNotOwnRecurringWallet() {
-        when(recurringMapper.findById("recurring-1")).thenReturn(Map.of("wallet_id", "wallet-1"));
+        when(recurringMapper.findByIdForUpdate("recurring-1"))
+                .thenReturn(Map.of("wallet_id", "wallet-1", "is_active", 1));
         when(walletMapper.findById("wallet-1")).thenReturn(wallet("wallet-1", "owner-1"));
 
         BusinessException exception = assertThrows(BusinessException.class,
@@ -186,7 +188,7 @@ class RecurringServiceImplTest {
 
     @Test
     void should_updateRecurringPayment_when_memberOwnsWalletAndRequestIsValid() {
-        when(recurringMapper.findById("recurring-1")).thenReturn(recurring("wallet-1", 15,
+        when(recurringMapper.findByIdForUpdate("recurring-1")).thenReturn(recurring("wallet-1", 15,
                 LocalDate.now().withDayOfMonth(Math.min(15, LocalDate.now().lengthOfMonth()))));
         when(walletMapper.findById("wallet-1")).thenReturn(wallet("wallet-1", "member-1"));
         when(petMapper.findById("pet-1")).thenReturn(pet("member-1"));
@@ -212,7 +214,7 @@ class RecurringServiceImplTest {
     void should_keepCurrentPaymentDate_when_updatingOtherFieldsOnPaymentDay() {
         LocalDate today = LocalDate.now();
         int cycleDay = today.getDayOfMonth();
-        when(recurringMapper.findById("recurring-1"))
+        when(recurringMapper.findByIdForUpdate("recurring-1"))
                 .thenReturn(recurring("wallet-1", cycleDay, today));
         when(walletMapper.findById("wallet-1")).thenReturn(wallet("wallet-1", "member-1"));
         when(recurringMapper.update(anyMap())).thenReturn(1);
@@ -229,7 +231,8 @@ class RecurringServiceImplTest {
 
     @Test
     void should_throwForbidden_when_memberDoesNotOwnRecurringWalletForUpdate() {
-        when(recurringMapper.findById("recurring-1")).thenReturn(Map.of("wallet_id", "wallet-1"));
+        when(recurringMapper.findByIdForUpdate("recurring-1"))
+                .thenReturn(Map.of("wallet_id", "wallet-1", "is_active", 1));
         when(walletMapper.findById("wallet-1")).thenReturn(wallet("wallet-1", "owner-1"));
         RecurringCreateRequest request = new RecurringCreateRequest(
                 "강아지 사료", new BigDecimal("32000"), 15, "FOOD", null);
@@ -243,7 +246,7 @@ class RecurringServiceImplTest {
 
     @Test
     void should_throwNotFound_when_recurringDoesNotExistForUpdate() {
-        when(recurringMapper.findById("recurring-404")).thenReturn(null);
+        when(recurringMapper.findByIdForUpdate("recurring-404")).thenReturn(null);
         RecurringCreateRequest request = new RecurringCreateRequest(
                 "강아지 사료", new BigDecimal("32000"), 15, "FOOD", null);
 
@@ -268,6 +271,7 @@ class RecurringServiceImplTest {
             String walletId, int paymentDay, LocalDate nextPaymentDate) {
         return Map.of(
                 "wallet_id", walletId,
+                "is_active", 1,
                 "payment_day", paymentDay,
                 "next_payment_date", nextPaymentDate);
     }

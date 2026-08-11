@@ -55,6 +55,7 @@ public class RecurringPaymentExecutor {
         Map<String, Object> txn = new HashMap<>();
         txn.put("walletId", walletId);
         txn.put("petId", locked.get("pet_id"));
+        txn.put("recurringId", recurringId);
         txn.put("txnType", "PAYMENT");
         txn.put("price", price);
         txn.put("category", locked.get("category"));
