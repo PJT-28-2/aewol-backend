@@ -38,8 +38,16 @@ def get_ocr_engine() -> RapidOCR:
         # 검출 모델은 RapidOCR 기본값이 이미 PP-OCRv6_small_det라 별도 지정이
         # 필요 없고, 인식 모델만 한국어로 명시적으로 고정한다(한국어 지원 모델은
         # korean_PP-OCRv5_mobile_rec 하나뿐).
+        #
+        # use_cls(각도 분류기)는 끈다. cls는 검출된 텍스트 줄이 180도 뒤집혔는지
+        # 판별해 되돌리는 보조 모델인데, 한글 라벨 조각을 자주 오분류해서 멀쩡한
+        # 텍스트를 거꾸로 뒤집은 채 인식기로 넘긴다. 실측 결과 영수증 3장 모두
+        # cls를 켜면 병원명이 깨져서 null이 되고, 끄면 정상 인식된다(금액/날짜는
+        # 회귀 없음, 속도도 미세하게 빠름). 사진 자체의 회전은 EXIF Orientation을
+        # _decode_image()에서 따로 처리하므로 cls 없이도 문제되지 않는다.
         _ocr_engine = RapidOCR(
             params={
+                "Global.use_cls": False,
                 "Rec.ocr_version": OCRVersion.PPOCRV5,
                 "Rec.engine_type": EngineType.ONNXRUNTIME,
                 "Rec.lang_type": LangRec.KOREAN,
