@@ -1,15 +1,31 @@
 package com.aewol.domain.recurring.service;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
-import static org.mockito.Mockito.*;
+import static org.mockito.ArgumentMatchers.anyMap;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.when;
 
 import com.aewol.common.exception.BusinessException;
+import com.aewol.domain.pet.mapper.PetMapper;
+import com.aewol.domain.recurring.dto.RecurringCreateRequest;
+import com.aewol.domain.recurring.dto.RecurringResponse;
 import com.aewol.domain.recurring.mapper.RecurringMapper;
 import com.aewol.domain.wallet.mapper.WalletMapper;
+import java.math.BigDecimal;
+import java.time.LocalDate;
+import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.HttpStatus;
@@ -19,12 +35,127 @@ class RecurringServiceImplTest {
 
     @Mock RecurringMapper recurringMapper;
     @Mock WalletMapper walletMapper;
+    @Mock PetMapper petMapper;
+
+    private RecurringServiceImpl service;
+
+    @BeforeEach
+    void setUp() {
+        service = new RecurringServiceImpl(recurringMapper, walletMapper, petMapper);
+    }
+
+    @Test
+    void should_returnRecurringPaymentsInApiShape_when_walletExists() {
+        when(walletMapper.findByMemberId("member-1")).thenReturn(wallet("wallet-1", "member-1"));
+        Map<String, Object> row = new HashMap<>();
+        row.put("recurring_id", 10L);
+        row.put("product_name", "강아지 사료 정기배송");
+        row.put("price", new BigDecimal("32000.00"));
+        row.put("payment_day", 15);
+        row.put("category", "FOOD");
+        row.put("pet_id", 3L);
+        row.put("next_payment_date", LocalDate.of(2026, 8, 15));
+        when(recurringMapper.findByWalletId("wallet-1")).thenReturn(List.of(row));
+
+        List<RecurringResponse> result = service.getRecurringPayments("member-1");
+
+        assertEquals(1, result.size());
+        assertEquals("10", result.get(0).getRecurringId());
+        assertEquals("강아지 사료 정기배송", result.get(0).getItemName());
+        assertEquals(new BigDecimal("32000.00"), result.get(0).getPrice());
+        assertEquals(15, result.get(0).getCycleDay());
+        assertEquals("2026-08-15", result.get(0).getNextPaymentDate());
+    }
+
+    @Test
+    void should_throwNotFound_when_walletDoesNotExistForList() {
+        when(walletMapper.findByMemberId("member-1")).thenReturn(null);
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.getRecurringPayments("member-1"));
+
+        assertEquals(HttpStatus.NOT_FOUND, exception.getStatus());
+        verifyNoInteractions(recurringMapper);
+    }
+
+    @Test
+    void should_createRecurringPayment_when_requestIsValid() {
+        when(walletMapper.findByMemberId("member-1")).thenReturn(wallet("wallet-1", "member-1"));
+        when(petMapper.findById("pet-1")).thenReturn(pet("member-1"));
+        doAnswer(invocation -> {
+            invocation.<Map<String, Object>>getArgument(0).put("recurringId", 11L);
+            return null;
+        }).when(recurringMapper).insert(anyMap());
+        int cycleDay = 15;
+        RecurringCreateRequest request = new RecurringCreateRequest(
+                "  강아지 사료 정기배송  ", new BigDecimal("32000"), cycleDay, "FOOD", "pet-1");
+
+        RecurringResponse result = service.createRecurring("member-1", request);
+
+        ArgumentCaptor<Map<String, Object>> captor = ArgumentCaptor.forClass(Map.class);
+        verify(recurringMapper).insert(captor.capture());
+        assertEquals("wallet-1", captor.getValue().get("walletId"));
+        assertEquals("강아지 사료 정기배송", captor.getValue().get("productName"));
+        assertEquals(nextPaymentDate(cycleDay), captor.getValue().get("nextPaymentDate"));
+        assertEquals("11", result.getRecurringId());
+        assertEquals("pet-1", result.getPetId());
+    }
+
+    @Test
+    void should_createRecurringPaymentWithoutPet_when_petIdIsBlank() {
+        when(walletMapper.findByMemberId("member-1")).thenReturn(wallet("wallet-1", "member-1"));
+        doAnswer(invocation -> {
+            invocation.<Map<String, Object>>getArgument(0).put("recurringId", 12L);
+            return null;
+        }).when(recurringMapper).insert(anyMap());
+        RecurringCreateRequest request = new RecurringCreateRequest(
+                "펫보험료", new BigDecimal("26000"), 1, "MEDICAL", "  ");
+
+        RecurringResponse result = service.createRecurring("member-1", request);
+
+        assertNull(result.getPetId());
+        verifyNoInteractions(petMapper);
+    }
+
+    @Test
+    void should_useLastDayOfFebruary_when_cycleDayDoesNotExistInMonth() {
+        assertEquals(LocalDate.of(2027, 2, 28),
+                RecurringServiceImpl.nextPaymentDate(31, LocalDate.of(2027, 2, 10)));
+        assertEquals(LocalDate.of(2028, 2, 29),
+                RecurringServiceImpl.nextPaymentDate(31, LocalDate.of(2028, 2, 10)));
+    }
+
+    @Test
+    void should_useLastDayOfThirtyDayMonth_when_cycleDayIsThirtyOne() {
+        assertEquals(LocalDate.of(2026, 4, 30),
+                RecurringServiceImpl.nextPaymentDate(31, LocalDate.of(2026, 4, 10)));
+    }
+
+    @Test
+    void should_scheduleNextMonth_when_clampedPaymentDateIsToday() {
+        assertEquals(LocalDate.of(2026, 5, 31),
+                RecurringServiceImpl.nextPaymentDate(31, LocalDate.of(2026, 4, 30)));
+    }
+
+    @Test
+    void should_throwForbidden_when_memberDoesNotOwnSelectedPet() {
+        when(walletMapper.findByMemberId("member-1")).thenReturn(wallet("wallet-1", "member-1"));
+        when(petMapper.findById("pet-1")).thenReturn(pet("owner-1"));
+        RecurringCreateRequest request = new RecurringCreateRequest(
+                "강아지 사료", new BigDecimal("32000"), 15, "FOOD", "pet-1");
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.createRecurring("member-1", request));
+
+        assertEquals(HttpStatus.FORBIDDEN, exception.getStatus());
+        verify(recurringMapper, never()).insert(anyMap());
+    }
 
     @Test
     void should_deactivateRecurring_when_memberOwnsWallet() {
-        RecurringServiceImpl service = new RecurringServiceImpl(recurringMapper, walletMapper);
         when(recurringMapper.findById("recurring-1")).thenReturn(Map.of("wallet_id", "wallet-1"));
-        when(walletMapper.findById("wallet-1")).thenReturn(Map.of("member_id", "member-1"));
+        when(walletMapper.findById("wallet-1")).thenReturn(wallet("wallet-1", "member-1"));
+        when(recurringMapper.deactivate("recurring-1")).thenReturn(1);
 
         service.cancelRecurring("member-1", "recurring-1");
 
@@ -33,7 +164,6 @@ class RecurringServiceImplTest {
 
     @Test
     void should_throwNotFound_when_recurringDoesNotExist() {
-        RecurringServiceImpl service = new RecurringServiceImpl(recurringMapper, walletMapper);
         when(recurringMapper.findById("recurring-404")).thenReturn(null);
 
         BusinessException exception = assertThrows(BusinessException.class,
@@ -44,14 +174,27 @@ class RecurringServiceImplTest {
 
     @Test
     void should_throwForbidden_when_memberDoesNotOwnRecurringWallet() {
-        RecurringServiceImpl service = new RecurringServiceImpl(recurringMapper, walletMapper);
         when(recurringMapper.findById("recurring-1")).thenReturn(Map.of("wallet_id", "wallet-1"));
-        when(walletMapper.findById("wallet-1")).thenReturn(Map.of("member_id", "owner-1"));
+        when(walletMapper.findById("wallet-1")).thenReturn(wallet("wallet-1", "owner-1"));
 
         BusinessException exception = assertThrows(BusinessException.class,
                 () -> service.cancelRecurring("member-2", "recurring-1"));
 
         assertEquals(HttpStatus.FORBIDDEN, exception.getStatus());
         verify(recurringMapper, never()).deactivate(anyString());
+    }
+
+    private static LocalDate nextPaymentDate(int cycleDay) {
+        LocalDate today = LocalDate.now();
+        LocalDate candidate = today.withDayOfMonth(cycleDay);
+        return candidate.isAfter(today) ? candidate : candidate.plusMonths(1);
+    }
+
+    private static Map<String, Object> wallet(String walletId, String memberId) {
+        return Map.of("wallet_id", walletId, "member_id", memberId);
+    }
+
+    private static Map<String, Object> pet(String memberId) {
+        return Map.of("pet_id", "pet-1", "member_id", memberId);
     }
 }

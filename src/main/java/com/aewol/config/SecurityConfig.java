@@ -39,8 +39,13 @@ public class SecurityConfig {
                         .requestMatchers("/ws/**").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/support/**").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/banks").permitAll()
+                        // User only (관리자는 공동구매에 참여/구매할 수 없음 — 등록·관리만 담당)
+                        .requestMatchers(HttpMethod.POST, "/api/group-purchase/*/join").hasRole("USER")
+                        .requestMatchers(HttpMethod.POST, "/api/group-purchase/*/leave").hasRole("USER")
+                        .requestMatchers(HttpMethod.GET, "/api/group-purchase/my").hasRole("USER")
                         // Admin only
                         .requestMatchers("/api/admin/**").hasRole("ADMIN")
+                        .requestMatchers(HttpMethod.POST, "/api/group-purchase", "/api/group-purchase/images").hasRole("ADMIN")
                         // All other requests require authentication
                         .anyRequest().authenticated()
                 )

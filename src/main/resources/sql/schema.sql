@@ -143,7 +143,7 @@ CREATE TABLE IF NOT EXISTS `recurring_payment` (
     `bucket_id`         VARCHAR(36)    NULL,
     `product_name`      VARCHAR(100)   NOT NULL,
     `amount`            DECIMAL(15,2)  NOT NULL,
-    `cycle_days`        INT            NOT NULL COMMENT '주기 (일 단위)',
+    `payment_day`       INT            NOT NULL COMMENT '매월 결제 희망일 (1~31, 없는 날짜는 말일 처리)',
     `next_payment_date` DATE           NOT NULL,
     `is_active`         TINYINT(1)     NOT NULL DEFAULT 1,
     `created_at`        DATETIME       NOT NULL DEFAULT CURRENT_TIMESTAMP,

@@ -1,10 +1,11 @@
 package com.aewol.domain.recurring.service;
 
+import com.aewol.domain.recurring.dto.RecurringCreateRequest;
+import com.aewol.domain.recurring.dto.RecurringResponse;
 import java.util.List;
-import java.util.Map;
 
 public interface RecurringService {
-    List<Map<String, Object>> getRecurringPayments(String memberId);
-    Map<String, Object> createRecurring(String memberId, Map<String, Object> request);
+    List<RecurringResponse> getRecurringPayments(String memberId);
+    RecurringResponse createRecurring(String memberId, RecurringCreateRequest request);
     void cancelRecurring(String memberId, String recurringId);
 }

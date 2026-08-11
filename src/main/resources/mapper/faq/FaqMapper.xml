@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.aewol.domain.faq.mapper.FaqMapper">
+    <!-- V1에서 faq_id는 BIGINT AUTO_INCREMENT(V3), question/answer 컴럼명은 V4에서 title/content -> question/answer로 변경됨 -->
+
+    <select id="findAll" resultType="map">
+        SELECT faq_id, category, question
+        FROM faq
+        <where>
+            <if test="category != null and category != ''">
+                AND category = #{category}
+            </if>
+            <if test="keyword != null and keyword != ''">
+                AND (question LIKE CONCAT('%', #{keyword}, '%') OR answer LIKE CONCAT('%', #{keyword}, '%'))
+            </if>
+        </where>
+        ORDER BY faq_id ASC
+    </select>
+
+    <select id="findById" resultType="map">
+        SELECT faq_id, category, question, answer
+        FROM faq
+        WHERE faq_id = #{faqId}
+    </select>
+</mapper>

@@ -9,6 +9,7 @@ import com.aewol.domain.grouppurchase.dto.GroupPurchaseCreateRequest;
 import com.aewol.domain.grouppurchase.dto.GroupPurchaseImageUploadResponse;
 import com.aewol.domain.grouppurchase.dto.GroupPurchaseJoinRequest;
 import com.aewol.domain.grouppurchase.dto.GroupPurchaseJoinResponse;
+import com.aewol.domain.grouppurchase.dto.GroupPurchaseLeaveResponse;
 import com.aewol.domain.grouppurchase.dto.GroupPurchaseListItemResponse;
 import com.aewol.domain.grouppurchase.dto.GroupPurchaseListResponse;
 import com.aewol.domain.grouppurchase.dto.GroupPurchaseMyItemResponse;
@@ -129,12 +130,14 @@ class GroupPurchaseServiceImplTest {
     }
 
     @Test
-    @DisplayName("존재하는 gpId로 조회하면 상세 정보를 반환한다")
+    @DisplayName("참여 중인 회원이 조회하면 상세 정보와 함께 isParticipating이 true로 내려간다")
     void should_returnGroupPurchaseDetail_when_gpExists() {
         GroupPurchaseServiceImpl service = service();
         when(groupPurchaseMapper.findById("1")).thenReturn(savedRow());
+        when(groupPurchaseMapper.findParticipant("1", "member-7"))
+                .thenReturn(participantRow(10523L, "1", "member-7", 1));
 
-        GroupPurchaseResponse result = service.getDetail("1");
+        GroupPurchaseResponse result = service.getDetail("member-7", "1");
 
         assertEquals("1", result.getGpId());
         assertEquals("member-1", result.getMemberId());
@@ -148,6 +151,31 @@ class GroupPurchaseServiceImplTest {
         assertEquals(10, result.getTargetQuantity());
         assertEquals(0, result.getCurrentQuantity());
         assertEquals(LocalDateTime.of(2026, 8, 15, 0, 0), result.getDeadline());
+        assertTrue(result.getIsParticipating());
+    }
+
+    @Test
+    @DisplayName("참여하지 않은 회원이 조회하면 isParticipating이 false로 내려간다")
+    void should_returnIsParticipatingFalse_when_memberHasNotJoined_onGetDetail() {
+        GroupPurchaseServiceImpl service = service();
+        when(groupPurchaseMapper.findById("1")).thenReturn(savedRow());
+        when(groupPurchaseMapper.findParticipant("1", "member-7")).thenReturn(null);
+
+        GroupPurchaseResponse result = service.getDetail("member-7", "1");
+
+        assertFalse(result.getIsParticipating());
+    }
+
+    @Test
+    @DisplayName("비로그인 상태로 조회하면 isParticipating은 false이고 참여 여부를 조회하지 않는다")
+    void should_returnIsParticipatingFalse_when_memberIdIsNull_onGetDetail() {
+        GroupPurchaseServiceImpl service = service();
+        when(groupPurchaseMapper.findById("1")).thenReturn(savedRow());
+
+        GroupPurchaseResponse result = service.getDetail(null, "1");
+
+        assertFalse(result.getIsParticipating());
+        verify(groupPurchaseMapper, never()).findParticipant(any(), any());
     }
 
     @Test
@@ -157,7 +185,7 @@ class GroupPurchaseServiceImplTest {
         when(groupPurchaseMapper.findById("999")).thenReturn(null);
 
         BusinessException exception = assertThrows(BusinessException.class,
-                () -> service.getDetail("999"));
+                () -> service.getDetail("member-1", "999"));
 
         assertEquals(org.springframework.http.HttpStatus.NOT_FOUND, exception.getStatus());
         assertEquals("공동구매를 찾을 수 없습니다.", exception.getMessage());
@@ -242,8 +270,8 @@ class GroupPurchaseServiceImplTest {
     }
 
     @Test
-    @DisplayName("마감 후 목표 수량을 못 채웠으면 cancelled로 응답하고, 목표 미달 문구를 안내한다")
-    void should_returnCancelled_when_deadlinePassedAndTargetNotReached_onGetStatus() {
+    @DisplayName("마감 후 목표 수량을 못 채웠으면 failed로 응답하고, 목표 미달 문구를 안내한다")
+    void should_returnFailed_when_deadlinePassedAndTargetNotReached_onGetStatus() {
         GroupPurchaseServiceImpl service = service();
         Map<String, Object> gpRow = savedRow();
         gpRow.put("deadline", LocalDateTime.now().minusDays(1));
@@ -253,8 +281,32 @@ class GroupPurchaseServiceImplTest {
 
         GroupPurchaseStatusResponse result = service.getStatus("member-1", "1");
 
-        assertEquals("cancelled", result.getStatus());
+        assertEquals("failed", result.getStatus());
         assertEquals("목표 인원 미달로 공동구매가 취소되어 환불됩니다.", result.getNoticeMessage());
+    }
+
+    @Test
+    @DisplayName("작성자 취소(cancelled)와 마감 미달(failed)은 서로 다른 status 값으로 구분된다")
+    void should_returnDifferentStatus_forOwnerCancelledAndDeadlinePassedTargetNotReached_onGetStatus() {
+        GroupPurchaseServiceImpl service = service();
+
+        Map<String, Object> ownerCancelledRow = savedRow();
+        ownerCancelledRow.put("status", "CANCELLED");
+        ownerCancelledRow.put("deadline", LocalDateTime.now().plusDays(5));
+        when(groupPurchaseMapper.findById("1")).thenReturn(ownerCancelledRow);
+        when(groupPurchaseMapper.findParticipant("1", "member-1")).thenReturn(null);
+        GroupPurchaseStatusResponse ownerCancelledResult = service.getStatus("member-1", "1");
+
+        Map<String, Object> failedRow = savedRow();
+        failedRow.put("deadline", LocalDateTime.now().minusDays(1));
+        failedRow.put("current_quantity", 4);
+        when(groupPurchaseMapper.findById("2")).thenReturn(failedRow);
+        when(groupPurchaseMapper.findParticipant("2", "member-1")).thenReturn(null);
+        GroupPurchaseStatusResponse failedResult = service.getStatus("member-1", "2");
+
+        assertEquals("cancelled", ownerCancelledResult.getStatus());
+        assertEquals("failed", failedResult.getStatus());
+        org.junit.jupiter.api.Assertions.assertNotEquals(ownerCancelledResult.getStatus(), failedResult.getStatus());
     }
 
     @Test
@@ -318,8 +370,8 @@ class GroupPurchaseServiceImplTest {
     }
 
     @Test
-    @DisplayName("마감 후 목표 수량을 못 채웠으면 CANCELLED로 응답한다")
-    void should_returnCancelled_when_deadlinePassedAndTargetNotReached_onGetMyList() {
+    @DisplayName("마감 후 목표 수량을 못 채웠으면 FAILED로 응답한다")
+    void should_returnFailed_when_deadlinePassedAndTargetNotReached_onGetMyList() {
         GroupPurchaseServiceImpl service = service();
         LocalDateTime pastDeadline = LocalDateTime.now().minusDays(1);
         when(groupPurchaseMapper.findMyGroupPurchases("member-1", null))
@@ -327,7 +379,7 @@ class GroupPurchaseServiceImplTest {
 
         List<GroupPurchaseMyItemResponse> result = service.getMyList("member-1", null);
 
-        assertEquals("CANCELLED", result.get(0).getStatus());
+        assertEquals("FAILED", result.get(0).getStatus());
     }
 
     @Test
@@ -341,6 +393,24 @@ class GroupPurchaseServiceImplTest {
         List<GroupPurchaseMyItemResponse> result = service.getMyList("member-1", null);
 
         assertEquals("CANCELLED", result.get(0).getStatus());
+    }
+
+    @Test
+    @DisplayName("작성자 취소(CANCELLED)와 마감 미달(FAILED)은 서로 다른 status 값으로 구분된다")
+    void should_returnDifferentStatus_forOwnerCancelledAndDeadlinePassedTargetNotReached_onGetMyList() {
+        GroupPurchaseServiceImpl service = service();
+        LocalDateTime futureDeadline = LocalDateTime.now().plusDays(5);
+        LocalDateTime pastDeadline = LocalDateTime.now().minusDays(1);
+        when(groupPurchaseMapper.findMyGroupPurchases("member-1", null))
+                .thenReturn(List.of(
+                        listRow(1L, "CANCELLED", futureDeadline, 30000, 25000, 2, 10),
+                        listRow(2L, "OPEN", pastDeadline, 30000, 25000, 4, 10)));
+
+        List<GroupPurchaseMyItemResponse> result = service.getMyList("member-1", null);
+
+        assertEquals("CANCELLED", result.get(0).getStatus());
+        assertEquals("FAILED", result.get(1).getStatus());
+        org.junit.jupiter.api.Assertions.assertNotEquals(result.get(0).getStatus(), result.get(1).getStatus());
     }
 
     @Test
@@ -773,6 +843,137 @@ class GroupPurchaseServiceImplTest {
 
         assertEquals("이미 참여한 공동구매입니다.", exception.getMessage());
         verify(groupPurchaseMapper, never()).updateQuantity(any(), anyInt());
+    }
+
+    @Test
+    @DisplayName("결제 완료(PAID) 참여를 취소하면 지갑을 환급하고 환불 거래내역을 남긴 뒤 취소 정보를 반환한다")
+    void should_returnLeaveResponse_when_paidParticipantLeaves() {
+        GroupPurchaseServiceImpl service = service();
+        Map<String, Object> gpRow = savedRow();
+        gpRow.put("deadline", LocalDateTime.now().plusDays(5));
+        Map<String, Object> updatedGpRow = savedRow();
+        updatedGpRow.put("deadline", LocalDateTime.now().plusDays(5));
+        updatedGpRow.put("current_quantity", 0);
+        Map<String, Object> participantRow = participantRow(10523L, "1", "member-1", 2);
+        participantRow.put("paid_amount", new BigDecimal("50000"));
+        participantRow.put("payment_status", "PAID");
+        when(groupPurchaseMapper.findById("1")).thenReturn(gpRow, updatedGpRow);
+        when(groupPurchaseMapper.findParticipant("1", "member-1")).thenReturn(participantRow);
+        when(groupPurchaseMapper.cancelParticipant(eq("1"), eq("member-1"), any())).thenReturn(1);
+        when(groupPurchaseMapper.decreaseQuantity("1", 2)).thenReturn(1);
+
+        Map<String, Object> walletBefore = new HashMap<>();
+        walletBefore.put("wallet_id", "wallet-1");
+        walletBefore.put("balance", new BigDecimal("100000"));
+        Map<String, Object> walletAfter = new HashMap<>();
+        walletAfter.put("wallet_id", "wallet-1");
+        walletAfter.put("balance", new BigDecimal("150000"));
+        when(walletMapper.findByMemberId("member-1")).thenReturn(walletBefore, walletAfter);
+        when(walletMapper.addBalance("wallet-1", new BigDecimal("50000"))).thenReturn(1);
+
+        GroupPurchaseLeaveResponse result = service.leave("member-1", "1");
+
+        assertEquals("1", result.getGpId());
+        assertEquals(10523L, result.getParticipantId());
+        assertEquals(0, result.getCurrentQuantity());
+        assertEquals(10, result.getTargetQuantity());
+        assertEquals(new BigDecimal("50000"), result.getRefundedAmount());
+        assertEquals(new BigDecimal("150000"), result.getRefundedWalletBalance());
+        assertEquals("CANCELLED", result.getPaymentStatus());
+        assertNotNull(result.getCanceledAt());
+
+        verify(walletMapper).addBalance("wallet-1", new BigDecimal("50000"));
+        ArgumentCaptor<Map<String, Object>> txnCaptor = ArgumentCaptor.forClass(Map.class);
+        verify(transactionMapper).insert(txnCaptor.capture());
+        assertEquals("DEPOSIT", txnCaptor.getValue().get("txnType"));
+        assertEquals(new BigDecimal("50000"), txnCaptor.getValue().get("price"));
+    }
+
+    @Test
+    @DisplayName("결제 전(PENDING) 참여를 취소하면 환불 없이 취소 처리만 한다")
+    void should_returnLeaveResponse_when_pendingParticipantLeaves() {
+        GroupPurchaseServiceImpl service = service();
+        Map<String, Object> gpRow = savedRow();
+        gpRow.put("deadline", LocalDateTime.now().plusDays(5));
+        Map<String, Object> updatedGpRow = savedRow();
+        updatedGpRow.put("deadline", LocalDateTime.now().plusDays(5));
+        updatedGpRow.put("current_quantity", 0);
+        Map<String, Object> participantRow = participantRow(10524L, "1", "member-1", 1);
+        when(groupPurchaseMapper.findById("1")).thenReturn(gpRow, updatedGpRow);
+        when(groupPurchaseMapper.findParticipant("1", "member-1")).thenReturn(participantRow);
+        when(groupPurchaseMapper.cancelParticipant(eq("1"), eq("member-1"), any())).thenReturn(1);
+        when(groupPurchaseMapper.decreaseQuantity("1", 1)).thenReturn(1);
+
+        GroupPurchaseLeaveResponse result = service.leave("member-1", "1");
+
+        assertNull(result.getRefundedWalletBalance());
+        verifyNoInteractions(walletMapper);
+        verifyNoInteractions(transactionMapper);
+    }
+
+    @Test
+    @DisplayName("존재하지 않는 공동구매를 취소하려 하면 예외가 발생한다")
+    void should_throwException_when_gpNotFound_onLeave() {
+        GroupPurchaseServiceImpl service = service();
+        when(groupPurchaseMapper.findById("999")).thenReturn(null);
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.leave("member-1", "999"));
+
+        assertEquals("공동구매를 찾을 수 없습니다.", exception.getMessage());
+        verify(groupPurchaseMapper, never()).cancelParticipant(any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("참여한 적 없는 회원이 취소를 시도하면 예외가 발생한다")
+    void should_throwException_when_notParticipant_onLeave() {
+        GroupPurchaseServiceImpl service = service();
+        when(groupPurchaseMapper.findById("1")).thenReturn(savedRow());
+        when(groupPurchaseMapper.findParticipant("1", "member-1")).thenReturn(null);
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.leave("member-1", "1"));
+
+        assertEquals("참여 내역을 찾을 수 없습니다.", exception.getMessage());
+        verify(groupPurchaseMapper, never()).cancelParticipant(any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("동시 중복 취소 요청으로 cancelParticipant의 영향 행이 0이면 이미 취소된 참여로 거절한다")
+    void should_throwConflict_when_cancelParticipantAffectsNoRows() {
+        GroupPurchaseServiceImpl service = service();
+        when(groupPurchaseMapper.findById("1")).thenReturn(savedRow());
+        when(groupPurchaseMapper.findParticipant("1", "member-1"))
+                .thenReturn(participantRow(10523L, "1", "member-1", 2));
+        when(groupPurchaseMapper.cancelParticipant(eq("1"), eq("member-1"), any())).thenReturn(0);
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.leave("member-1", "1"));
+
+        assertEquals(org.springframework.http.HttpStatus.CONFLICT, exception.getStatus());
+        assertEquals("이미 취소된 참여입니다.", exception.getMessage());
+        verify(groupPurchaseMapper, never()).decreaseQuantity(any(), anyInt());
+        verifyNoInteractions(walletMapper);
+    }
+
+    @Test
+    @DisplayName("목표 수량 달성 또는 마감 후에는 decreaseQuantity의 영향 행이 0이라 관리자 문의 안내로 거절한다")
+    void should_throwConflict_when_decreaseQuantityAffectsNoRows_onLeave() {
+        GroupPurchaseServiceImpl service = service();
+        when(groupPurchaseMapper.findById("1")).thenReturn(savedRow());
+        when(groupPurchaseMapper.findParticipant("1", "member-1"))
+                .thenReturn(participantRow(10523L, "1", "member-1", 2));
+        when(groupPurchaseMapper.cancelParticipant(eq("1"), eq("member-1"), any())).thenReturn(1);
+        // 목표 수량 달성(confirmed) 또는 마감 후 상태라 decreaseQuantity의 조건부 WHERE를 만족하는 행이 없다.
+        when(groupPurchaseMapper.decreaseQuantity("1", 2)).thenReturn(0);
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.leave("member-1", "1"));
+
+        assertEquals(org.springframework.http.HttpStatus.CONFLICT, exception.getStatus());
+        assertEquals("목표 수량 달성 또는 마감 후에는 참여를 취소할 수 없습니다. 관리자에게 문의해주세요.", exception.getMessage());
+        verifyNoInteractions(walletMapper);
+        verifyNoInteractions(transactionMapper);
     }
 
     private GroupPurchaseJoinRequest joinRequest() {
