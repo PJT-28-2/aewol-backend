@@ -20,6 +20,5 @@ public interface GroupPurchaseService {
     List<GroupPurchaseMyItemResponse> getMyList(String memberId, String status);
     GroupPurchaseJoinResponse join(String memberId, String gpId, int quantity, GroupPurchaseJoinRequest request);
     GroupPurchaseLeaveResponse leave(String memberId, String gpId);
-    int processExpiredRefunds();
     GroupPurchaseImageUploadResponse uploadImage(MultipartFile image);
 }
