@@ -37,5 +37,6 @@ public class RecurringCreateRequest {
             message = "지원하지 않는 카테고리입니다.")
     private String category;
 
+    @NotBlank(message = "반려동물을 선택해 주세요.")
     private String petId;
 }

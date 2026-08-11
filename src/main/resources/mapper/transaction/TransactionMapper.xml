@@ -47,10 +47,10 @@
 
     <!-- txn_id는 BIGINT AUTO_INCREMENT — 생성 키를 맵의 txnId로 돌려받는다 -->
     <insert id="insert" parameterType="map" useGeneratedKeys="true" keyProperty="txnId" keyColumn="txn_id">
-        INSERT INTO `transaction` (wallet_id, pet_id, txn_type,
+        INSERT INTO `transaction` (wallet_id, pet_id, recurring_id, txn_type,
                                    price, category, merchant_name, merchant_category_code,
                                    memo, auto_tagged, txn_date)
-        VALUES (#{walletId}, #{petId}, #{txnType},
+        VALUES (#{walletId}, #{petId}, #{recurringId}, #{txnType},
                 #{price}, #{category}, #{merchantName}, #{merchantCategoryCode},
                 #{memo}, #{autoTagged}, #{txnDate})
     </insert>
