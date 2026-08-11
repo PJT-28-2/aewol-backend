@@ -75,8 +75,10 @@ public class LocalFileStorage implements FileStorage {
         if (key == null || key.isBlank()) {
             return null;
         }
+        String normalizedKey = normalize(key);
         long expiresAt = signature.expiresAt();
-        return "/api/files/" + key + "?expires=" + expiresAt + "&signature=" + signature.sign(key, expiresAt);
+        return "/api/files/" + normalizedKey + "?expires=" + expiresAt
+                + "&signature=" + signature.sign(normalizedKey, expiresAt);
     }
 
     /**

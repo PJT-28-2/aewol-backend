@@ -17,6 +17,7 @@ import org.springframework.web.servlet.HandlerMapping;
 
 import javax.servlet.http.HttpServletRequest;
 import java.time.Duration;
+import java.time.Instant;
 
 /**
  * 서명된 URL로 요청된 파일을 내려준다.
@@ -49,10 +50,12 @@ public class FileController {
         }
 
         InputStream content = fileStorage.read(key);
+        long remainingSeconds = Math.max(0, expires - Instant.now().getEpochSecond());
+        Duration cacheDuration = Duration.ofSeconds(Math.min(Duration.ofMinutes(10).getSeconds(), remainingSeconds));
         return ResponseEntity.ok()
                 .contentType(mediaTypeOf(key))
-                // 만료 시각이 URL에 박혀 있으므로 그 사이에는 캐시해도 안전하다.
-                .cacheControl(CacheControl.maxAge(Duration.ofMinutes(10)).cachePrivate())
+                // 서명 만료 뒤까지 브라우저 캐시에 남지 않도록 남은 유효시간 이내로 제한한다.
+                .cacheControl(CacheControl.maxAge(cacheDuration).cachePrivate())
                 .body(new InputStreamResource(content));
     }
 

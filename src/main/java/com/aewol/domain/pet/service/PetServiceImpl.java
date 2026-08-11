@@ -1,6 +1,7 @@
 package com.aewol.domain.pet.service;
 
 import com.aewol.common.exception.BusinessException;
+import com.aewol.common.storage.FileStorage;
 import com.aewol.common.util.FileUtil;
 import com.aewol.domain.pet.dto.PetCreateRequest;
 import com.aewol.domain.pet.dto.PetDocumentResponse;
@@ -43,6 +44,7 @@ public class PetServiceImpl implements PetService {
     private final PetMapper petMapper;
     private final PetDocumentMapper petDocumentMapper;
     private final FileUtil fileUtil;
+    private final FileStorage fileStorage;
 
     @Override
     @Transactional
@@ -324,7 +326,7 @@ public class PetServiceImpl implements PetService {
                 .regNumber((String) pet.get("reg_number"))
                 .iconType((String) pet.get("icon_type"))
                 .medicalHistory((String) pet.get("medical_history"))
-                .profileImg((String) pet.get("profile_img"))
+                .profileImg(fileStorage.signedUrl((String) pet.get("profile_img")))
                 .isActive(toBool(pet.get("is_active")))
                 .build();
     }
