@@ -64,6 +64,52 @@ class CareDiaryServiceImplTest {
     }
 
     @Test
+    @DisplayName("이미지가 아닌 파일은 확장자를 속여도 저장하지 않는다")
+    void should_rejectNonImage_evenWhenExtensionLooksLikeImage() {
+        CareDiaryServiceImpl service = service();
+        givenPetOwnedBy("pet-1", "owner-1");
+        // 업로드 경로로 공개되므로 svg/html이 통과하면 스크립트가 실행될 수 있다.
+        MultipartFile svg = new MockMultipartFile("image", "cute.png", "image/png",
+                "<svg xmlns=\"http://www.w3.org/2000/svg\"><script/></svg>".getBytes());
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.create("owner-1", "pet-1", "2026-08-10", "글", svg));
+
+        assertEquals(400, exception.getStatus().value());
+        verify(careDiaryMapper, never()).insertImage(anyMap());
+    }
+
+    @Test
+    @DisplayName("허용하지 않는 MIME 타입은 거절한다")
+    void should_rejectDisallowedContentType() {
+        CareDiaryServiceImpl service = service();
+        givenPetOwnedBy("pet-1", "owner-1");
+        MultipartFile svg = new MockMultipartFile("image", "a.svg", "image/svg+xml", pngBytes());
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.create("owner-1", "pet-1", "2026-08-10", "글", svg));
+
+        assertEquals(400, exception.getStatus().value());
+        verify(careDiaryMapper, never()).insertImage(anyMap());
+    }
+
+    @Test
+    @DisplayName("확장자는 파일명이 아니라 실제 내용에서 정한다")
+    void should_deriveExtensionFromContent_notFilename() throws IOException {
+        CareDiaryServiceImpl service = service();
+        givenPetOwnedBy("pet-1", "owner-1");
+        // 파일명은 .jpg지만 내용은 PNG다. 저장 확장자는 png여야 한다.
+        MultipartFile mislabeled = new MockMultipartFile("image", "photo.jpg", "image/png", pngBytes());
+        when(fileStorage.store(any(), eq("diary"), anyString())).thenReturn("diary/a.png");
+        givenInsertAssignsDiaryId("diary-1");
+        givenDiaryDetail("diary-1", "pet-1", "owner-1", "2026-08-10", "글");
+
+        service.create("owner-1", "pet-1", "2026-08-10", "글", mislabeled);
+
+        verify(fileStorage).store(any(), eq("diary"), eq("png"));
+    }
+
+    @Test
     @DisplayName("사진과 내용이 모두 없으면 일기를 저장하지 않는다")
     void should_reject_when_bothContentAndImageAreEmpty() {
         CareDiaryServiceImpl service = service();
@@ -255,7 +301,12 @@ class CareDiaryServiceImplTest {
     }
 
     private static MultipartFile image() {
-        return new MockMultipartFile("image", "pet.png", "image/png", new byte[] {1, 2, 3});
+        return new MockMultipartFile("image", "pet.png", "image/png", pngBytes());
+    }
+
+    /** PNG 시그니처로 시작하는 최소 바이트. 저장 전 실제 이미지인지 확인하므로 필요하다. */
+    private static byte[] pngBytes() {
+        return new byte[] {(byte) 0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A, 0, 0, 0, 0};
     }
 
     @SuppressWarnings("unchecked")
