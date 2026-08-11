@@ -73,13 +73,13 @@ class RestTemplateConfigTest {
     }
 
     @Test
-    @DisplayName("PaddleOcrClient에 주입된 RestTemplate은 30초 read timeout이 설정되어 있다")
+    @DisplayName("PaddleOcrClient에 주입된 RestTemplate은 120초 read timeout이 설정되어 있다")
     void should_haveConfiguredReadTimeout_onPaddleOcrClientRestTemplate() {
         RestTemplate injected = (RestTemplate) ReflectionTestUtils.getField(paddleOcrClient, "restTemplate");
         ClientHttpRequestFactory requestFactory = injected.getRequestFactory();
 
         Object readTimeout = ReflectionTestUtils.getField(requestFactory, "readTimeout");
 
-        assertEquals(30000, readTimeout);
+        assertEquals(120000, readTimeout);
     }
 }
