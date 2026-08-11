@@ -37,6 +37,7 @@ public class PaddleOcrClient {
         log.info("PaddleOCR 영수증 추출 호출 - imageSize: {}, mimeType: {}", imageBytes.length, mimeType);
         try {
             String responseBody = callOcrService(imageBytes, mimeType);
+            log.info("PaddleOCR 원본 응답 - {}", responseBody);
             return validateJsonObject(responseBody);
         } catch (RestClientException e) {
             log.error("[PADDLEOCR_FAILED] PaddleOCR 서비스 호출 실패 - imageSize: {}, mimeType: {}",
