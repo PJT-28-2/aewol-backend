@@ -6,6 +6,7 @@ import com.aewol.domain.grouppurchase.dto.GroupPurchaseCreateRequest;
 import com.aewol.domain.grouppurchase.dto.GroupPurchaseImageUploadResponse;
 import com.aewol.domain.grouppurchase.dto.GroupPurchaseJoinRequest;
 import com.aewol.domain.grouppurchase.dto.GroupPurchaseJoinResponse;
+import com.aewol.domain.grouppurchase.dto.GroupPurchaseLeaveResponse;
 import com.aewol.domain.grouppurchase.dto.GroupPurchaseListItemResponse;
 import com.aewol.domain.grouppurchase.dto.GroupPurchaseListResponse;
 import com.aewol.domain.grouppurchase.dto.GroupPurchaseMyItemResponse;
@@ -199,7 +200,8 @@ public class GroupPurchaseServiceImpl implements GroupPurchaseService {
             groupPurchaseMapper.insertParticipant(participant);
         } catch (DuplicateKeyException e) {
             // findParticipant 조회 후 insert는 원자적이지 않아, 동시 요청이 같은 시점에 둘 다 미참여로 판단할 수 있다.
-            // (gp_id, member_id) UNIQUE 제약(V14)이 최종 방어선이며, 위반 시 지갑 차감·거래내역까지 트랜잭션 전체가 롤백된다.
+            // (gp_id, active_member_id) UNIQUE 제약(V18, CANCELLED 참여는 제외)이 최종 방어선이며,
+            // 위반 시 지갑 차감·거래내역까지 트랜잭션 전체가 롤백된다.
             throw BusinessException.conflict("이미 참여한 공동구매입니다.");
         }
         int reserved = groupPurchaseMapper.updateQuantity(gpId, quantity);
@@ -226,6 +228,83 @@ public class GroupPurchaseServiceImpl implements GroupPurchaseService {
                 .paidAt(toLocalDateTime(savedParticipant.get("paid_at")))
                 .joinedAt(toLocalDateTime(savedParticipant.get("created_at")))
                 .build();
+    }
+
+    /**
+     * 참여 취소(순서15). "진행중"(waiting) 상태에서만 허용한다 — 목표 수량 달성(confirmed) 이후에는
+     * 관리자 문의로만 취소 가능하고, 마감 후 미달(failed)/작성자 취소(cancelled)는 별도의 자동 환불
+     * 처리(Notion 순서19, 미구현) 대상이라 이 API의 범위가 아니다.
+     * 취소 이력은 row를 삭제하지 않고 payment_status='CANCELLED'로 남긴다(V18 마이그레이션).
+     * 동시 중복 취소 요청은 cancelParticipant의 영향받은 행 수로 감지해 거절한다.
+     */
+    @Override
+    @Transactional
+    public GroupPurchaseLeaveResponse leave(String memberId, String gpId) {
+        Map<String, Object> gp = groupPurchaseMapper.findById(gpId);
+        if (gp == null) {
+            throw BusinessException.notFound("공동구매를 찾을 수 없습니다.");
+        }
+        Map<String, Object> participant = groupPurchaseMapper.findParticipant(gpId, memberId);
+        if (participant == null) {
+            throw BusinessException.notFound("참여 내역을 찾을 수 없습니다.");
+        }
+
+        LocalDateTime canceledAt = LocalDateTime.now();
+        if (groupPurchaseMapper.cancelParticipant(gpId, memberId, canceledAt) == 0) {
+            throw BusinessException.conflict("이미 취소된 참여입니다.");
+        }
+
+        int quantity = toInt(participant.get("purchase_quantity"));
+        if (groupPurchaseMapper.decreaseQuantity(gpId, quantity) == 0) {
+            throw BusinessException.conflict("목표 수량 달성 또는 마감 후에는 참여를 취소할 수 없습니다. 관리자에게 문의해주세요.");
+        }
+
+        BigDecimal refundedAmount = toDecimal(participant.get("paid_amount"));
+        BigDecimal refundedWalletBalance = null;
+        if ("PAID".equals(participant.get("payment_status")) && refundedAmount != null) {
+            refundedWalletBalance = refundWallet(memberId, gpId, gp, refundedAmount);
+        }
+
+        Map<String, Object> updatedGp = groupPurchaseMapper.findById(gpId);
+
+        return GroupPurchaseLeaveResponse.builder()
+                .gpId(gpId)
+                .participantId(toLong(participant.get("participant_id")))
+                .currentQuantity(toInt(updatedGp.get("current_quantity")))
+                .targetQuantity(toInt(updatedGp.get("target_quantity")))
+                .refundedAmount(refundedAmount)
+                .refundedWalletBalance(refundedWalletBalance)
+                .paymentStatus("CANCELLED")
+                .canceledAt(canceledAt)
+                .build();
+    }
+
+    /** 지갑 잔액을 환급하고 환불 거래내역을 생성한 뒤 갱신된 지갑 잔액을 반환한다. REFUND 타입은 없으므로 WalletServiceImpl#deposit과 동일하게 DEPOSIT으로 기록한다. */
+    private BigDecimal refundWallet(String memberId, String gpId, Map<String, Object> gp, BigDecimal amount) {
+        Map<String, Object> wallet = walletMapper.findByMemberId(memberId);
+        if (wallet == null) {
+            throw BusinessException.notFound("지갑을 찾을 수 없습니다.");
+        }
+        String walletId = String.valueOf(wallet.get("wallet_id"));
+        if (walletMapper.addBalance(walletId, amount) == 0) {
+            throw BusinessException.notFound("지갑을 찾을 수 없습니다.");
+        }
+
+        Map<String, Object> txn = new HashMap<>();
+        txn.put("walletId", walletId);
+        txn.put("petId", null);
+        txn.put("txnType", "DEPOSIT");
+        txn.put("price", amount);
+        txn.put("category", toTxnCategory((String) gp.get("category")));
+        txn.put("merchantName", gp.get("product_name"));
+        txn.put("merchantCategoryCode", null);
+        txn.put("memo", "공동구매 참여 취소 환불: " + gp.get("product_name") + " (gpId=" + gpId + ")");
+        txn.put("autoTagged", "N");
+        txn.put("txnDate", LocalDateTime.now());
+        transactionMapper.insert(txn);
+
+        Map<String, Object> updatedWallet = walletMapper.findByMemberId(memberId);
+        return (BigDecimal) updatedWallet.get("balance");
     }
 
     /** 지갑 잔액을 차감하고 거래내역을 생성한 뒤 생성된 txn_id를 반환한다. TransactionServiceImpl#processPayment와 동일한 차감·기록 패턴을 따른다. */

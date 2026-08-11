@@ -1,6 +1,8 @@
 package com.aewol.domain.grouppurchase.mapper;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.InputStream;
@@ -64,6 +66,8 @@ class GroupPurchaseMapperTest {
                     gp_id BIGINT NOT NULL,
                     member_id BIGINT NOT NULL,
                     purchase_quantity INT NOT NULL DEFAULT 1,
+                    payment_status VARCHAR(10) NOT NULL DEFAULT 'PENDING',
+                    canceled_at DATETIME NULL,
                     PRIMARY KEY (participant_id)
                 )
                 """);
@@ -144,6 +148,120 @@ class GroupPurchaseMapperTest {
         assertTrue(findMyGroupPurchases("1", null).size() >= 3);
     }
 
+    @Test
+    @DisplayName("취소(CANCELLED)된 참여는 마이페이지 목록에서 제외된다 — 취소 후 재참여 시 중복 노출을 막는다")
+    void should_excludeCancelledParticipant_fromMyGroupPurchases() {
+        long gpId = insertGroupPurchase(99L, "OPEN", 1, 10, LocalDateTime.now().plusDays(5));
+        insertParticipant(gpId, 1L, "CANCELLED");
+
+        assertEquals(0, findMyGroupPurchases("1", null).size());
+    }
+
+    @Test
+    @DisplayName("취소되지 않은 참여만 findParticipant로 조회된다 — CANCELLED 참여는 재참여를 막지 않아야 한다")
+    void should_excludeCancelledParticipant_fromFindParticipant() {
+        long gpId = insertGroupPurchase(99L, "OPEN", 1, 10, LocalDateTime.now().plusDays(5));
+        insertParticipant(gpId, 1L, "CANCELLED");
+
+        assertNull(findParticipant(gpId, 1L));
+    }
+
+    @Test
+    @DisplayName("취소되지 않은(PAID) 참여는 findParticipant로 정상 조회된다")
+    void should_returnParticipant_fromFindParticipant_when_notCancelled() {
+        long gpId = insertGroupPurchase(99L, "OPEN", 1, 10, LocalDateTime.now().plusDays(5));
+        insertParticipant(gpId, 1L, "PAID");
+
+        assertEquals("PAID", findParticipant(gpId, 1L).get("payment_status").toString());
+    }
+
+    @Test
+    @DisplayName("진행중(마감 전, 목표 미달) 상태면 참여 취소로 수량이 감소한다")
+    void should_decreaseQuantity_when_waitingState() {
+        long gpId = insertGroupPurchase(99L, "OPEN", 3, 10, LocalDateTime.now().plusDays(5));
+
+        assertEquals(1, decreaseQuantity(gpId, 2));
+        assertEquals(1, findCurrentQuantity(gpId));
+    }
+
+    @Test
+    @DisplayName("목표 수량을 달성(confirmed)했으면 참여 취소로 수량을 감소시킬 수 없다")
+    void should_notDecreaseQuantity_when_targetReached() {
+        long gpId = insertGroupPurchase(99L, "OPEN", 10, 10, LocalDateTime.now().plusDays(5));
+
+        assertEquals(0, decreaseQuantity(gpId, 1));
+        assertEquals(10, findCurrentQuantity(gpId));
+    }
+
+    @Test
+    @DisplayName("마감이 지났으면 목표 미달이어도 참여 취소로 수량을 감소시킬 수 없다")
+    void should_notDecreaseQuantity_when_deadlinePassed() {
+        long gpId = insertGroupPurchase(99L, "OPEN", 3, 10, LocalDateTime.now().minusDays(1));
+
+        assertEquals(0, decreaseQuantity(gpId, 2));
+        assertEquals(3, findCurrentQuantity(gpId));
+    }
+
+    @Test
+    @DisplayName("작성자가 취소(CANCELLED)한 공동구매는 참여 취소로 수량을 감소시킬 수 없다")
+    void should_notDecreaseQuantity_when_ownerCancelled() {
+        long gpId = insertGroupPurchase(99L, "CANCELLED", 3, 10, LocalDateTime.now().plusDays(5));
+
+        assertEquals(0, decreaseQuantity(gpId, 2));
+    }
+
+    @Test
+    @DisplayName("참여 취소는 row를 삭제하지 않고 CANCELLED로 남기며, 이미 취소된 참여를 다시 취소하면 영향 행이 0이다")
+    void should_cancelParticipantOnce_thenReturnZero_onSecondAttempt() {
+        long gpId = insertGroupPurchase(99L, "OPEN", 1, 10, LocalDateTime.now().plusDays(5));
+        insertParticipant(gpId, 1L, "PAID");
+
+        assertEquals(1, cancelParticipant(gpId, 1L));
+        assertEquals(0, cancelParticipant(gpId, 1L));
+        assertEquals("CANCELLED", findParticipantIncludingCancelled(gpId, 1L).get("payment_status").toString());
+    }
+
+    @Test
+    @DisplayName("취소 후에도 (gp_id, member_id) 조합으로 같은 회원이 재참여할 수 있다")
+    void should_allowReJoin_afterCancel() {
+        long gpId = insertGroupPurchase(99L, "OPEN", 1, 10, LocalDateTime.now().plusDays(5));
+        insertParticipant(gpId, 1L, "PAID");
+        cancelParticipant(gpId, 1L);
+
+        insertParticipant(gpId, 1L, "PENDING");
+
+        assertNotNull(findParticipant(gpId, 1L));
+    }
+
+    private Map<String, Object> findParticipant(long gpId, long memberId) {
+        try (SqlSession session = sqlSessionFactory.openSession(true)) {
+            return session.getMapper(GroupPurchaseMapper.class).findParticipant(String.valueOf(gpId), String.valueOf(memberId));
+        }
+    }
+
+    private Map<String, Object> findParticipantIncludingCancelled(long gpId, long memberId) {
+        return jdbcTemplate.queryForMap(
+                "SELECT * FROM group_purchase_participant WHERE gp_id = ? AND member_id = ?", gpId, memberId);
+    }
+
+    private int decreaseQuantity(long gpId, int quantity) {
+        try (SqlSession session = sqlSessionFactory.openSession(true)) {
+            return session.getMapper(GroupPurchaseMapper.class).decreaseQuantity(String.valueOf(gpId), quantity);
+        }
+    }
+
+    private int cancelParticipant(long gpId, long memberId) {
+        try (SqlSession session = sqlSessionFactory.openSession(true)) {
+            return session.getMapper(GroupPurchaseMapper.class)
+                    .cancelParticipant(String.valueOf(gpId), String.valueOf(memberId), LocalDateTime.now());
+        }
+    }
+
+    private int findCurrentQuantity(long gpId) {
+        return jdbcTemplate.queryForObject(
+                "SELECT current_quantity FROM group_purchase WHERE gp_id = ?", Integer.class, gpId);
+    }
+
     private List<Map<String, Object>> findMyGroupPurchases(String memberId, String status) {
         try (SqlSession session = sqlSessionFactory.openSession(true)) {
             return session.getMapper(GroupPurchaseMapper.class).findMyGroupPurchases(memberId, status);
@@ -175,6 +293,12 @@ class GroupPurchaseMapperTest {
         jdbcTemplate.update(
                 "INSERT INTO group_purchase_participant (gp_id, member_id, purchase_quantity) VALUES (?, ?, 1)",
                 gpId, memberId);
+    }
+
+    private void insertParticipant(long gpId, long memberId, String paymentStatus) {
+        jdbcTemplate.update(
+                "INSERT INTO group_purchase_participant (gp_id, member_id, purchase_quantity, payment_status) VALUES (?, ?, 1, ?)",
+                gpId, memberId, paymentStatus);
     }
 
     private SqlSessionFactory createSqlSessionFactory(JdbcDataSource dataSource) {

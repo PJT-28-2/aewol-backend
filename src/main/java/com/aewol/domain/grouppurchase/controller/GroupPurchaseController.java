@@ -5,6 +5,7 @@ import com.aewol.domain.grouppurchase.dto.GroupPurchaseCreateRequest;
 import com.aewol.domain.grouppurchase.dto.GroupPurchaseImageUploadResponse;
 import com.aewol.domain.grouppurchase.dto.GroupPurchaseJoinRequest;
 import com.aewol.domain.grouppurchase.dto.GroupPurchaseJoinResponse;
+import com.aewol.domain.grouppurchase.dto.GroupPurchaseLeaveResponse;
 import com.aewol.domain.grouppurchase.dto.GroupPurchaseListResponse;
 import com.aewol.domain.grouppurchase.dto.GroupPurchaseMyItemResponse;
 import com.aewol.domain.grouppurchase.dto.GroupPurchaseResponse;
@@ -88,6 +89,18 @@ public class GroupPurchaseController {
                                                    @Valid @RequestBody GroupPurchaseJoinRequest request) {
         return ResponseEntity.ok(ApiResponse.success("공동구매 참여가 완료되었습니다.",
                 groupPurchaseService.join(memberId, gpId, quantity, request)));
+    }
+
+    /**
+     * 일반 유저(role=USER) 전용. SecurityConfig에서 POST /api/group-purchase/{gpId}/leave에 ROLE_USER를 요구한다.
+     * "진행중"(waiting) 상태에서만 취소 가능하며, 목표 수량 달성(confirmed) 이후에는 관리자 문의로만 취소할 수 있다.
+     */
+    @Operation(summary = "공동구매 참여 취소 (일반 유저 전용)")
+    @PostMapping("/{gpId}/leave")
+    public ResponseEntity<ApiResponse<GroupPurchaseLeaveResponse>> leave(@AuthenticationPrincipal String memberId,
+                                                                            @PathVariable String gpId) {
+        return ResponseEntity.ok(ApiResponse.success("공동구매 참여가 취소되었습니다.",
+                groupPurchaseService.leave(memberId, gpId)));
     }
 
     /** 관리자(role=ADMIN) 전용. SecurityConfig에서 POST /api/group-purchase/images에 ROLE_ADMIN을 요구한다. */
