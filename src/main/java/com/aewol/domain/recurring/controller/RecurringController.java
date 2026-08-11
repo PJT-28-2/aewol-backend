@@ -38,6 +38,16 @@ public class RecurringController {
                 .body(ApiResponse.created(recurringService.createRecurring(memberId, request)));
     }
 
+    @Operation(summary = "정기결제 변경")
+    @PutMapping("/{recurringId}")
+    public ResponseEntity<ApiResponse<RecurringResponse>> update(
+            @AuthenticationPrincipal String memberId,
+            @PathVariable String recurringId,
+            @Valid @RequestBody RecurringCreateRequest request) {
+        return ResponseEntity.ok(ApiResponse.success(
+                recurringService.updateRecurring(memberId, recurringId, request)));
+    }
+
     @Operation(summary = "정기결제 해지")
     @DeleteMapping("/{recurringId}")
     public ResponseEntity<ApiResponse<Void>> cancel(@AuthenticationPrincipal String memberId,

@@ -570,6 +570,20 @@ CREATE TABLE IF NOT EXISTS `emergency_hospital` (
     KEY `idx_hospital_location` (`latitude`, `longitude`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- 20. TOSS_CHARGE_ORDER (Toss 충전 주문 — 회원 소유권 검증용)
+-- 서버가 orderId를 발급하고 회원·금액을 기록해두면, 승인 시 다른 회원이 해당 orderId를
+-- 탈취해 먼저 요청하더라도 소유권 불일치로 거부할 수 있다.
+CREATE TABLE IF NOT EXISTS `toss_charge_order` (
+    `order_id`   VARCHAR(64)    NOT NULL,
+    `member_id`  VARCHAR(36)    NOT NULL,
+    `amount`     DECIMAL(15,2)  NOT NULL,
+    `status`     VARCHAR(10)    NOT NULL DEFAULT 'PENDING' COMMENT 'PENDING / APPROVED',
+    `created_at` DATETIME       NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (`order_id`),
+    KEY `idx_tco_member` (`member_id`),
+    CONSTRAINT `fk_tco_member` FOREIGN KEY (`member_id`) REFERENCES `member`(`member_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 -- 19. BREED_MEDICAL_STATS (품종별 의료 통계 — 시드 데이터)
 CREATE TABLE IF NOT EXISTS `breed_medical_stats` (
     `stat_id`          VARCHAR(36)    NOT NULL,

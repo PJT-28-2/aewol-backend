@@ -47,12 +47,24 @@
 
     <!-- txn_id는 BIGINT AUTO_INCREMENT — 생성 키를 맵의 txnId로 돌려받는다 -->
     <insert id="insert" parameterType="map" useGeneratedKeys="true" keyProperty="txnId" keyColumn="txn_id">
-        INSERT INTO `transaction` (wallet_id, pet_id, txn_type,
+        INSERT INTO `transaction` (wallet_id, pet_id, recurring_id, txn_type,
                                    price, category, merchant_name, merchant_category_code,
                                    memo, auto_tagged, txn_date)
-        VALUES (#{walletId}, #{petId}, #{txnType},
+        VALUES (#{walletId}, #{petId}, #{recurringId}, #{txnType},
                 #{price}, #{category}, #{merchantName}, #{merchantCategoryCode},
                 #{memo}, #{autoTagged}, #{txnDate})
+    </insert>
+
+    <!-- Toss 결제 승인 원장 기록 전용 문. 위 공유 insert 문과 별개로 유지한다 —
+         공유 문의 호출자(TransactionServiceImpl, WalletServiceImpl, GroupPurchaseServiceImpl)는
+         payment_key/order_id를 제공하지 않으므로, 공유 문을 건드리지 않아야 회귀 위험이 없다. -->
+    <insert id="insertTossPayment" parameterType="map" useGeneratedKeys="true" keyProperty="txnId" keyColumn="txn_id">
+        INSERT INTO `transaction` (wallet_id, pet_id, txn_type,
+                                   price, category, merchant_name, merchant_category_code,
+                                   memo, auto_tagged, txn_date, payment_key, order_id)
+        VALUES (#{walletId}, #{petId}, #{txnType},
+                #{price}, #{category}, #{merchantName}, #{merchantCategoryCode},
+                #{memo}, #{autoTagged}, #{txnDate}, #{paymentKey}, #{orderId})
     </insert>
 
 </mapper>

@@ -1,0 +1,361 @@
+package com.aewol.domain.wallet.service;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.when;
+
+import com.aewol.common.exception.BusinessException;
+import com.aewol.domain.wallet.dto.ExternalChargeCommand;
+import com.aewol.domain.wallet.dto.TossChargeRequest;
+import com.aewol.domain.wallet.dto.WalletResponse;
+import com.aewol.domain.wallet.mapper.TossChargeOrderMapper;
+import com.aewol.domain.wallet.mapper.WalletMapper;
+import com.aewol.external.tosspayments.TossCancelResult;
+import com.aewol.external.tosspayments.TossConfirmOutcome;
+import com.aewol.external.tosspayments.TossConfirmResult;
+import com.aewol.external.tosspayments.TossPaymentAuditLogger;
+import com.aewol.external.tosspayments.TossPaymentClaim;
+import com.aewol.external.tosspayments.TossPaymentsClient;
+import java.math.BigDecimal;
+import java.util.HashMap;
+import java.util.Map;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.dao.DuplicateKeyException;
+import org.springframework.http.HttpStatus;
+import org.springframework.test.util.ReflectionTestUtils;
+
+@ExtendWith(MockitoExtension.class)
+class TossChargeServiceTest {
+
+    private static final String MEMBER_ID = "member-1";
+    private static final String PAYMENT_KEY = "toss-pay-key-001";
+    private static final String ORDER_ID = "order-abc123";
+
+    @Mock TossPaymentClaim tossPaymentClaim;
+    @Mock TossPaymentsClient tossPaymentsClient;
+    @Mock TossPaymentAuditLogger auditLogger;
+    @Mock WalletService walletService;
+    @Mock WalletMapper walletMapper;
+    @Mock TossChargeOrderMapper tossChargeOrderMapper;
+
+    private TossChargeService service;
+
+    private void init() {
+        service = new TossChargeService(tossPaymentClaim, tossPaymentsClient, auditLogger,
+                walletService, walletMapper, tossChargeOrderMapper);
+    }
+
+    // ── 기존 charge() 시나리오 ─────────────────────────────────────────────────
+
+    @Test
+    void should_creditTossConfirmedTotalAmountNotRequestAmount_when_confirmSucceeds() {
+        init();
+        stubOrderFound();
+        stubWalletFound();
+        // Request asks to charge 10000, but Toss confirms only 9500 was actually approved.
+        // If these were equal, asserting amount == totalAmount would pass vacuously.
+        TossConfirmResult confirmResult = TossConfirmResult.success(9500L, Map.of("status", "DONE"));
+        when(tossPaymentsClient.confirmPayment(PAYMENT_KEY, ORDER_ID, 10000L)).thenReturn(confirmResult);
+        WalletResponse expectedResponse = WalletResponse.builder()
+                .walletId("1").memberId(MEMBER_ID).totalBalance(new BigDecimal("9500")).build();
+        when(walletService.depositExternal(any())).thenReturn(expectedResponse);
+
+        WalletResponse actual = service.charge(MEMBER_ID, request(new BigDecimal("10000")));
+
+        assertSame(expectedResponse, actual);
+        ArgumentCaptor<ExternalChargeCommand> captor = ArgumentCaptor.forClass(ExternalChargeCommand.class);
+        verify(walletService).depositExternal(captor.capture());
+        ExternalChargeCommand command = captor.getValue();
+        assertEquals(PAYMENT_KEY, command.getPaymentKey());
+        assertEquals(ORDER_ID, command.getOrderId());
+        assertEquals(new BigDecimal("9500"), command.getAmount());
+        assertNotEquals(new BigDecimal("10000"), command.getAmount());
+        verify(tossPaymentClaim, never()).release(anyString());
+    }
+
+    @Test
+    void should_notCallTossAndReleaseClaim_when_walletNotFound() {
+        init();
+        stubOrderFound();
+        when(walletMapper.findByMemberId(MEMBER_ID)).thenReturn(null);
+
+        BusinessException ex = assertThrows(BusinessException.class,
+                () -> service.charge(MEMBER_ID, request(new BigDecimal("10000"))));
+
+        assertEquals(HttpStatus.NOT_FOUND, ex.getStatus());
+        verify(tossPaymentsClient, never()).confirmPayment(anyString(), anyString(), anyLong());
+        verify(tossPaymentClaim).release(ORDER_ID);
+    }
+
+    @Test
+    void should_releaseClaimAndSkipAudit_when_definitiveRejection() {
+        init();
+        stubOrderFound();
+        stubWalletFound();
+        when(tossPaymentsClient.confirmPayment(anyString(), anyString(), anyLong()))
+                .thenReturn(TossConfirmResult.of(TossConfirmOutcome.DEFINITIVE_REJECTION,
+                        "REJECT_CARD_COMPANY", "카드사 거절", null));
+
+        BusinessException ex = assertThrows(BusinessException.class,
+                () -> service.charge(MEMBER_ID, request(new BigDecimal("10000"))));
+
+        assertEquals(HttpStatus.PAYMENT_REQUIRED, ex.getStatus());
+        verify(tossPaymentClaim).release(ORDER_ID);
+        verify(walletService, never()).depositExternal(any());
+        verifyNoInteractions(auditLogger);
+    }
+
+    @Test
+    void should_keepClaimAndAuditIndeterminate_when_confirmResultIsIndeterminate() {
+        init();
+        stubOrderFound();
+        stubWalletFound();
+        when(tossPaymentsClient.confirmPayment(anyString(), anyString(), anyLong()))
+                .thenReturn(TossConfirmResult.of(TossConfirmOutcome.INDETERMINATE,
+                        "PROVIDER_ERROR", "확인 불가", null));
+
+        BusinessException ex = assertThrows(BusinessException.class,
+                () -> service.charge(MEMBER_ID, request(new BigDecimal("10000"))));
+
+        assertEquals(HttpStatus.BAD_GATEWAY, ex.getStatus());
+        verify(tossPaymentClaim, never()).release(anyString());
+        verify(auditLogger).confirmIndeterminate(PAYMENT_KEY, ORDER_ID, MEMBER_ID, "확인 불가");
+    }
+
+    @Test
+    void should_keepClaimAndAuditAlreadyApproved_when_confirmResultIsAlreadyApproved() {
+        init();
+        stubOrderFound();
+        stubWalletFound();
+        when(tossPaymentsClient.confirmPayment(anyString(), anyString(), anyLong()))
+                .thenReturn(TossConfirmResult.of(TossConfirmOutcome.ALREADY_APPROVED,
+                        "ALREADY_PROCESSED_PAYMENT", "이미 처리됨", null));
+
+        BusinessException ex = assertThrows(BusinessException.class,
+                () -> service.charge(MEMBER_ID, request(new BigDecimal("10000"))));
+
+        assertEquals(HttpStatus.CONFLICT, ex.getStatus());
+        verify(tossPaymentClaim, never()).release(anyString());
+        verify(auditLogger).alreadyApproved(PAYMENT_KEY, ORDER_ID, MEMBER_ID, "이미 처리됨");
+    }
+
+    @Test
+    void should_compensateWithFixedReasonNotCauseMessage_when_ledgerWriteFailsAfterConfirmSuccess() {
+        init();
+        stubOrderFound();
+        stubWalletFound();
+        when(tossPaymentsClient.confirmPayment(anyString(), anyString(), anyLong()))
+                .thenReturn(TossConfirmResult.success(10000L, null));
+        RuntimeException cause = new RuntimeException(
+                "com.mysql.cj.jdbc.exceptions.MySQLSyntaxErrorException: near 'SELECT secret_column FROM wallet'");
+        when(walletService.depositExternal(any())).thenThrow(cause);
+        when(tossPaymentsClient.cancelPayment(eq(PAYMENT_KEY), anyString()))
+                .thenReturn(TossCancelResult.success());
+
+        BusinessException ex = assertThrows(BusinessException.class,
+                () -> service.charge(MEMBER_ID, request(new BigDecimal("10000"))));
+
+        assertEquals(HttpStatus.INTERNAL_SERVER_ERROR, ex.getStatus());
+        ArgumentCaptor<String> reasonCaptor = ArgumentCaptor.forClass(String.class);
+        verify(tossPaymentsClient).cancelPayment(eq(PAYMENT_KEY), reasonCaptor.capture());
+        String cancelReason = reasonCaptor.getValue();
+        assertEquals("지갑 충전 기록 실패로 인한 자동 취소", cancelReason);
+        assertFalse(cancelReason.contains("MySQLSyntaxErrorException"));
+        assertFalse(cancelReason.contains("secret_column"));
+        verify(auditLogger).compensated(PAYMENT_KEY, ORDER_ID, MEMBER_ID, cause.getMessage());
+    }
+
+    @Test
+    void should_auditCompensationFailure_when_cancelAlsoFailsAfterLedgerWriteFails() {
+        init();
+        stubOrderFound();
+        stubWalletFound();
+        when(tossPaymentsClient.confirmPayment(anyString(), anyString(), anyLong()))
+                .thenReturn(TossConfirmResult.success(10000L, null));
+        RuntimeException cause = new RuntimeException("ledger insert failed");
+        when(walletService.depositExternal(any())).thenThrow(cause);
+        when(tossPaymentsClient.cancelPayment(eq(PAYMENT_KEY), anyString()))
+                .thenReturn(TossCancelResult.failure("FORBIDDEN_CONSECUTIVE_TRANSACTION", "취소 실패"));
+
+        BusinessException ex = assertThrows(BusinessException.class,
+                () -> service.charge(MEMBER_ID, request(new BigDecimal("10000"))));
+
+        assertEquals(HttpStatus.INTERNAL_SERVER_ERROR, ex.getStatus());
+        verify(auditLogger).compensationFailed(eq(PAYMENT_KEY), eq(ORDER_ID), eq(MEMBER_ID), anyString());
+    }
+
+    @Test
+    void should_propagateConflictAndNeverCallToss_when_claimIsContended() {
+        init();
+        doThrow(new BusinessException(HttpStatus.CONFLICT, "이미 처리 중이거나 최근에 처리된 결제 요청입니다."))
+                .when(tossPaymentClaim).acquire(ORDER_ID);
+
+        BusinessException ex = assertThrows(BusinessException.class,
+                () -> service.charge(MEMBER_ID, request(new BigDecimal("10000"))));
+
+        assertEquals(HttpStatus.CONFLICT, ex.getStatus());
+        verify(tossPaymentsClient, never()).confirmPayment(anyString(), anyString(), anyLong());
+    }
+
+    @Test
+    void should_notCancelPayment_when_ledgerWriteFailsWithDuplicateKey() {
+        init();
+        stubOrderFound();
+        stubWalletFound();
+        when(tossPaymentsClient.confirmPayment(anyString(), anyString(), anyLong()))
+                .thenReturn(TossConfirmResult.success(10000L, null));
+        when(walletService.depositExternal(any()))
+                .thenThrow(new DuplicateKeyException("Duplicate entry for key 'payment_key'"));
+
+        BusinessException ex = assertThrows(BusinessException.class,
+                () -> service.charge(MEMBER_ID, request(new BigDecimal("10000"))));
+
+        assertEquals(HttpStatus.CONFLICT, ex.getStatus());
+        verify(tossPaymentsClient, never()).cancelPayment(anyString(), anyString());
+    }
+
+    @Test
+    void should_releaseClaimAndNotReportAsPaymentRequired_when_configError() {
+        init();
+        stubOrderFound();
+        stubWalletFound();
+        when(tossPaymentsClient.confirmPayment(anyString(), anyString(), anyLong()))
+                .thenReturn(TossConfirmResult.of(TossConfirmOutcome.CONFIG_ERROR,
+                        "INVALID_API_KEY", "잘못된 시크릿 키", null));
+
+        BusinessException ex = assertThrows(BusinessException.class,
+                () -> service.charge(MEMBER_ID, request(new BigDecimal("10000"))));
+
+        assertEquals(HttpStatus.INTERNAL_SERVER_ERROR, ex.getStatus());
+        assertNotEquals(HttpStatus.PAYMENT_REQUIRED, ex.getStatus());
+        verify(tossPaymentClaim).release(ORDER_ID);
+    }
+
+    // ── 주문 소유권 검증 시나리오 ──────────────────────────────────────────────
+
+    @Test
+    void should_throwNotFoundAndReleaseClaim_when_orderDoesNotExist() {
+        init();
+        when(tossChargeOrderMapper.findByOrderId(ORDER_ID)).thenReturn(null);
+
+        BusinessException ex = assertThrows(BusinessException.class,
+                () -> service.charge(MEMBER_ID, request(new BigDecimal("10000"))));
+
+        assertEquals(HttpStatus.NOT_FOUND, ex.getStatus());
+        verify(tossPaymentsClient, never()).confirmPayment(anyString(), anyString(), anyLong());
+        verify(tossPaymentClaim).release(ORDER_ID);
+    }
+
+    @Test
+    void should_throwForbiddenAndReleaseClaim_when_orderBelongsToAnotherMember() {
+        init();
+        Map<String, Object> order = new HashMap<>();
+        order.put("order_id", ORDER_ID);
+        order.put("member_id", "other-member");
+        order.put("amount", new BigDecimal("10000"));
+        order.put("status", "PENDING");
+        when(tossChargeOrderMapper.findByOrderId(ORDER_ID)).thenReturn(order);
+
+        BusinessException ex = assertThrows(BusinessException.class,
+                () -> service.charge(MEMBER_ID, request(new BigDecimal("10000"))));
+
+        assertEquals(HttpStatus.FORBIDDEN, ex.getStatus());
+        verify(tossPaymentsClient, never()).confirmPayment(anyString(), anyString(), anyLong());
+        verify(tossPaymentClaim).release(ORDER_ID);
+    }
+
+    @Test
+    void should_throwBadRequestAndReleaseClaim_when_requestAmountDiffersFromOrderAmount() {
+        init();
+        Map<String, Object> order = new HashMap<>();
+        order.put("order_id", ORDER_ID);
+        order.put("member_id", MEMBER_ID);
+        order.put("amount", new BigDecimal("10000"));
+        order.put("status", "PENDING");
+        when(tossChargeOrderMapper.findByOrderId(ORDER_ID)).thenReturn(order);
+
+        // 요청 금액(20000)이 주문 금액(10000)과 다르다.
+        BusinessException ex = assertThrows(BusinessException.class,
+                () -> service.charge(MEMBER_ID, request(new BigDecimal("20000"))));
+
+        assertEquals(HttpStatus.BAD_REQUEST, ex.getStatus());
+        verify(tossPaymentsClient, never()).confirmPayment(anyString(), anyString(), anyLong());
+        verify(tossPaymentClaim).release(ORDER_ID);
+    }
+
+    @Test
+    void should_throwConflictAndReleaseClaim_when_orderAlreadyApproved() {
+        init();
+        Map<String, Object> order = new HashMap<>();
+        order.put("order_id", ORDER_ID);
+        order.put("member_id", MEMBER_ID);
+        order.put("amount", new BigDecimal("10000"));
+        order.put("status", "APPROVED");
+        when(tossChargeOrderMapper.findByOrderId(ORDER_ID)).thenReturn(order);
+
+        BusinessException ex = assertThrows(BusinessException.class,
+                () -> service.charge(MEMBER_ID, request(new BigDecimal("10000"))));
+
+        assertEquals(HttpStatus.CONFLICT, ex.getStatus());
+        verify(tossPaymentsClient, never()).confirmPayment(anyString(), anyString(), anyLong());
+        verify(tossPaymentClaim).release(ORDER_ID);
+    }
+
+    @Test
+    void should_updateOrderStatusToApproved_when_chargeSucceeds() {
+        init();
+        stubOrderFound();
+        stubWalletFound();
+        when(tossPaymentsClient.confirmPayment(anyString(), anyString(), anyLong()))
+                .thenReturn(TossConfirmResult.success(10000L, null));
+        when(walletService.depositExternal(any())).thenReturn(
+                WalletResponse.builder().walletId("1").memberId(MEMBER_ID)
+                        .totalBalance(new BigDecimal("10000")).build());
+
+        service.charge(MEMBER_ID, request(new BigDecimal("10000")));
+
+        verify(tossChargeOrderMapper).updateStatus(ORDER_ID, "APPROVED");
+    }
+
+    // ── 헬퍼 ──────────────────────────────────────────────────────────────────
+
+    private void stubOrderFound() {
+        Map<String, Object> order = new HashMap<>();
+        order.put("order_id", ORDER_ID);
+        order.put("member_id", MEMBER_ID);
+        order.put("amount", new BigDecimal("10000"));
+        order.put("status", "PENDING");
+        when(tossChargeOrderMapper.findByOrderId(ORDER_ID)).thenReturn(order);
+    }
+
+    private void stubWalletFound() {
+        Map<String, Object> wallet = new HashMap<>();
+        wallet.put("wallet_id", 1L);
+        wallet.put("member_id", MEMBER_ID);
+        wallet.put("balance", new BigDecimal("0"));
+        when(walletMapper.findByMemberId(MEMBER_ID)).thenReturn(wallet);
+    }
+
+    private TossChargeRequest request(BigDecimal amount) {
+        TossChargeRequest request = new TossChargeRequest();
+        ReflectionTestUtils.setField(request, "paymentKey", PAYMENT_KEY);
+        ReflectionTestUtils.setField(request, "orderId", ORDER_ID);
+        ReflectionTestUtils.setField(request, "amount", amount);
+        return request;
+    }
+}
