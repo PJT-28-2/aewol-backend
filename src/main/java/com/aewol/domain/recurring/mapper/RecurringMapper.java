@@ -10,6 +10,6 @@ public interface RecurringMapper {
     Map<String, Object> findById(@Param("recurringId") String recurringId);
     List<Map<String, Object>> findByWalletId(@Param("walletId") String walletId);
     void insert(Map<String, Object> recurring);
-    void deactivate(@Param("recurringId") String recurringId);
+    int deactivate(@Param("recurringId") String recurringId);
     List<Map<String, Object>> findDuePayments(@Param("date") String date);
 }

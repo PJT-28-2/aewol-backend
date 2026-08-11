@@ -1,0 +1,197 @@
+package com.aewol.domain.grouppurchase.controller;
+
+import com.aewol.common.exception.GlobalExceptionHandler;
+import com.aewol.common.filter.JwtAuthenticationFilter;
+import com.aewol.common.util.JwtUtil;
+import com.aewol.config.SecurityConfig;
+import com.aewol.domain.grouppurchase.service.GroupPurchaseService;
+import com.aewol.domain.member.mapper.MemberMapper;
+import io.jsonwebtoken.Claims;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.Map;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Import;
+import org.springframework.mock.web.MockMultipartFile;
+import org.springframework.mock.web.MockServletContext;
+import org.springframework.test.context.support.TestPropertySourceUtils;
+import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.setup.MockMvcBuilders;
+import org.springframework.web.context.support.AnnotationConfigWebApplicationContext;
+import org.springframework.web.servlet.config.annotation.EnableWebMvc;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.reset;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+import static org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers.springSecurity;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+
+/**
+ * 공동구매 게시글 등록/이미지 업로드는 role=ADMIN만 호출할 수 있어야 한다(SecurityConfig의
+ * POST /api/group-purchase, /api/group-purchase/images 경로 제한). 실제 시큐리티 필터 체인을
+ * 태워서 검증하며, 서비스/매퍼는 목으로 대체한다(UserWithdrawalSecurityTest와 동일한 패턴).
+ */
+class GroupPurchaseAdminOnlySecurityTest {
+
+    private static final String VALID_CREATE_REQUEST_BODY = "{"
+            + "\"productName\":\"프리미엄 사료 15kg\","
+            + "\"category\":\"사료\","
+            + "\"unitPrice\":40000,"
+            + "\"groupPrice\":28000,"
+            + "\"targetQuantity\":50,"
+            + "\"deadline\":\"2099-01-01T00:00:00\""
+            + "}";
+
+    private AnnotationConfigWebApplicationContext context;
+    private MockMvc mockMvc;
+    private GroupPurchaseService groupPurchaseService;
+    private MemberMapper memberMapper;
+    private JwtUtil jwtUtil;
+
+    @BeforeEach
+    void setUp() {
+        context = new AnnotationConfigWebApplicationContext();
+        context.setServletContext(new MockServletContext());
+        TestPropertySourceUtils.addInlinedPropertiesToEnvironment(
+                context,
+                "jwt.secret=test-secret-key-with-at-least-32-bytes",
+                "jwt.access-token-expiry=1800000",
+                "jwt.refresh-token-expiry=604800000");
+        context.register(TestConfig.class);
+        context.refresh();
+
+        groupPurchaseService = context.getBean(GroupPurchaseService.class);
+        memberMapper = context.getBean(MemberMapper.class);
+        jwtUtil = context.getBean(JwtUtil.class);
+        reset(groupPurchaseService, memberMapper, jwtUtil);
+        mockMvc = MockMvcBuilders.webAppContextSetup(context)
+                .apply(springSecurity())
+                .build();
+    }
+
+    @AfterEach
+    void tearDown() {
+        context.close();
+    }
+
+    @Test
+    void createIsBlockedForUserRole() throws Exception {
+        stubAccessToken("USER");
+
+        mockMvc.perform(post("/api/group-purchase")
+                        .header("Authorization", "Bearer access-token")
+                        .contentType("application/json")
+                        .content(VALID_CREATE_REQUEST_BODY))
+                .andExpect(status().isForbidden());
+
+        verify(groupPurchaseService, never()).create(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any());
+    }
+
+    @Test
+    void createIsAllowedForAdminRole() throws Exception {
+        stubAccessToken("ADMIN");
+
+        mockMvc.perform(post("/api/group-purchase")
+                        .header("Authorization", "Bearer access-token")
+                        .contentType("application/json")
+                        .content(VALID_CREATE_REQUEST_BODY))
+                .andExpect(status().isCreated());
+
+        verify(groupPurchaseService).create(org.mockito.ArgumentMatchers.eq("member-1"), org.mockito.ArgumentMatchers.any());
+    }
+
+    @Test
+    void uploadImageIsBlockedForUserRole() throws Exception {
+        stubAccessToken("USER");
+        MockMultipartFile file = new MockMultipartFile("image", "photo.jpg", "image/jpeg", "dummy".getBytes());
+
+        mockMvc.perform(multipart("/api/group-purchase/images")
+                        .file(file)
+                        .header("Authorization", "Bearer access-token"))
+                .andExpect(status().isForbidden());
+
+        verify(groupPurchaseService, never()).uploadImage(org.mockito.ArgumentMatchers.any());
+    }
+
+    @Test
+    void uploadImageIsAllowedForAdminRole() throws Exception {
+        stubAccessToken("ADMIN");
+        MockMultipartFile file = new MockMultipartFile("image", "photo.jpg", "image/jpeg", "dummy".getBytes());
+
+        mockMvc.perform(multipart("/api/group-purchase/images")
+                        .file(file)
+                        .header("Authorization", "Bearer access-token"))
+                .andExpect(status().isCreated());
+
+        verify(groupPurchaseService).uploadImage(org.mockito.ArgumentMatchers.any());
+    }
+
+    @Test
+    void listIsStillOpenToUserRole() throws Exception {
+        stubAccessToken("USER");
+
+        mockMvc.perform(get("/api/group-purchase")
+                        .header("Authorization", "Bearer access-token"))
+                .andExpect(status().isOk());
+    }
+
+    private void stubAccessToken(String role) {
+        Claims claims = mock(Claims.class);
+        when(claims.getSubject()).thenReturn("member-1");
+        when(claims.get("role", String.class)).thenReturn(role);
+        when(claims.getIssuedAt()).thenReturn(new Date(2_000_000L));
+        when(jwtUtil.isTokenValid("access-token")).thenReturn(true);
+        when(jwtUtil.parseClaims("access-token")).thenReturn(claims);
+        when(jwtUtil.isAccessToken(claims)).thenReturn(true);
+
+        Map<String, Object> authState = new HashMap<>();
+        authState.put("is_active", 1);
+        when(memberMapper.findAuthStateById("member-1")).thenReturn(authState);
+    }
+
+    @Configuration
+    @EnableWebMvc
+    @Import(SecurityConfig.class)
+    static class TestConfig {
+
+        @Bean
+        GroupPurchaseService groupPurchaseService() {
+            return mock(GroupPurchaseService.class);
+        }
+
+        @Bean
+        MemberMapper memberMapper() {
+            return mock(MemberMapper.class);
+        }
+
+        @Bean
+        JwtUtil jwtUtil() {
+            return mock(JwtUtil.class);
+        }
+
+        @Bean
+        JwtAuthenticationFilter jwtAuthenticationFilter(JwtUtil jwtUtil, MemberMapper memberMapper) {
+            return new JwtAuthenticationFilter(jwtUtil, memberMapper);
+        }
+
+        @Bean
+        GroupPurchaseController groupPurchaseController(GroupPurchaseService groupPurchaseService) {
+            return new GroupPurchaseController(groupPurchaseService);
+        }
+
+        @Bean
+        GlobalExceptionHandler globalExceptionHandler() {
+            return new GlobalExceptionHandler();
+        }
+    }
+}
