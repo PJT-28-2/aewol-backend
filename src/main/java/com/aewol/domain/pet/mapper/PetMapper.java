@@ -16,4 +16,10 @@ public interface PetMapper {
     int updateRegistrationNumber(@Param("petId") String petId,
                                  @Param("memberId") String memberId,
                                  @Param("regNumber") String regNumber);
+
+    /** AI가 생성한 캐릭터 이미지 경로를 저장한다. */
+    int updateCharacterImages(@Param("petId") String petId,
+                              @Param("memberId") String memberId,
+                              @Param("profileImg") String profileImg,
+                              @Param("characterImg") String characterImg);
 }
