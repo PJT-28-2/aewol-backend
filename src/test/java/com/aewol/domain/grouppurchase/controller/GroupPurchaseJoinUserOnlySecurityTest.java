@@ -2,8 +2,6 @@ package com.aewol.domain.grouppurchase.controller;
 
 import com.aewol.common.exception.GlobalExceptionHandler;
 import com.aewol.common.filter.JwtAuthenticationFilter;
-import com.aewol.common.security.JwtAccessDeniedHandler;
-import com.aewol.common.security.JwtAuthenticationEntryPoint;
 import com.aewol.common.util.JwtUtil;
 import com.aewol.config.SecurityConfig;
 import com.aewol.domain.grouppurchase.service.GroupPurchaseService;
@@ -140,7 +138,7 @@ class GroupPurchaseJoinUserOnlySecurityTest {
 
     @Configuration
     @EnableWebMvc
-    @Import({SecurityConfig.class, JwtAuthenticationEntryPoint.class, JwtAccessDeniedHandler.class})
+    @Import(SecurityConfig.class)
     static class TestConfig {
 
         @Bean
