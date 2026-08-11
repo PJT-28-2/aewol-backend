@@ -4,6 +4,10 @@ import com.aewol.common.exception.BusinessException;
 import com.aewol.common.util.JwtUtil;
 import com.aewol.common.util.PhoneNumberUtil;
 import com.aewol.domain.auth.dto.LoginRequest;
+import com.aewol.domain.auth.dto.PasswordResetEmailRequest;
+import com.aewol.domain.auth.dto.PasswordResetRequest;
+import com.aewol.domain.auth.dto.PasswordResetVerifyRequest;
+import com.aewol.domain.auth.dto.PasswordResetVerifyResponse;
 import com.aewol.domain.auth.dto.SignupRequest;
 import com.aewol.domain.auth.dto.SignupResponse;
 import com.aewol.domain.auth.dto.SignupEmailCodeRequest;
@@ -44,6 +48,13 @@ public class AuthServiceImpl implements AuthService {
     private static final long SIGNUP_VERIFICATION_TTL_SECONDS = 300L;
     private static final String SIGNUP_VERIFICATION_CODE_KEY_PREFIX = "signup:verify:";
     private static final String SIGNUP_VERIFICATION_COMPLETED_KEY_PREFIX = "signup:verify:completed:";
+    private static final long PASSWORD_RESET_VERIFICATION_TTL_SECONDS = 300L;
+    private static final long PASSWORD_RESET_TOKEN_TTL_SECONDS = 300L;
+    private static final int PASSWORD_RESET_MAX_VERIFICATION_ATTEMPTS = 5;
+    private static final String PASSWORD_RESET_VERIFICATION_KEY_PREFIX = "password:reset:verify:";
+    private static final String PASSWORD_RESET_TOKEN_KEY_PREFIX = "password:reset:token:";
+    private static final String INVALID_PASSWORD_RESET_TOKEN_MESSAGE =
+            "유효하지 않거나 만료된 비밀번호 재설정 토큰입니다.";
     private static final String VERIFICATION_VALUE_DELIMITER = "|";
     private static final DefaultRedisScript<Long> COMPARE_AND_DELETE_SCRIPT = new DefaultRedisScript<>(
             "local stored = redis.call('GET', KEYS[1])\n" +
@@ -81,6 +92,32 @@ public class AuthServiceImpl implements AuthService {
             "redis.call('SET', KEYS[2], stored, 'EX', ARGV[2])\n" +
             "return 1",
             Long.class);
+    private static final DefaultRedisScript<Long> VERIFY_PASSWORD_RESET_CODE_SCRIPT = new DefaultRedisScript<>(
+            "local stored = redis.call('GET', KEYS[1])\n" +
+            "if not stored then return 0 end\n" +
+            "local requestId, code, attempts = string.match(stored, '^([0-9a-fA-F%-]+)|(%d%d%d%d%d%d)|(%d+)$')\n" +
+            "if not requestId or string.len(requestId) ~= 36 then return -1 end\n" +
+            "if code ~= ARGV[1] then\n" +
+            "    attempts = tonumber(attempts) + 1\n" +
+            "    if attempts >= tonumber(ARGV[2]) then\n" +
+            "        redis.call('DEL', KEYS[1])\n" +
+            "    else\n" +
+            "        redis.call('SET', KEYS[1], requestId .. '|' .. code .. '|' .. attempts, 'KEEPTTL')\n" +
+            "    end\n" +
+            "    return -1\n" +
+            "end\n" +
+            "redis.call('DEL', KEYS[1])\n" +
+            "local created = redis.call('SET', KEYS[2], ARGV[3], 'EX', ARGV[4], 'NX')\n" +
+            "if not created then return -2 end\n" +
+            "return 1",
+            Long.class);
+    private static final DefaultRedisScript<String> CONSUME_PASSWORD_RESET_TOKEN_SCRIPT =
+            new DefaultRedisScript<>(
+                    "local memberId = redis.call('GET', KEYS[1])\n" +
+                    "if not memberId then return nil end\n" +
+                    "redis.call('DEL', KEYS[1])\n" +
+                    "return memberId",
+                    String.class);
 
     private final MemberMapper memberMapper;
     private final WalletMapper walletMapper;
@@ -134,6 +171,97 @@ public class AuthServiceImpl implements AuthService {
         }
         if (result == -1L) {
             throw new BusinessException(HttpStatus.BAD_REQUEST, "인증번호가 일치하지 않습니다.");
+        }
+    }
+
+    @Override
+    public SignupEmailCodeResponse sendPasswordResetVerificationCode(PasswordResetEmailRequest request) {
+        Map<String, Object> member = memberMapper.findActiveByEmail(request.getEmail());
+        if (!isActiveLocalMember(member)) {
+            return new SignupEmailCodeResponse(PASSWORD_RESET_VERIFICATION_TTL_SECONDS);
+        }
+
+        String code = generateVerificationCode();
+        String verificationValue = UUID.randomUUID() + VERIFICATION_VALUE_DELIMITER + code
+                + VERIFICATION_VALUE_DELIMITER + "0";
+        String verificationKey = passwordResetVerificationKey(request.getEmail());
+        redisTemplate.opsForValue().set(
+                verificationKey,
+                verificationValue,
+                PASSWORD_RESET_VERIFICATION_TTL_SECONDS,
+                TimeUnit.SECONDS);
+
+        try {
+            emailService.sendPasswordResetEmail(request.getEmail(), code);
+        } catch (RuntimeException e) {
+            try {
+                redisTemplate.execute(
+                        COMPARE_AND_DELETE_SCRIPT, List.of(verificationKey), verificationValue);
+            } catch (RuntimeException cleanupException) {
+                e.addSuppressed(cleanupException);
+            }
+            throw e;
+        }
+
+        return new SignupEmailCodeResponse(PASSWORD_RESET_VERIFICATION_TTL_SECONDS);
+    }
+
+    @Override
+    public PasswordResetVerifyResponse verifyPasswordResetCode(PasswordResetVerifyRequest request) {
+        Map<String, Object> member = memberMapper.findActiveByEmail(request.getEmail());
+        if (!isActiveLocalMember(member)) {
+            throw new BusinessException(HttpStatus.BAD_REQUEST,
+                    "인증번호가 만료되었거나 발급되지 않았습니다.");
+        }
+
+        String resetToken = UUID.randomUUID().toString();
+        Long result = redisTemplate.execute(
+                VERIFY_PASSWORD_RESET_CODE_SCRIPT,
+                List.of(
+                        passwordResetVerificationKey(request.getEmail()),
+                        passwordResetTokenKey(resetToken)),
+                request.getVerificationCode(),
+                String.valueOf(PASSWORD_RESET_MAX_VERIFICATION_ATTEMPTS),
+                String.valueOf(member.get("member_id")),
+                String.valueOf(PASSWORD_RESET_TOKEN_TTL_SECONDS));
+
+        if (result == null || result == 0L) {
+            throw new BusinessException(HttpStatus.BAD_REQUEST,
+                    "인증번호가 만료되었거나 발급되지 않았습니다.");
+        }
+        if (result == -1L) {
+            throw new BusinessException(HttpStatus.BAD_REQUEST, "인증번호가 일치하지 않습니다.");
+        }
+        if (result != 1L) {
+            throw new IllegalStateException("비밀번호 재설정 토큰을 발급할 수 없습니다.");
+        }
+        return new PasswordResetVerifyResponse(resetToken);
+    }
+
+    @Override
+    @Transactional
+    public void resetPassword(PasswordResetRequest request) {
+        String memberId = redisTemplate.execute(
+                CONSUME_PASSWORD_RESET_TOKEN_SCRIPT,
+                List.of(passwordResetTokenKey(request.getResetToken())));
+        if (memberId == null) {
+            throw new BusinessException(INVALID_PASSWORD_RESET_TOKEN_MESSAGE);
+        }
+
+        Map<String, Object> member = memberMapper.findById(memberId);
+        if (!isActiveLocalMember(member)) {
+            throw new BusinessException(INVALID_PASSWORD_RESET_TOKEN_MESSAGE);
+        }
+
+        String storedPassword = (String) member.get("password");
+        if (storedPassword != null && passwordEncoder.matches(request.getNewPassword(), storedPassword)) {
+            throw new BusinessException("새 비밀번호는 현재 비밀번호와 달라야 합니다.");
+        }
+
+        String encodedPassword = passwordEncoder.encode(request.getNewPassword());
+        registerPasswordResetCredentialCleanup(memberId);
+        if (memberMapper.updatePassword(memberId, encodedPassword) != 1) {
+            throw BusinessException.conflict("비밀번호를 변경할 수 없는 회원 상태입니다.");
         }
     }
 
@@ -481,5 +609,36 @@ public class AuthServiceImpl implements AuthService {
 
     private String verificationCompletedKey(String email) {
         return SIGNUP_VERIFICATION_COMPLETED_KEY_PREFIX + email;
+    }
+
+    private boolean isActiveLocalMember(Map<String, Object> member) {
+        if (member == null || !"LOCAL".equals(member.get("provider"))) {
+            return false;
+        }
+        Object active = member.get("is_active");
+        return active instanceof Boolean
+                ? (Boolean) active
+                : active instanceof Number && ((Number) active).intValue() == 1;
+    }
+
+    private void registerPasswordResetCredentialCleanup(String memberId) {
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCommit() {
+                try {
+                    authCredentialStore.deleteRefresh(memberId);
+                } catch (RuntimeException e) {
+                    log.warn("비밀번호 재설정 후 Refresh Token 삭제에 실패했습니다. TTL 만료를 기다립니다.", e);
+                }
+            }
+        });
+    }
+
+    private String passwordResetVerificationKey(String email) {
+        return PASSWORD_RESET_VERIFICATION_KEY_PREFIX + email;
+    }
+
+    private String passwordResetTokenKey(String resetToken) {
+        return PASSWORD_RESET_TOKEN_KEY_PREFIX + resetToken;
     }
 }
