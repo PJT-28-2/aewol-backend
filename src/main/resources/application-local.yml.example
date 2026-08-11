@@ -49,6 +49,9 @@ external:
     client-id: ${KAKAO_CLIENT_ID}
     client-secret: ${KAKAO_CLIENT_SECRET}
     redirect-uri: http://localhost:5173/callback/kakao
+  toss:
+    client-key: ${TOSS_CLIENT_KEY}
+    secret-key: ${TOSS_SECRET_KEY}
   gemini:
     api-key: ${GEMINI_API_KEY}
   codef:
