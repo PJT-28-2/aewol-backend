@@ -3,6 +3,8 @@ package com.aewol.domain.member.controller;
 import com.aewol.common.exception.BusinessException;
 import com.aewol.common.exception.GlobalExceptionHandler;
 import com.aewol.common.filter.JwtAuthenticationFilter;
+import com.aewol.common.security.JwtAccessDeniedHandler;
+import com.aewol.common.security.JwtAuthenticationEntryPoint;
 import com.aewol.common.util.JwtUtil;
 import com.aewol.domain.auth.service.AuthCredentialStore;
 import com.aewol.config.SecurityConfig;
@@ -85,7 +87,7 @@ class UserWithdrawalSecurityTest {
         mockMvc.perform(delete("/api/users/me")
                         .contentType("application/json")
                         .content("{}"))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isUnauthorized());
     }
 
     @Test
@@ -117,7 +119,7 @@ class UserWithdrawalSecurityTest {
         stubActiveAccessToken(true, false);
 
         mockMvc.perform(authenticatedDelete()).andExpect(status().isOk());
-        mockMvc.perform(authenticatedDelete()).andExpect(status().isForbidden());
+        mockMvc.perform(authenticatedDelete()).andExpect(status().isUnauthorized());
 
         verify(memberService, times(1)).withdraw(
                 org.mockito.ArgumentMatchers.eq("member-1"), org.mockito.ArgumentMatchers.any());
@@ -174,7 +176,7 @@ class UserWithdrawalSecurityTest {
 
     @Configuration
     @EnableWebMvc
-    @Import(SecurityConfig.class)
+    @Import({SecurityConfig.class, JwtAuthenticationEntryPoint.class, JwtAccessDeniedHandler.class})
     static class TestConfig {
 
         @Bean
