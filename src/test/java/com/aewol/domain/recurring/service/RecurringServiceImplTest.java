@@ -186,7 +186,8 @@ class RecurringServiceImplTest {
 
     @Test
     void should_updateRecurringPayment_when_memberOwnsWalletAndRequestIsValid() {
-        when(recurringMapper.findById("recurring-1")).thenReturn(Map.of("wallet_id", "wallet-1"));
+        when(recurringMapper.findById("recurring-1")).thenReturn(recurring("wallet-1", 15,
+                LocalDate.now().withDayOfMonth(Math.min(15, LocalDate.now().lengthOfMonth()))));
         when(walletMapper.findById("wallet-1")).thenReturn(wallet("wallet-1", "member-1"));
         when(petMapper.findById("pet-1")).thenReturn(pet("member-1"));
         when(recurringMapper.update(anyMap())).thenReturn(1);
@@ -205,6 +206,25 @@ class RecurringServiceImplTest {
         assertEquals("recurring-1", result.getRecurringId());
         assertEquals(20, result.getCycleDay());
         assertEquals("pet-1", result.getPetId());
+    }
+
+    @Test
+    void should_keepCurrentPaymentDate_when_updatingOtherFieldsOnPaymentDay() {
+        LocalDate today = LocalDate.now();
+        int cycleDay = today.getDayOfMonth();
+        when(recurringMapper.findById("recurring-1"))
+                .thenReturn(recurring("wallet-1", cycleDay, today));
+        when(walletMapper.findById("wallet-1")).thenReturn(wallet("wallet-1", "member-1"));
+        when(recurringMapper.update(anyMap())).thenReturn(1);
+        RecurringCreateRequest request = new RecurringCreateRequest(
+                "변경된 상품명", new BigDecimal("40000"), cycleDay, "FOOD", null);
+
+        RecurringResponse result = service.updateRecurring("member-1", "recurring-1", request);
+
+        ArgumentCaptor<Map<String, Object>> captor = ArgumentCaptor.forClass(Map.class);
+        verify(recurringMapper).update(captor.capture());
+        assertEquals(today, captor.getValue().get("nextPaymentDate"));
+        assertEquals(today.toString(), result.getNextPaymentDate());
     }
 
     @Test
@@ -242,6 +262,14 @@ class RecurringServiceImplTest {
 
     private static Map<String, Object> wallet(String walletId, String memberId) {
         return Map.of("wallet_id", walletId, "member_id", memberId);
+    }
+
+    private static Map<String, Object> recurring(
+            String walletId, int paymentDay, LocalDate nextPaymentDate) {
+        return Map.of(
+                "wallet_id", walletId,
+                "payment_day", paymentDay,
+                "next_payment_date", nextPaymentDate);
     }
 
     private static Map<String, Object> pet(String memberId) {

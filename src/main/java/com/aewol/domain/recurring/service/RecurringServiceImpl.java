@@ -67,6 +67,10 @@ public class RecurringServiceImpl implements RecurringService {
         assertPetOwnership(memberId, request.getPetId());
 
         int paymentDay = request.getCycleDay();
+        int currentPaymentDay = intValue(value(recurring, "payment_day", "paymentDay", "cycleDay"));
+        LocalDate nextPaymentDate = paymentDay == currentPaymentDay
+                ? localDateValue(value(recurring, "next_payment_date", "nextPaymentDate"))
+                : nextPaymentDate(paymentDay);
 
         Map<String, Object> params = new HashMap<>();
         params.put("recurringId", recurringId);
@@ -75,7 +79,7 @@ public class RecurringServiceImpl implements RecurringService {
         params.put("category", request.getCategory());
         params.put("price", request.getPrice());
         params.put("paymentDay", paymentDay);
-        params.put("nextPaymentDate", nextPaymentDate(paymentDay));
+        params.put("nextPaymentDate", nextPaymentDate);
         if (recurringMapper.update(params) != 1) {
             throw BusinessException.notFound("정기결제를 찾을 수 없습니다.");
         }
@@ -154,5 +158,17 @@ public class RecurringServiceImpl implements RecurringService {
 
     private static String stringValue(Object value) {
         return value == null ? null : String.valueOf(value);
+    }
+
+    private static int intValue(Object value) {
+        return value instanceof Number
+                ? ((Number) value).intValue()
+                : Integer.parseInt(String.valueOf(value));
+    }
+
+    private static LocalDate localDateValue(Object value) {
+        return value instanceof LocalDate
+                ? (LocalDate) value
+                : LocalDate.parse(String.valueOf(value));
     }
 }
