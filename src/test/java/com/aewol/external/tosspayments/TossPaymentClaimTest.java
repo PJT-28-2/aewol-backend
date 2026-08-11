@@ -49,7 +49,7 @@ class TossPaymentClaimTest {
         when(valueOperations.setIfAbsent(anyString(), eq("1"), anyLong(), any(TimeUnit.class)))
                 .thenReturn(true);
 
-        assertDoesNotThrow(() -> claim.acquire("member-1", "order-1"));
+        assertDoesNotThrow(() -> claim.acquire("order-1"));
     }
 
     @Test
@@ -59,7 +59,7 @@ class TossPaymentClaimTest {
                 .thenReturn(false);
 
         BusinessException ex = assertThrows(BusinessException.class,
-                () -> claim.acquire("member-1", "order-1"));
+                () -> claim.acquire("order-1"));
 
         assertEquals(HttpStatus.CONFLICT, ex.getStatus());
     }
@@ -71,7 +71,7 @@ class TossPaymentClaimTest {
                 .thenThrow(new RedisConnectionFailureException("Redis 연결 실패"));
 
         BusinessException ex = assertThrows(BusinessException.class,
-                () -> claim.acquire("member-1", "order-1"));
+                () -> claim.acquire("order-1"));
 
         assertEquals(HttpStatus.SERVICE_UNAVAILABLE, ex.getStatus());
     }
@@ -82,7 +82,7 @@ class TossPaymentClaimTest {
         when(valueOperations.setIfAbsent(anyString(), eq("1"), anyLong(), any(TimeUnit.class)))
                 .thenReturn(true);
 
-        claim.acquire("member-1", "order-1");
+        claim.acquire("order-1");
 
         verify(redisTemplate, never()).delete(anyString());
     }
@@ -90,7 +90,7 @@ class TossPaymentClaimTest {
     @Test
     @DisplayName("release를 명시적으로 호출하면 해당 키를 delete한다")
     void should_deleteKey_when_releaseCalledExplicitly() {
-        claim.release("member-1", "order-1");
+        claim.release("order-1");
 
         verify(redisTemplate).delete(anyString());
     }
