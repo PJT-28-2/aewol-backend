@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
 import com.aewol.common.exception.BusinessException;
+import com.aewol.common.storage.FileStorage;
 import com.aewol.common.util.FileUtil;
 import com.aewol.domain.inquiry.dto.InquiryCreateResponse;
 import com.aewol.domain.inquiry.dto.InquiryDetailResponse;
@@ -27,6 +28,7 @@ class InquiryServiceImplTest {
 
     @Mock InquiryMapper inquiryMapper;
     @Mock FileUtil fileUtil;
+    @Mock FileStorage fileStorage;
     @InjectMocks InquiryServiceImpl service;
 
     private static final String MEMBER_ID = "9001";
@@ -163,11 +165,12 @@ class InquiryServiceImplTest {
         Map<String, Object> attachment = new HashMap<>();
         attachment.put("file_url", "/uploads/inquiries/a.jpg");
         when(inquiryMapper.findAttachmentsByInquiryId(INQUIRY_ID)).thenReturn(List.of(attachment));
+        when(fileStorage.signedUrl("/uploads/inquiries/a.jpg")).thenReturn("signed:inquiries/a.jpg");
 
         InquiryDetailResponse result = service.getInquiry(MEMBER_ID, INQUIRY_ID);
 
         assertEquals("확인해주세요", result.getAnswer());
-        assertEquals(List.of("/uploads/inquiries/a.jpg"), result.getAttachments());
+        assertEquals(List.of("signed:inquiries/a.jpg"), result.getAttachments());
     }
 
     @Test

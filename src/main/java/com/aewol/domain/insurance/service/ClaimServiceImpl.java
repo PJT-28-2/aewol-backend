@@ -1,6 +1,7 @@
 package com.aewol.domain.insurance.service;
 
 import com.aewol.common.exception.BusinessException;
+import com.aewol.common.storage.FileStorage;
 import com.aewol.domain.insurance.dto.ClaimResponse;
 import com.aewol.domain.insurance.mapper.InsuranceMapper;
 import com.aewol.external.paddleocr.PaddleOcrClient;
@@ -26,6 +27,7 @@ public class ClaimServiceImpl implements ClaimService {
 
     private final InsuranceMapper insuranceMapper;
     private final PaddleOcrClient paddleOcrClient;
+    private final FileStorage fileStorage;
 
     @Value("${file.upload-dir:./uploads}")
     private String uploadDir;
@@ -115,7 +117,7 @@ public class ClaimServiceImpl implements ClaimService {
                 .totalAmount(claim.get("total_amount") != null ? (BigDecimal) claim.get("total_amount") : null)
                 .claimStatus((String) claim.get("claim_status"))
                 .claimDocumentUrl((String) claim.get("claim_document_url"))
-                .receiptImageUrl((String) claim.get("receipt_image_url"))
+                .receiptImageUrl(fileStorage.signedUrl((String) claim.get("receipt_image_url")))
                 .extractedData(claim.get("extracted_data"))
                 .build();
     }

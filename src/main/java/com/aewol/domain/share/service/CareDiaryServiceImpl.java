@@ -1,7 +1,7 @@
 package com.aewol.domain.share.service;
 
 import com.aewol.common.exception.BusinessException;
-import com.aewol.common.util.FileUtil;
+import com.aewol.common.storage.FileStorage;
 import com.aewol.domain.activity.mapper.ActivityLogMapper;
 import com.aewol.domain.pet.mapper.PetMapper;
 import com.aewol.domain.share.dto.CareDiaryResponse;
@@ -25,6 +25,8 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.web.multipart.MultipartFile;
 
 @Slf4j
@@ -45,7 +47,7 @@ public class CareDiaryServiceImpl implements CareDiaryService {
     private final ShareMapper shareMapper;
     private final PetMapper petMapper;
     private final ActivityLogMapper activityLogMapper;
-    private final FileUtil fileUtil;
+    private final FileStorage fileStorage;
 
     @Override
     @Transactional
@@ -61,25 +63,34 @@ public class CareDiaryServiceImpl implements CareDiaryService {
             throw new BusinessException("사진이나 내용 중 하나는 입력해 주세요.");
         }
 
-        Map<String, Object> diary = new HashMap<>();
-        diary.put("petId", petId);
-        diary.put("authorMemberId", memberId);
-        diary.put("diaryDate", date.toString());
-        diary.put("content", normalizedContent);
-        careDiaryMapper.insert(diary);
-        // diary_id는 AUTO_INCREMENT — useGeneratedKeys가 파라미터 맵에 채워준다
-        String diaryId = text(diary, "diaryId");
+        String storedImageKey = null;
+        try {
+            Map<String, Object> diary = new HashMap<>();
+            diary.put("petId", petId);
+            diary.put("authorMemberId", memberId);
+            diary.put("diaryDate", date.toString());
+            diary.put("content", normalizedContent);
+            careDiaryMapper.insert(diary);
+            // diary_id는 AUTO_INCREMENT — useGeneratedKeys가 파라미터 맵에 채워준다
+            String diaryId = text(diary, "diaryId");
 
-        if (hasImage) {
-            Map<String, Object> imageRow = new HashMap<>();
-            imageRow.put("diaryId", diaryId);
-            imageRow.put("imageUrl", storeImage(image));
-            imageRow.put("sortOrder", 0);
-            careDiaryMapper.insertImage(imageRow);
+            if (hasImage) {
+                storedImageKey = storeImage(image);
+                arrangeRollbackCleanup(storedImageKey);
+                Map<String, Object> imageRow = new HashMap<>();
+                imageRow.put("diaryId", diaryId);
+                imageRow.put("imageUrl", storedImageKey);
+                imageRow.put("sortOrder", 0);
+                careDiaryMapper.insertImage(imageRow);
+            }
+
+            writeActivityLog(pet, petId, diaryId, memberId, date);
+            return getDetail(memberId, diaryId);
+        } catch (RuntimeException e) {
+            // 테스트처럼 트랜잭션 동기화가 없는 호출과 메서드 내부 실패도 즉시 정리한다.
+            deleteQuietly(storedImageKey);
+            throw e;
         }
-
-        writeActivityLog(pet, petId, diaryId, memberId, date);
-        return getDetail(memberId, diaryId);
     }
 
     @Override
@@ -153,9 +164,14 @@ public class CareDiaryServiceImpl implements CareDiaryService {
             throw BusinessException.forbidden("작성자 또는 대표 보호자만 일기를 삭제할 수 있습니다.");
         }
 
+        List<String> imageKeys = careDiaryMapper.findImagesByDiaryIds(List.of(diaryId)).stream()
+                .map(image -> text(image, "imageUrl"))
+                .filter(key -> key != null && !key.isBlank())
+                .collect(Collectors.toList());
         if (careDiaryMapper.softDelete(diaryId) != 1) {
             throw BusinessException.notFound("삭제할 일기를 찾을 수 없습니다.");
         }
+        arrangeCommittedCleanup(imageKeys);
     }
 
     /**
@@ -191,6 +207,8 @@ public class CareDiaryServiceImpl implements CareDiaryService {
      *
      * <p>시그니처로 확인하는 이유는 {@code ImageIO}가 WEBP 디코더를 기본 제공하지 않아
      * 정상 파일까지 거부하기 때문이다.
+     *
+     * <p>DB에는 저장 키만 넣는다. 화면에 보여줄 주소는 조회 시점에 만든다.
      */
     private String storeImage(MultipartFile image) {
         String contentType = image.getContentType();
@@ -208,10 +226,45 @@ public class CareDiaryServiceImpl implements CareDiaryService {
                 throw new BusinessException("이미지 파일이 아니거나 손상된 파일이에요.");
             }
             // 확장자는 선언된 MIME이 아니라 실제 내용에서 판별한 값을 쓴다.
-            return fileUtil.upload(image, UPLOAD_SUB_DIR, actualExtension);
+            return fileStorage.store(bytes, UPLOAD_SUB_DIR, actualExtension);
         } catch (IOException e) {
             log.error("[CARE_DIARY_UPLOAD_FAILED] 일기 이미지 저장 실패 - size: {}", image.getSize(), e);
             throw new BusinessException("사진 저장에 실패했습니다. 잠시 후 다시 시도해 주세요.");
+        }
+    }
+
+    /** DB 커밋이 실패하면 저장 키를 참조할 행이 없으므로 새 파일을 지운다. */
+    private void arrangeRollbackCleanup(String key) {
+        if (key == null || !TransactionSynchronizationManager.isSynchronizationActive()) return;
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCompletion(int status) {
+                if (status != STATUS_COMMITTED) deleteQuietly(key);
+            }
+        });
+    }
+
+    /** 삭제 트랜잭션이 확정된 뒤에만 실제 파일을 제거한다. */
+    private void arrangeCommittedCleanup(List<String> keys) {
+        if (keys.isEmpty()) return;
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    keys.forEach(CareDiaryServiceImpl.this::deleteQuietly);
+                }
+            });
+        } else {
+            keys.forEach(this::deleteQuietly);
+        }
+    }
+
+    private void deleteQuietly(String key) {
+        if (key == null || key.isBlank()) return;
+        try {
+            fileStorage.delete(key);
+        } catch (RuntimeException e) {
+            log.warn("[CARE_DIARY_FILE_CLEANUP_FAILED] 이미지 정리 실패 - key: {}", key, e);
         }
     }
 
@@ -285,7 +338,9 @@ public class CareDiaryServiceImpl implements CareDiaryService {
                 .petId(text(row, "petId"))
                 .diaryDate(dateText(value(row, "diaryDate")))
                 .content(text(row, "content"))
-                .images(imagesByDiaryId.getOrDefault(diaryId, List.of()))
+                .images(imagesByDiaryId.getOrDefault(diaryId, List.of()).stream()
+                        .map(fileStorage::signedUrl)
+                        .collect(Collectors.toList()))
                 .authorId(authorId)
                 .authorName(text(row, "authorName"))
                 .createdAt(dateTimeText(value(row, "createdAt")))
