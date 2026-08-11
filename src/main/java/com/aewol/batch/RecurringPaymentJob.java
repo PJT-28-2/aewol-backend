@@ -28,14 +28,14 @@ public class RecurringPaymentJob {
         List<Map<String, Object>> duePayments = recurringMapper.findDuePayments(today.toString());
         log.info("[Batch] 정기결제 실행 시작 — 대상 {}건 ({})", duePayments.size(), today);
 
-        int success = 0, insufficient = 0, error = 0;
+        int success = 0, skipped = 0, error = 0;
         for (Map<String, Object> due : duePayments) {
             try {
                 if (executor.execute(due)) {
                     success++;
                 } else {
-                    insufficient++;
-                    log.warn("[Batch] 잔액 부족으로 스킵 — recurringId={}", due.get("recurring_id"));
+                    skipped++;
+                    log.warn("[Batch] 처리 조건 불충족으로 스킵 — recurringId={}", due.get("recurring_id"));
                 }
             } catch (Exception e) {
                 error++;
@@ -43,7 +43,7 @@ public class RecurringPaymentJob {
             }
         }
 
-        log.info("[Batch] 정기결제 실행 완료 — 성공 {}건 / 잔액부족 {}건 / 오류 {}건",
-                success, insufficient, error);
+        log.info("[Batch] 정기결제 실행 완료 — 성공 {}건 / 스킵 {}건 / 오류 {}건",
+                success, skipped, error);
     }
 }

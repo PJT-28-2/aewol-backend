@@ -8,6 +8,12 @@
         WHERE recurring_id = #{recurringId} AND is_active = 1
     </select>
 
+    <select id="findByIdForUpdate" resultType="map">
+        SELECT * FROM recurring_payment
+        WHERE recurring_id = #{recurringId}
+        FOR UPDATE
+    </select>
+
     <select id="findByWalletId" resultType="map">
         SELECT * FROM recurring_payment
         WHERE wallet_id = #{walletId} AND is_active = 1
