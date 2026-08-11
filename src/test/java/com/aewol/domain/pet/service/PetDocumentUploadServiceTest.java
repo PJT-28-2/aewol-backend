@@ -36,6 +36,8 @@ class PetDocumentUploadServiceTest {
     @BeforeEach
     void setUp() {
         service = new PetServiceImpl(petMapper, petDocumentMapper, fileUtil, fileStorage);
+        lenient().when(fileStorage.signedUrl(anyString()))
+                .thenAnswer(invocation -> "signed:" + invocation.getArgument(0));
     }
 
     @Test
@@ -49,7 +51,7 @@ class PetDocumentUploadServiceTest {
 
         assertEquals("VACCINATION", response.getDocType());
         assertEquals("certificate.jpeg", response.getDocName());
-        assertEquals("/uploads/pet-documents/new.jpg", response.getFileUrl());
+        assertEquals("signed:/uploads/pet-documents/new.jpg", response.getFileUrl());
         verify(petDocumentMapper).insert(argThat(row ->
                 "certificate.jpeg".equals(row.get("docName"))));
     }

@@ -34,6 +34,8 @@ class PetDocumentQueryDeleteServiceTest {
     @BeforeEach
     void setUp() {
         service = new PetServiceImpl(petMapper, petDocumentMapper, fileUtil, fileStorage);
+        lenient().when(fileStorage.signedUrl(anyString()))
+                .thenAnswer(invocation -> "signed:" + invocation.getArgument(0));
     }
 
     @Test
@@ -49,6 +51,7 @@ class PetDocumentQueryDeleteServiceTest {
         assertEquals("2", result.get(0).getDocId());
         assertEquals("vaccination-certificate.pdf", result.get(0).getDocName());
         assertEquals("2026-08-07", result.get(0).getIssuedDate());
+        assertEquals("signed:/uploads/pet-documents/new.pdf", result.get(0).getFileUrl());
         verify(petDocumentMapper).findByPetId("pet-1");
     }
 
