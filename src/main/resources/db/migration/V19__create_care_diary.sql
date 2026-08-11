@@ -4,7 +4,7 @@
 -- 조회/작성 권한은 shared_access(status='ACCEPTED') 구성원과 반려동물 소유자를 따르므로
 -- 별도의 권한 테이블을 두지 않고 애플리케이션에서 shared_access를 그대로 검사한다.
 --
--- V16은 FAQ 시드(PR #65)가 선점하고 있어 V17을 사용한다.
+-- V16~V18은 각각 FAQ 시드, 정기결제 확장, 공동구매 취소이력이 사용하므로 V19를 쓴다.
 
 CREATE TABLE IF NOT EXISTS `care_diary` (
     `diary_id`         BIGINT       NOT NULL AUTO_INCREMENT,

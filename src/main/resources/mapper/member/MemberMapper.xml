@@ -52,6 +52,21 @@
           AND is_active = 1
     </select>
 
+    <select id="existsActiveByPhone" resultType="boolean">
+        SELECT COUNT(*) > 0
+        FROM member
+        WHERE is_active = 1
+          AND REGEXP_REPLACE(COALESCE(phone, ''), '[^0-9]', '') = #{phone}
+    </select>
+
+    <select id="existsActiveByPhoneExcludingMember" resultType="boolean">
+        SELECT COUNT(*) > 0
+        FROM member
+        WHERE is_active = 1
+          AND member_id &lt;&gt; #{memberId}
+          AND REGEXP_REPLACE(COALESCE(phone, ''), '[^0-9]', '') = #{phone}
+    </select>
+
     <select id="existsInactiveByKakaoIdentity" resultType="boolean">
         SELECT COUNT(*) > 0
         FROM member
@@ -114,16 +129,24 @@
           AND is_active = 1
     </update>
 
-    <update id="update" parameterType="map">
+    <update id="updateProfile" parameterType="map">
         UPDATE member
-        SET name = #{name},
-            phone = #{phone},
+        SET phone = #{phone},
             profile_img = #{profileImg},
             zip_code = #{zipCode},
             address = #{address},
             address_detail = #{addressDetail},
             updated_at = NOW()
         WHERE member_id = #{memberId}
+    </update>
+
+    <update id="updatePassword">
+        UPDATE member
+        SET password = #{password},
+            updated_at = NOW()
+        WHERE member_id = #{memberId}
+          AND provider = 'LOCAL'
+          AND is_active = 1
     </update>
 
 </mapper>

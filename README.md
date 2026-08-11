@@ -194,6 +194,8 @@ PR은 `feature/{기능명}` → `develop` → `main` 순서로 병합합니다.
 | 기부 | POST | `/api/donation` | 저금통 잔액 기부 |
 | 기부 | PUT | `/api/donation/settings` | 잔돈 적립·월말 자동 기부 설정 |
 | 정기결제 | GET | `/api/recurring` | 정기결제 목록 조회 |
+| 정기결제 | POST | `/api/recurring` | 정기결제 등록 |
+| 정기결제 | DELETE | `/api/recurring/{recurringId}` | 정기결제 해지 |
 
 ---
 
