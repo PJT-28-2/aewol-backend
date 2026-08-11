@@ -58,6 +58,19 @@
           AND status != 'CANCELLED'
     </update>
 
+    <!-- join의 updateQuantity와 대칭. 목표 수량 달성(confirmed) 이후나 마감 후에는 참여 취소를 허용하지 않으므로
+         (목표 달성 후에는 관리자 문의로만 취소 가능), 그 판정도 동시성 문제 없이 이 WHERE 절 안에서 수행한다.
+         영향받은 행이 0이면 호출부에서 취소를 거절해야 한다. -->
+    <update id="decreaseQuantity">
+        UPDATE group_purchase
+        SET current_quantity = current_quantity - #{quantity}
+        WHERE gp_id = #{gpId}
+          AND current_quantity - #{quantity} &gt;= 0
+          AND current_quantity &lt; target_quantity
+          AND deadline &gt;= NOW()
+          AND status != 'CANCELLED'
+    </update>
+
     <insert id="insertParticipant" parameterType="map" useGeneratedKeys="true" keyProperty="participantId" keyColumn="participant_id">
         INSERT INTO group_purchase_participant
             (gp_id, member_id, purchase_quantity, recipient_name, recipient_phone, zip_code, address, address_detail,
@@ -67,9 +80,21 @@
              #{paidAmount}, #{paymentStatus}, #{paidAt}, #{txnId})
     </insert>
 
+    <!-- CANCELLED 참여는 취소 이력일 뿐 현재 참여 상태가 아니므로 isParticipating 판정·중복 참여 체크·
+         상태 화면 조회에서 항상 제외한다(V18: active_member_id 생성 컬럼과 같은 기준). -->
     <select id="findParticipant" resultType="map">
-        SELECT * FROM group_purchase_participant WHERE gp_id = #{gpId} AND member_id = #{memberId}
+        SELECT * FROM group_purchase_participant
+        WHERE gp_id = #{gpId} AND member_id = #{memberId} AND payment_status != 'CANCELLED'
     </select>
+
+    <!-- 참여 취소는 row를 삭제하지 않고 CANCELLED로 남겨 취소 이력을 보존한다(V18: active_member_id
+         생성 컬럼 + 부분 유니크 인덱스가 취소 후 재참여를 허용한다). 동시 중복 취소 요청은 영향받은
+         행이 0인 것으로 감지해 거절한다(이미 CANCELLED인 행은 WHERE 조건에서 걸러짐). -->
+    <update id="cancelParticipant">
+        UPDATE group_purchase_participant
+        SET payment_status = 'CANCELLED', canceled_at = #{canceledAt}
+        WHERE gp_id = #{gpId} AND member_id = #{memberId} AND payment_status != 'CANCELLED'
+    </update>
 
     <!-- 게시글은 관리자만 작성하므로, 마이페이지는 참여글(group_purchase_participant)만 조회한다.
          작성글 조회는 별도의 관리자 전용 엔드포인트에서 처리한다(이 쿼리 범위 밖).
@@ -79,6 +104,7 @@
         SELECT gp.* FROM group_purchase gp
         JOIN group_purchase_participant gpp ON gpp.gp_id = gp.gp_id
         WHERE gpp.member_id = #{memberId}
+        AND gpp.payment_status != 'CANCELLED'
         <if test="status == 'OPEN'">
             AND gp.status != 'CANCELLED' AND gp.current_quantity &lt; gp.target_quantity AND gp.deadline &gt;= NOW()
         </if>
