@@ -2,6 +2,7 @@ package com.aewol.domain.grouppurchase.mapper;
 
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
 
@@ -13,7 +14,11 @@ public interface GroupPurchaseMapper {
     Map<String, Object> findById(@Param("gpId") String gpId);
     void insert(Map<String, Object> groupPurchase);
     int updateQuantity(@Param("gpId") String gpId, @Param("quantity") int quantity);
+    int decreaseQuantity(@Param("gpId") String gpId, @Param("quantity") int quantity);
+    int decreaseQuantityForExpired(@Param("gpId") String gpId, @Param("quantity") int quantity);
     void insertParticipant(Map<String, Object> participant);
     Map<String, Object> findParticipant(@Param("gpId") String gpId, @Param("memberId") String memberId);
+    int cancelParticipant(@Param("gpId") String gpId, @Param("memberId") String memberId, @Param("canceledAt") LocalDateTime canceledAt);
     List<Map<String, Object>> findMyGroupPurchases(@Param("memberId") String memberId, @Param("status") String status);
+    List<Map<String, Object>> findExpiredUnfulfilledPaidParticipants();
 }

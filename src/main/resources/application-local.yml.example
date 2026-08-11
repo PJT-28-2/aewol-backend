@@ -51,6 +51,11 @@ external:
     redirect-uri: http://localhost:5173/callback/kakao
   ocr-service:
     url: http://localhost:8000
+  toss:
+    client-key: ${TOSS_CLIENT_KEY}
+    secret-key: ${TOSS_SECRET_KEY}
+  gemini:
+    api-key: ${GEMINI_API_KEY}
   codef:
     client-id: ${CODEF_CLIENT_ID}
     client-secret: ${CODEF_CLIENT_SECRET}

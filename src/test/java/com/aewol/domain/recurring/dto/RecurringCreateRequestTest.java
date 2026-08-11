@@ -30,7 +30,7 @@ class RecurringCreateRequestTest {
     @Test
     void should_rejectRequest_when_priceIsNotPositive() {
         RecurringCreateRequest request = new RecurringCreateRequest(
-                "강아지 사료", BigDecimal.ZERO, 15, "FOOD", null);
+                "강아지 사료", BigDecimal.ZERO, 15, "FOOD", "pet-1");
 
         Set<ConstraintViolation<RecurringCreateRequest>> violations = validator.validate(request);
 
@@ -40,7 +40,7 @@ class RecurringCreateRequestTest {
     @Test
     void should_rejectRequest_when_cycleDayIsOutOfRange() {
         RecurringCreateRequest request = new RecurringCreateRequest(
-                "강아지 사료", new BigDecimal("32000"), 32, "FOOD", null);
+                "강아지 사료", new BigDecimal("32000"), 32, "FOOD", "pet-1");
 
         Set<ConstraintViolation<RecurringCreateRequest>> violations = validator.validate(request);
 
@@ -50,7 +50,7 @@ class RecurringCreateRequestTest {
     @Test
     void should_acceptRequest_when_cycleDayIsThirtyOne() {
         RecurringCreateRequest request = new RecurringCreateRequest(
-                "강아지 사료", new BigDecimal("32000"), 31, "FOOD", null);
+                "강아지 사료", new BigDecimal("32000"), 31, "FOOD", "pet-1");
 
         assertEquals(0, validator.validate(request).size());
     }
@@ -58,7 +58,7 @@ class RecurringCreateRequestTest {
     @Test
     void should_rejectRequest_when_priceHasDecimalPlaces() {
         RecurringCreateRequest request = new RecurringCreateRequest(
-                "강아지 사료", new BigDecimal("32000.5"), 15, "FOOD", null);
+                "강아지 사료", new BigDecimal("32000.5"), 15, "FOOD", "pet-1");
 
         Set<ConstraintViolation<RecurringCreateRequest>> violations = validator.validate(request);
 
@@ -69,10 +69,20 @@ class RecurringCreateRequestTest {
     @Test
     void should_rejectRequest_when_categoryIsUnsupported() {
         RecurringCreateRequest request = new RecurringCreateRequest(
-                "강아지 사료", new BigDecimal("32000"), 15, "SOS", null);
+                "강아지 사료", new BigDecimal("32000"), 15, "SOS", "pet-1");
 
         Set<ConstraintViolation<RecurringCreateRequest>> violations = validator.validate(request);
 
         assertEquals("지원하지 않는 카테고리입니다.", violations.iterator().next().getMessage());
+    }
+
+    @Test
+    void should_rejectRequest_when_petIdIsBlank() {
+        RecurringCreateRequest request = new RecurringCreateRequest(
+                "강아지 사료", new BigDecimal("32000"), 15, "FOOD", "  ");
+
+        Set<ConstraintViolation<RecurringCreateRequest>> violations = validator.validate(request);
+
+        assertEquals("반려동물을 선택해 주세요.", violations.iterator().next().getMessage());
     }
 }

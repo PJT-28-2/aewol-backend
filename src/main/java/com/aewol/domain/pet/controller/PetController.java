@@ -1,11 +1,13 @@
 package com.aewol.domain.pet.controller;
 
 import com.aewol.common.response.ApiResponse;
+import com.aewol.domain.pet.dto.PetCharacterResponse;
 import com.aewol.domain.pet.dto.PetCreateRequest;
 import com.aewol.domain.pet.dto.PetDocumentResponse;
 import com.aewol.domain.pet.dto.PetResponse;
 import com.aewol.domain.pet.dto.PetRegistrationResponse;
 import com.aewol.domain.pet.dto.PetRegistrationVerifyRequest;
+import com.aewol.domain.pet.service.PetCharacterService;
 import com.aewol.domain.pet.service.PetRegistrationService;
 import com.aewol.domain.pet.service.PetService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -31,6 +33,18 @@ public class PetController {
 
     private final PetService petService;
     private final PetRegistrationService petRegistrationService;
+    private final PetCharacterService petCharacterService;
+
+    @Operation(summary = "반려동물 사진으로 AI 캐릭터 이미지 생성",
+            description = "전신 캐릭터와 정면 프로필 두 장을 만든다. 20초 이상 걸릴 수 있다.")
+    @PostMapping(value = "/{petId}/character", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ResponseEntity<ApiResponse<PetCharacterResponse>> generateCharacter(
+            @AuthenticationPrincipal String memberId,
+            @PathVariable String petId,
+            @RequestParam("photo") MultipartFile photo) {
+        return ResponseEntity.ok(
+                ApiResponse.success(petCharacterService.generate(memberId, petId, photo)));
+    }
 
     @Operation(summary = "반려동물 등록")
     @PostMapping

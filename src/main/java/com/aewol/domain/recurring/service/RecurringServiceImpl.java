@@ -57,9 +57,44 @@ public class RecurringServiceImpl implements RecurringService {
 
     @Override
     @Transactional
+    public RecurringResponse updateRecurring(String memberId, String recurringId, RecurringCreateRequest request) {
+        Map<String, Object> recurring = recurringMapper.findByIdForUpdate(recurringId);
+        if (recurring == null || !isActive(recurring.get("is_active"))) {
+            throw BusinessException.notFound("정기결제를 찾을 수 없습니다.");
+        }
+        Map<String, Object> wallet = walletMapper.findById(String.valueOf(recurring.get("wallet_id")));
+        if (wallet == null || !Objects.equals(memberId, String.valueOf(wallet.get("member_id")))) {
+            throw BusinessException.forbidden("정기결제를 변경할 권한이 없습니다.");
+        }
+        assertPetOwnership(memberId, request.getPetId());
+
+        int paymentDay = request.getCycleDay();
+        int currentPaymentDay = intValue(value(recurring, "payment_day", "paymentDay", "cycleDay"));
+        LocalDate nextPaymentDate = paymentDay == currentPaymentDay
+                ? localDateValue(value(recurring, "next_payment_date", "nextPaymentDate"))
+                : nextPaymentDate(paymentDay);
+
+        Map<String, Object> params = new HashMap<>();
+        params.put("recurringId", recurringId);
+        params.put("petId", blankToNull(request.getPetId()));
+        params.put("productName", request.getItemName().trim());
+        params.put("category", request.getCategory());
+        params.put("price", request.getPrice());
+        params.put("paymentDay", paymentDay);
+        params.put("nextPaymentDate", nextPaymentDate);
+        if (recurringMapper.update(params) != 1) {
+            throw BusinessException.notFound("정기결제를 찾을 수 없습니다.");
+        }
+        return toResponse(params);
+    }
+
+    @Override
+    @Transactional
     public void cancelRecurring(String memberId, String recurringId) {
-        Map<String, Object> recurring = recurringMapper.findById(recurringId);
-        if (recurring == null) throw BusinessException.notFound("정기결제를 찾을 수 없습니다.");
+        Map<String, Object> recurring = recurringMapper.findByIdForUpdate(recurringId);
+        if (recurring == null || !isActive(recurring.get("is_active"))) {
+            throw BusinessException.notFound("정기결제를 찾을 수 없습니다.");
+        }
         Map<String, Object> wallet = walletMapper.findById(String.valueOf(recurring.get("wallet_id")));
         if (wallet == null || !Objects.equals(memberId, String.valueOf(wallet.get("member_id")))) {
             throw BusinessException.forbidden("정기결제를 해지할 권한이 없습니다.");
@@ -84,7 +119,7 @@ public class RecurringServiceImpl implements RecurringService {
         return nextPaymentDate(paymentDay, LocalDate.now());
     }
 
-    static LocalDate nextPaymentDate(int paymentDay, LocalDate today) {
+    public static LocalDate nextPaymentDate(int paymentDay, LocalDate today) {
         YearMonth currentMonth = YearMonth.from(today);
         LocalDate candidate = paymentDate(currentMonth, paymentDay);
         if (candidate.isAfter(today)) return candidate;
@@ -127,5 +162,23 @@ public class RecurringServiceImpl implements RecurringService {
 
     private static String stringValue(Object value) {
         return value == null ? null : String.valueOf(value);
+    }
+
+    private static int intValue(Object value) {
+        return value instanceof Number
+                ? ((Number) value).intValue()
+                : Integer.parseInt(String.valueOf(value));
+    }
+
+    private static LocalDate localDateValue(Object value) {
+        return value instanceof LocalDate
+                ? (LocalDate) value
+                : LocalDate.parse(String.valueOf(value));
+    }
+
+    private static boolean isActive(Object value) {
+        if (value instanceof Boolean) return (Boolean) value;
+        if (value instanceof Number) return ((Number) value).intValue() == 1;
+        return "1".equals(String.valueOf(value)) || "true".equalsIgnoreCase(String.valueOf(value));
     }
 }
