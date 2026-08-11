@@ -78,16 +78,16 @@ class MemberProfileSecurityTest {
 
     @Test
     void unauthenticatedProfileEndpointsAreBlocked() throws Exception {
-        mockMvc.perform(get("/api/users/me")).andExpect(status().isForbidden());
+        mockMvc.perform(get("/api/users/me")).andExpect(status().isUnauthorized());
         mockMvc.perform(patch("/api/users/me").contentType("application/json").content("{}"))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isUnauthorized());
         mockMvc.perform(post("/api/users/me/password/verify")
                         .contentType("application/json").content("{\"currentPassword\":\"password\"}"))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isUnauthorized());
         mockMvc.perform(patch("/api/users/me/password")
                         .contentType("application/json")
                         .content("{\"currentPassword\":\"password\",\"newPassword\":\"new-password\"}"))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isUnauthorized());
     }
 
     @Test
@@ -177,13 +177,13 @@ class MemberProfileSecurityTest {
     void refreshTokenAndInactiveAccessTokenCannotReachProfileService() throws Exception {
         stubRefreshToken();
         mockMvc.perform(get("/api/users/me").header("Authorization", "Bearer refresh-token"))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isUnauthorized());
         verify(memberService, never()).getMember(org.mockito.ArgumentMatchers.anyString());
 
         reset(jwtUtil, memberMapper, memberService);
         stubAccessToken(false);
         mockMvc.perform(get("/api/users/me").header("Authorization", "Bearer access-token"))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isUnauthorized());
         verify(memberService, never()).getMember(org.mockito.ArgumentMatchers.anyString());
     }
 

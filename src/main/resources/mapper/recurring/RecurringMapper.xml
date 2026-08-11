@@ -8,6 +8,12 @@
         WHERE recurring_id = #{recurringId} AND is_active = 1
     </select>
 
+    <select id="findByIdForUpdate" resultType="map">
+        SELECT * FROM recurring_payment
+        WHERE recurring_id = #{recurringId}
+        FOR UPDATE
+    </select>
+
     <select id="findByWalletId" resultType="map">
         SELECT * FROM recurring_payment
         WHERE wallet_id = #{walletId} AND is_active = 1
@@ -19,13 +25,25 @@
         VALUES (#{walletId}, #{petId}, #{productName}, #{category}, #{price}, #{paymentDay}, #{nextPaymentDate})
     </insert>
 
+    <update id="update" parameterType="map">
+        UPDATE recurring_payment
+        SET pet_id = #{petId}, product_name = #{productName}, category = #{category},
+            price = #{price}, payment_day = #{paymentDay}, next_payment_date = #{nextPaymentDate}
+        WHERE recurring_id = #{recurringId} AND is_active = 1
+    </update>
+
+    <update id="updateNextPaymentDate">
+        UPDATE recurring_payment SET next_payment_date = #{nextPaymentDate}
+        WHERE recurring_id = #{recurringId} AND is_active = 1
+    </update>
+
     <update id="deactivate">
         UPDATE recurring_payment SET is_active = 0
         WHERE recurring_id = #{recurringId} AND is_active = 1
     </update>
 
     <select id="findDuePayments" resultType="map">
-        SELECT * FROM recurring_payment WHERE is_active = 1 AND next_payment_date = #{date}
+        SELECT * FROM recurring_payment WHERE is_active = 1 AND next_payment_date &lt;= #{date}
     </select>
 
 </mapper>
