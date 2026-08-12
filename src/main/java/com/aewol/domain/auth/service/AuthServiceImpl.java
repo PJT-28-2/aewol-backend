@@ -3,6 +3,7 @@ package com.aewol.domain.auth.service;
 import com.aewol.common.exception.BusinessException;
 import com.aewol.common.util.JwtUtil;
 import com.aewol.common.util.PhoneNumberUtil;
+import com.aewol.common.util.RedisRateLimiter;
 import com.aewol.domain.auth.dto.LoginRequest;
 import com.aewol.domain.auth.dto.PasswordResetEmailRequest;
 import com.aewol.domain.auth.dto.PasswordResetRequest;
@@ -32,12 +33,13 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
+import java.security.SecureRandom;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
-import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
 
 @Slf4j
@@ -45,12 +47,17 @@ import java.util.concurrent.TimeUnit;
 @RequiredArgsConstructor
 public class AuthServiceImpl implements AuthService {
 
+    private static final SecureRandom SECURE_RANDOM = new SecureRandom();
     private static final long SIGNUP_VERIFICATION_TTL_SECONDS = 300L;
     private static final String SIGNUP_VERIFICATION_CODE_KEY_PREFIX = "signup:verify:";
     private static final String SIGNUP_VERIFICATION_COMPLETED_KEY_PREFIX = "signup:verify:completed:";
     private static final long PASSWORD_RESET_VERIFICATION_TTL_SECONDS = 300L;
     private static final long PASSWORD_RESET_TOKEN_TTL_SECONDS = 300L;
     private static final int PASSWORD_RESET_MAX_VERIFICATION_ATTEMPTS = 5;
+    private static final String PASSWORD_RESET_REQUEST_RATE_LIMIT_KEY_PREFIX =
+            "password:reset:request-count:";
+    private static final long PASSWORD_RESET_REQUEST_RATE_LIMIT_WINDOW_SECONDS = 1800L;
+    private static final long PASSWORD_RESET_REQUEST_RATE_LIMIT_MAX = 5L;
     private static final String PASSWORD_RESET_VERIFICATION_KEY_PREFIX = "password:reset:verify:";
     private static final String PASSWORD_RESET_TOKEN_KEY_PREFIX = "password:reset:token:";
     private static final String INVALID_PASSWORD_RESET_TOKEN_MESSAGE =
@@ -131,6 +138,7 @@ public class AuthServiceImpl implements AuthService {
     private final JwtUtil jwtUtil;
     private final PasswordEncoder passwordEncoder;
     private final RedisTemplate<String, String> redisTemplate;
+    private final RedisRateLimiter redisRateLimiter;
     private final EmailService emailService;
     private final KakaoAuthClient kakaoAuthClient;
     private final AuthCredentialStore authCredentialStore;
@@ -182,6 +190,15 @@ public class AuthServiceImpl implements AuthService {
 
     @Override
     public SignupEmailCodeResponse sendPasswordResetVerificationCode(PasswordResetEmailRequest request) {
+        String rateLimitEmail = request.getEmail().trim().toLowerCase(Locale.ROOT);
+        long requestCount = redisRateLimiter.incrementWithExpiry(
+                PASSWORD_RESET_REQUEST_RATE_LIMIT_KEY_PREFIX + rateLimitEmail,
+                PASSWORD_RESET_REQUEST_RATE_LIMIT_WINDOW_SECONDS);
+        if (requestCount > PASSWORD_RESET_REQUEST_RATE_LIMIT_MAX) {
+            throw new BusinessException(HttpStatus.TOO_MANY_REQUESTS,
+                    "비밀번호 재설정 요청이 너무 많아요. 30분 후 다시 시도해주세요");
+        }
+
         Map<String, Object> member = memberMapper.findActiveByEmail(request.getEmail());
         if (!isActiveLocalMember(member)) {
             return new SignupEmailCodeResponse(PASSWORD_RESET_VERIFICATION_TTL_SECONDS);
@@ -612,7 +629,7 @@ public class AuthServiceImpl implements AuthService {
     }
 
     private String generateVerificationCode() {
-        return String.format("%06d", ThreadLocalRandom.current().nextInt(1000000));
+        return String.format("%06d", SECURE_RANDOM.nextInt(1_000_000));
     }
 
     private String verificationCodeKey(String email) {
