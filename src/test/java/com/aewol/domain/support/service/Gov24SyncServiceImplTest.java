@@ -6,10 +6,12 @@ import static org.mockito.Mockito.*;
 
 import com.aewol.domain.support.mapper.Gov24SyncMapper;
 import com.aewol.external.gov24.Gov24Client;
+import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Supplier;
+import java.util.regex.Pattern;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -202,6 +204,80 @@ class Gov24SyncServiceImplTest {
         ArgumentCaptor<Map<String, Object>> captor = ArgumentCaptor.forClass(Map.class);
         verify(gov24SyncMapper).upsertCuratedProgram(captor.capture());
         assertNull(captor.getValue().get("description"));
+    }
+
+    @Test
+    @DisplayName("전화문의가 기관명 상한(200자)을 넘어도 잘리지 않고 온전히 저장한다")
+    void should_keepContactPhone_when_longerThanAgencyLimit() {
+        // 정부24는 여러 지자체 연락처를 '시명/번호||시명/번호'로 이어붙여 내려준다.
+        // 경기도처럼 시군이 많으면 200자를 쉽게 넘긴다.
+        String phones = joinPhones(30);
+        assertTrue(phones.length() > 200, "테스트 전제: 200자를 넘겨야 한다");
+
+        Map<String, Object> captured = syncWithField("E5", "전화문의", phones);
+
+        assertEquals(phones, captured.get("contactPhone"));
+    }
+
+    @Test
+    @DisplayName("전화문의가 상한을 넘으면 구분자 경계에서 잘라 반토막 전화번호를 남기지 않는다")
+    void should_cutAtDelimiter_when_contactPhoneExceedsLimit() {
+        // 상한(20000자)을 확실히 넘기는 길이
+        String phones = joinPhones(2000);
+        assertTrue(phones.length() > 20000, "테스트 전제: 상한을 넘겨야 한다");
+
+        Map<String, Object> captured = syncWithField("E6", "전화문의", phones);
+
+        String stored = (String) captured.get("contactPhone");
+        assertTrue(stored.length() <= 20000, "상한을 넘지 않아야 한다");
+        assertTrue(phones.startsWith(stored), "앞에서부터 잘린 값이어야 한다");
+        // 저장된 값의 모든 항목이 온전한 '시명/번호' 형태여야 한다
+        for (String item : stored.split(Pattern.quote("||"))) {
+            assertTrue(item.matches("[가-힣]+\\d*/\\d{3}-\\d{4}-\\d{4}"),
+                    "반토막 난 항목이 남았다: " + item);
+        }
+    }
+
+    @Test
+    @DisplayName("상한 경계에 서로게이트 페어가 걸려도 쪼개지 않는다")
+    void should_notSplitSurrogatePair_when_cuttingAtLimit() {
+        // 서비스명 상한은 300자다. 300번째 자리에 이모지의 하이 서로게이트가 오게 만든다.
+        String name = "가".repeat(299) + "🐶" + "뒤";
+        assertTrue(Character.isHighSurrogate(name.charAt(299)), "테스트 전제: 경계가 서로게이트여야 한다");
+
+        Map<String, Object> captured = syncWithField("E7", "서비스명", name);
+
+        String stored = (String) captured.get("serviceName");
+        assertEquals(299, stored.length());
+        assertFalse(Character.isHighSurrogate(stored.charAt(stored.length() - 1)),
+                "고아 서로게이트가 남으면 UTF-8로 인코딩할 수 없다");
+        // 고아 서로게이트가 있으면 왕복 변환에서 값이 깨진다
+        assertEquals(stored, new String(stored.getBytes(StandardCharsets.UTF_8), StandardCharsets.UTF_8));
+    }
+
+    /** 지정한 필드만 바꿔 한 건을 동기화하고, 원본 적재에 넘어간 값을 돌려준다. */
+    private Map<String, Object> syncWithField(String serviceId, String field, String value) {
+        when(gov24Client.isConfigured()).thenReturn(true);
+        when(gov24Client.findServicesByName(anyString())).thenReturn(List.of());
+        Map<String, Object> row = listRow(serviceId, "반려동물 지원", "경기도");
+        row.put(field, value);
+        when(gov24Client.findServicesByName("반려동물")).thenReturn(List.of(row));
+        when(gov24SyncMapper.findProgramIdBySourceServiceId(serviceId)).thenReturn(21L);
+
+        service().syncPetSupportPrograms();
+
+        ArgumentCaptor<Map<String, Object>> captor = ArgumentCaptor.forClass(Map.class);
+        verify(gov24SyncMapper).upsertService(captor.capture());
+        return captor.getValue();
+    }
+
+    private String joinPhones(int count) {
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < count; i++) {
+            if (i > 0) sb.append("||");
+            sb.append("수원시").append(i).append("/031-5191-").append(String.format("%04d", i % 10000));
+        }
+        return sb.toString();
     }
 
     private Map<String, Object> listRow(String serviceId, String serviceName, String organization) {
