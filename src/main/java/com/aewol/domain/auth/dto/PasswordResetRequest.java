@@ -1,7 +1,7 @@
 package com.aewol.domain.auth.dto;
 
+import com.aewol.common.validation.ValidPassword;
 import javax.validation.constraints.NotBlank;
-import javax.validation.constraints.Size;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 
@@ -13,6 +13,6 @@ public class PasswordResetRequest {
     private String resetToken;
 
     @NotBlank
-    @Size(min = 8, max = 20)
+    @ValidPassword
     private String newPassword;
 }

@@ -1,5 +1,6 @@
 package com.aewol.domain.auth.dto;
 
+import com.aewol.common.validation.ValidPassword;
 import javax.validation.constraints.Email;
 import javax.validation.constraints.AssertTrue;
 import javax.validation.constraints.NotBlank;
@@ -15,7 +16,7 @@ public class SignupRequest {
     private String email;
     @NotBlank @Pattern(regexp = "\\d{6}")
     private String verificationCode;
-    @NotBlank @Size(min = 8, max = 20)
+    @NotBlank @ValidPassword
     private String password;
     @NotBlank @Size(max = 20)
     private String name;
