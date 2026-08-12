@@ -11,6 +11,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.regex.Pattern;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -38,6 +39,17 @@ public class Gov24SyncServiceImpl implements Gov24SyncService {
     private static final int PERIOD_MAX = 500;
     private static final int APPLY_URL_MAX = 500;
     private static final int APPLICATION_METHOD_MAX = 500;
+
+    /**
+     * `전화문의`는 다른 기관 필드와 성격이 다르다. 여러 지자체 연락처를
+     * `시명/번호||시명/번호` 형태로 한 필드에 이어붙여 내려주기 때문에
+     * 기관명 상한(200)을 적용하면 전화번호가 반토막 난다(#128).
+     * 컬럼이 TEXT(65535바이트)라 한글 3바이트 기준 한도 안쪽으로 잡는다.
+     */
+    private static final int CONTACT_PHONE_MAX = 20000;
+
+    /** 정부24가 목록형 값을 이어붙일 때 쓰는 구분자. */
+    private static final String LIST_DELIMITER = "||";
 
     private final Gov24Client gov24Client;
     private final Gov24SyncMapper gov24SyncMapper;
@@ -124,7 +136,7 @@ public class Gov24SyncServiceImpl implements Gov24SyncService {
         service.put("userType", cut(text(listRow, "사용자구분"), 100));
         service.put("serviceCategory", cut(text(listRow, "서비스분야"), 100));
         service.put("receptionAgency", cut(text(listRow, "접수기관"), AGENCY_MAX));
-        service.put("contactPhone", cut(text(listRow, "전화문의"), AGENCY_MAX));
+        service.put("contactPhone", cutList(text(listRow, "전화문의"), CONTACT_PHONE_MAX));
         service.put("sourceRegisteredAt", dateTime(text(listRow, "등록일시")));
         service.put("sourceUpdatedAt", dateTime(text(listRow, "수정일시")));
         gov24SyncMapper.upsertService(service);
@@ -266,9 +278,36 @@ public class Gov24SyncServiceImpl implements Gov24SyncService {
         return (s.isEmpty() || "None".equals(s) || "null".equals(s)) ? null : s;
     }
 
+    /**
+     * 코드포인트 경계에서 자른다. char 인덱스로 자르면 보조 평면 문자(이모지 등)의
+     * 서로게이트 페어가 쪼개져 고아 서로게이트가 남고, 그 값은 UTF-8로 인코딩할 수
+     * 없어 JDBC 단계에서 예외나 '?' 치환이 발생한다.
+     */
     private static String cut(String value, int max) {
-        if (value == null) return null;
-        return value.length() <= max ? value : value.substring(0, max);
+        if (value == null || value.length() <= max) return value;
+        if (max <= 0) return "";
+        // 마지막 자리가 하이 서로게이트면 짝이 되는 로우 서로게이트는 상한 밖에 있다.
+        // 그대로 두면 고아 서로게이트가 되므로 한 칸 더 줄인다.
+        int end = Character.isHighSurrogate(value.charAt(max - 1)) ? max - 1 : max;
+        return value.substring(0, end);
+    }
+
+    /**
+     * 구분자로 이어붙인 목록값을 자른다. 상한을 넘기면 마지막으로 온전한 항목까지만
+     * 남긴다. 항목 중간에서 자르면 `시흥시/031-310-2` 처럼 반토막 난 전화번호가
+     * 유효한 값인 척 저장되기 때문이다(#128).
+     */
+    private static String cutList(String value, int max) {
+        if (value == null || value.length() <= max) return value;
+        StringBuilder kept = new StringBuilder();
+        for (String item : value.split(Pattern.quote(LIST_DELIMITER))) {
+            int cost = kept.length() == 0 ? item.length() : LIST_DELIMITER.length() + item.length();
+            if (kept.length() + cost > max) break;
+            if (kept.length() > 0) kept.append(LIST_DELIMITER);
+            kept.append(item);
+        }
+        // 첫 항목 하나가 이미 상한을 넘으면 남길 항목이 없다. 이때만 문자 단위로 자른다.
+        return kept.length() == 0 ? cut(value, max) : kept.toString();
     }
 
     private static Integer integer(Map<String, Object> map, String key) {

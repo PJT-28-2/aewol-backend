@@ -37,6 +37,11 @@ public class WebMvcConfig implements WebMvcConfigurer {
         }
         registry.addResourceHandler("/uploads/group-purchase/**")
                 .addResourceLocations(publicImageLocation);
+
+        // springfox-swagger-ui 정적 리소스 (Boot 자동설정이 없으므로 수동 등록)
+        registry.addResourceHandler("/swagger-ui/**")
+                .addResourceLocations("classpath:/META-INF/resources/webjars/springfox-swagger-ui/")
+                .resourceChain(false);
     }
 
     @Override

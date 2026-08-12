@@ -86,9 +86,14 @@ dependencies {
     runtimeOnly("io.jsonwebtoken:jjwt-impl:0.12.6")
     runtimeOnly("io.jsonwebtoken:jjwt-jackson:0.12.6")
 
-    // ── Swagger (OpenAPI 3.0 모델만 사용, UI는 별도 구성) ─────────
+    // ── Swagger (OpenAPI 3.0 애노테이션) ──────────────────────────
     implementation("io.swagger.core.v3:swagger-models:2.2.25")
     implementation("io.swagger.core.v3:swagger-annotations:2.2.25")
+
+    // ── Springfox — 순수 Spring MVC용 OpenAPI 스캐너 + UI ─────────
+    // Spring Boot가 아니라 springdoc-openapi를 쓸 수 없어 springfox를 사용한다.
+    implementation("io.springfox:springfox-oas:3.0.0")
+    implementation("io.springfox:springfox-swagger-ui:3.0.0")
 
     // ── YAML 프로퍼티 로딩 (SnakeYAML) ────────────────────────────
     implementation("org.yaml:snakeyaml:2.3")
