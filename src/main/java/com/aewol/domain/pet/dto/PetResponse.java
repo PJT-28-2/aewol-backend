@@ -18,6 +18,9 @@ public class PetResponse {
     private String regNumber;
     private String iconType;
     private String medicalHistory;
+    /** 얼굴 클로즈업. 프로필 아바타용 */
     private String profileImg;
+    /** 전신 3D 캐릭터. 홈 화면 히어로용 */
+    private String characterImg;
     private Boolean isActive;
 }

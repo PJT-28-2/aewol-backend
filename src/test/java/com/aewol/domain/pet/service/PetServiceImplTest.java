@@ -7,6 +7,7 @@ import static org.mockito.Mockito.*;
 import com.aewol.common.exception.BusinessException;
 import com.aewol.common.storage.FileStorage;
 import com.aewol.domain.pet.dto.PetCreateRequest;
+import com.aewol.domain.pet.dto.PetResponse;
 import com.aewol.domain.pet.mapper.PetMapper;
 import com.aewol.domain.pet.mapper.PetDocumentMapper;
 import com.aewol.common.util.FileUtil;
@@ -42,6 +43,27 @@ class PetServiceImplTest {
         assertEquals("pet-1", service.getPet("member-1", "pet-1").getPetId());
         assertEquals("/api/files/pet-character/profile.png?signed",
                 service.getPet("member-1", "pet-1").getProfileImg());
+    }
+
+    // AI 캐릭터는 처음부터 용도가 둘이다. profile_img는 얼굴 클로즈업(프로필용),
+    // character_img는 전신(홈 화면 히어로용)이다. 응답에 전신이 빠져 있어 프론트가
+    // 홈 캐릭터를 받을 방법이 없었다(#141).
+    @Test
+    void should_returnBothCharacterImages_when_petHasGeneratedCharacter() {
+        PetServiceImpl service = service();
+        Map<String, Object> pet = pet("member-1");
+        pet.put("profile_img", "pet-character/profile.png");
+        pet.put("character_img", "pet-character/fullbody.png");
+        when(petMapper.findById("pet-1")).thenReturn(pet);
+        when(fileStorage.signedUrl("pet-character/profile.png"))
+                .thenReturn("/api/files/pet-character/profile.png?signed");
+        when(fileStorage.signedUrl("pet-character/fullbody.png"))
+                .thenReturn("/api/files/pet-character/fullbody.png?signed");
+
+        PetResponse response = service.getPet("member-1", "pet-1");
+
+        assertEquals("/api/files/pet-character/profile.png?signed", response.getProfileImg());
+        assertEquals("/api/files/pet-character/fullbody.png?signed", response.getCharacterImg());
     }
 
     @Test
