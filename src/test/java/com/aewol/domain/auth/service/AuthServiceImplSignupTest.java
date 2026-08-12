@@ -2,6 +2,7 @@ package com.aewol.domain.auth.service;
 
 import com.aewol.common.exception.BusinessException;
 import com.aewol.common.util.JwtUtil;
+import com.aewol.common.util.RedisRateLimiter;
 import com.aewol.domain.auth.dto.SignupRequest;
 import com.aewol.domain.auth.dto.SignupResponse;
 import com.aewol.domain.member.mapper.MemberMapper;
@@ -57,6 +58,7 @@ class AuthServiceImplSignupTest {
     @Mock JwtUtil jwtUtil;
     @Mock PasswordEncoder passwordEncoder;
     @Mock RedisTemplate<String, String> redisTemplate;
+    @Mock RedisRateLimiter redisRateLimiter;
     @Mock ValueOperations<String, String> valueOperations;
     @Mock EmailService emailService;
     @Mock KakaoAuthClient kakaoAuthClient;
@@ -67,7 +69,8 @@ class AuthServiceImplSignupTest {
     @BeforeEach
     void setUp() {
         authService = new AuthServiceImpl(memberMapper, walletMapper, notificationSettingMapper,
-                jwtUtil, passwordEncoder, redisTemplate, emailService, kakaoAuthClient, authCredentialStore);
+                jwtUtil, passwordEncoder, redisTemplate, redisRateLimiter, emailService,
+                kakaoAuthClient, authCredentialStore);
         when(redisTemplate.opsForValue()).thenReturn(valueOperations);
         TransactionSynchronizationManager.initSynchronization();
     }

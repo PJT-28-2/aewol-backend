@@ -3,6 +3,10 @@ package com.aewol.domain.auth.controller;
 import com.aewol.common.exception.BusinessException;
 import com.aewol.common.response.ApiResponse;
 import com.aewol.domain.auth.dto.LoginRequest;
+import com.aewol.domain.auth.dto.PasswordResetEmailRequest;
+import com.aewol.domain.auth.dto.PasswordResetRequest;
+import com.aewol.domain.auth.dto.PasswordResetVerifyRequest;
+import com.aewol.domain.auth.dto.PasswordResetVerifyResponse;
 import com.aewol.domain.auth.dto.SignupRequest;
 import com.aewol.domain.auth.dto.SignupResponse;
 import com.aewol.domain.auth.dto.SignupEmailCodeRequest;
@@ -74,6 +78,30 @@ public class AuthController {
         String refreshToken = resolveRefreshToken(authorization);
         return ResponseEntity.ok(ApiResponse.success(
                 "토큰이 재발급되었습니다.", authService.refresh(refreshToken)));
+    }
+
+    @Operation(summary = "비밀번호 재설정 인증번호 발송")
+    @PostMapping("/password/reset-request")
+    public ResponseEntity<ApiResponse<SignupEmailCodeResponse>> sendPasswordResetVerificationCode(
+            @Valid @RequestBody PasswordResetEmailRequest request) {
+        SignupEmailCodeResponse result = authService.sendPasswordResetVerificationCode(request);
+        return ResponseEntity.ok(ApiResponse.success("비밀번호 재설정 인증번호가 발송되었습니다.", result));
+    }
+
+    @Operation(summary = "비밀번호 재설정 인증번호 검증")
+    @PostMapping("/password/reset-verify")
+    public ResponseEntity<ApiResponse<PasswordResetVerifyResponse>> verifyPasswordResetCode(
+            @Valid @RequestBody PasswordResetVerifyRequest request) {
+        PasswordResetVerifyResponse result = authService.verifyPasswordResetCode(request);
+        return ResponseEntity.ok(ApiResponse.success("인증번호가 확인되었습니다.", result));
+    }
+
+    @Operation(summary = "비밀번호 재설정")
+    @PostMapping("/password/reset")
+    public ResponseEntity<ApiResponse<Void>> resetPassword(
+            @Valid @RequestBody PasswordResetRequest request) {
+        authService.resetPassword(request);
+        return ResponseEntity.ok(ApiResponse.success("비밀번호가 재설정되었습니다.", null));
     }
 
     @Operation(summary = "로그아웃")
