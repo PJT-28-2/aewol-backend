@@ -66,7 +66,8 @@ class MemberServiceImplSimplePasswordTest {
     @ValueSource(strings = {
             "111111", "000000", // 전부 같은 숫자
             "121212", "343434", // 두 자리 반복
-            "123123", "987987", // 세 자리 반복
+            "246246", "531531", // 세 자리 반복 (123123/987987은 "123"/"987"이 연속 3자리라
+                                 // hasSequentialRun에 먼저 걸려서 이 케이스로 부적절 — CI에서 발견)
             "112233", "998877", // 두 자리씩 짝지어 오름차순/내림차순
     })
     void should_throwWeakMessage_when_pinIsOtherWeakPattern(String weakPin) {
