@@ -11,13 +11,13 @@
             status != 'CANCELLED'
             <choose>
                 <when test="status == 'OPEN'">
-                    AND current_quantity &lt; target_quantity AND deadline &gt;= NOW()
+                    AND (target_quantity &lt;= 0 OR current_quantity &lt; target_quantity) AND deadline &gt;= NOW()
                 </when>
                 <when test="status == 'COMPLETED'">
-                    AND current_quantity &gt;= target_quantity
+                    AND target_quantity &gt; 0 AND current_quantity &gt;= target_quantity
                 </when>
                 <when test="status == 'CLOSED'">
-                    AND current_quantity &lt; target_quantity AND deadline &lt; NOW()
+                    AND (target_quantity &lt;= 0 OR current_quantity &lt; target_quantity) AND deadline &lt; NOW()
                 </when>
             </choose>
             <if test="category != null and category != ''">
@@ -129,13 +129,13 @@
         WHERE gpp.member_id = #{memberId}
         AND gpp.payment_status != 'CANCELLED'
         <if test="status == 'OPEN'">
-            AND gp.status != 'CANCELLED' AND gp.current_quantity &lt; gp.target_quantity AND gp.deadline &gt;= NOW()
+            AND gp.status != 'CANCELLED' AND (gp.target_quantity &lt;= 0 OR gp.current_quantity &lt; gp.target_quantity) AND gp.deadline &gt;= NOW()
         </if>
         <if test="status == 'COMPLETED'">
-            AND gp.status != 'CANCELLED' AND gp.current_quantity &gt;= gp.target_quantity
+            AND gp.status != 'CANCELLED' AND gp.target_quantity &gt; 0 AND gp.current_quantity &gt;= gp.target_quantity
         </if>
         <if test="status == 'FAILED'">
-            AND gp.status != 'CANCELLED' AND gp.current_quantity &lt; gp.target_quantity AND gp.deadline &lt; NOW()
+            AND gp.status != 'CANCELLED' AND (gp.target_quantity &lt;= 0 OR gp.current_quantity &lt; gp.target_quantity) AND gp.deadline &lt; NOW()
         </if>
         <if test="status == 'CANCELLED'">
             AND gp.status = 'CANCELLED'
@@ -152,7 +152,7 @@
         WHERE gpp.payment_status = 'PAID'
           AND gp.status != 'CANCELLED'
           AND gp.deadline &lt; NOW()
-          AND gp.current_quantity &lt; gp.target_quantity
+          AND (gp.target_quantity &lt;= 0 OR gp.current_quantity &lt; gp.target_quantity)
     </select>
 
 </mapper>

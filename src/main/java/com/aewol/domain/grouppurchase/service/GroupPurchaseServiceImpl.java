@@ -453,7 +453,7 @@ public class GroupPurchaseServiceImpl implements GroupPurchaseService {
     private static String computeDisplayStatus(LocalDateTime deadline, Integer currentQuantity, Integer targetQuantity) {
         int current = currentQuantity == null ? 0 : currentQuantity;
         int target = targetQuantity == null ? 0 : targetQuantity;
-        if (current >= target) {
+        if (isTargetReached(current, target)) {
             return "마감(성공)";
         }
         if (deadline != null && deadline.isBefore(LocalDateTime.now())) {
@@ -474,7 +474,7 @@ public class GroupPurchaseServiceImpl implements GroupPurchaseService {
         }
         int current = currentQuantity == null ? 0 : currentQuantity;
         int target = targetQuantity == null ? 0 : targetQuantity;
-        if (current >= target) {
+        if (isTargetReached(current, target)) {
             return "confirmed";
         }
         if (deadline != null && deadline.isBefore(LocalDateTime.now())) {
@@ -521,13 +521,23 @@ public class GroupPurchaseServiceImpl implements GroupPurchaseService {
         }
         int current = currentQuantity == null ? 0 : currentQuantity;
         int target = targetQuantity == null ? 0 : targetQuantity;
-        if (current >= target) {
+        if (isTargetReached(current, target)) {
             return "COMPLETED";
         }
         if (deadline != null && deadline.isBefore(LocalDateTime.now())) {
             return "FAILED";
         }
         return "OPEN";
+    }
+
+    /**
+     * target이 0 이하(마이그레이션 누락·초기 등록 오류 등 비정상 데이터)이면 current(기본값 0)와의
+     * 비교만으로 "목표 달성"으로 오판하지 않도록 방어한다. 정상 생성 경로는
+     * {@link com.aewol.domain.grouppurchase.dto.GroupPurchaseCreateRequest}의 @Min(1) 검증과
+     * target_quantity 컬럼의 NOT NULL DEFAULT 1 제약으로 이 값이 1 이상임을 보장한다.
+     */
+    private static boolean isTargetReached(int current, int target) {
+        return target > 0 && current >= target;
     }
 
     private static String toDDay(LocalDateTime deadline) {
