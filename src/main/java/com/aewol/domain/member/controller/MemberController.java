@@ -6,7 +6,10 @@ import com.aewol.domain.member.dto.MemberPasswordChangeRequest;
 import com.aewol.domain.member.dto.MemberPasswordVerifyRequest;
 import com.aewol.domain.member.dto.MemberUpdateRequest;
 import com.aewol.domain.member.dto.SimplePasswordRequest;
+import com.aewol.domain.member.dto.SimplePasswordVerifyRequest;
+import com.aewol.domain.member.dto.SimplePasswordVerifyResponse;
 import com.aewol.domain.member.service.MemberService;
+import com.aewol.domain.member.service.SimplePasswordVerificationService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import javax.validation.Valid;
@@ -22,6 +25,7 @@ import org.springframework.web.bind.annotation.*;
 public class MemberController {
 
     private final MemberService memberService;
+    private final SimplePasswordVerificationService simplePasswordVerificationService;
 
     @Operation(summary = "내 정보 조회")
     @GetMapping("/me")
@@ -61,5 +65,14 @@ public class MemberController {
                                                                  @Valid @RequestBody SimplePasswordRequest request) {
         memberService.setSimplePassword(memberId, request);
         return ResponseEntity.ok(ApiResponse.success("간편 비밀번호가 설정되었습니다.", null));
+    }
+
+    @Operation(summary = "간편 비밀번호 검증")
+    @PostMapping("/simple-password/verify")
+    public ResponseEntity<ApiResponse<SimplePasswordVerifyResponse>> verifySimplePassword(
+            @AuthenticationPrincipal String memberId,
+            @Valid @RequestBody SimplePasswordVerifyRequest request) {
+        boolean verified = simplePasswordVerificationService.verify(memberId, request.getPassword());
+        return ResponseEntity.ok(ApiResponse.success(new SimplePasswordVerifyResponse(verified)));
     }
 }

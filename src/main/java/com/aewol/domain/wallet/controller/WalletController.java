@@ -5,8 +5,11 @@ import com.aewol.domain.wallet.dto.TossChargeOrderRequest;
 import com.aewol.domain.wallet.dto.TossChargeOrderResponse;
 import com.aewol.domain.wallet.dto.TossChargeRequest;
 import com.aewol.domain.wallet.dto.WalletResponse;
+import com.aewol.domain.wallet.dto.WalletWithdrawRequest;
+import com.aewol.domain.wallet.dto.WalletWithdrawResponse;
 import com.aewol.domain.wallet.service.TossChargeService;
 import com.aewol.domain.wallet.service.WalletService;
+import com.aewol.domain.wallet.service.WalletWithdrawalService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import javax.validation.Valid;
@@ -24,6 +27,7 @@ public class WalletController {
 
     private final WalletService walletService;
     private final TossChargeService tossChargeService;
+    private final WalletWithdrawalService walletWithdrawalService;
 
     @Operation(summary = "내 지갑 조회")
     @GetMapping
@@ -36,6 +40,16 @@ public class WalletController {
     public ResponseEntity<ApiResponse<WalletResponse>> deposit(@AuthenticationPrincipal String memberId,
                                                                 @RequestParam java.math.BigDecimal amount) {
         return ResponseEntity.ok(ApiResponse.success(walletService.deposit(memberId, amount)));
+    }
+
+    @Operation(summary = "애월지갑 출금",
+            description = "MAIN 애월지갑 잔액을 본인 명의의 활성 연결 계좌로 출금한다. "
+                    + "현재 외부 은행 입금은 데모 처리이며 지갑 차감과 거래 원장은 실제 반영한다.")
+    @PostMapping("/withdraw")
+    public ResponseEntity<ApiResponse<WalletWithdrawResponse>> withdraw(
+            @AuthenticationPrincipal String memberId,
+            @Valid @RequestBody WalletWithdrawRequest request) {
+        return ResponseEntity.ok(ApiResponse.success(walletWithdrawalService.withdraw(memberId, request)));
     }
 
     @Operation(summary = "Toss 충전 주문 생성",
