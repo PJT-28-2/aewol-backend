@@ -11,13 +11,13 @@
             status != 'CANCELLED'
             <choose>
                 <when test="status == 'OPEN'">
-                    AND deadline &gt;= NOW()
+                    AND current_quantity &lt; target_quantity AND deadline &gt;= NOW()
                 </when>
                 <when test="status == 'COMPLETED'">
-                    AND deadline &lt; NOW() AND current_quantity &gt;= target_quantity
+                    AND current_quantity &gt;= target_quantity
                 </when>
                 <when test="status == 'CLOSED'">
-                    AND deadline &lt; NOW() AND current_quantity &lt; target_quantity
+                    AND current_quantity &lt; target_quantity AND deadline &lt; NOW()
                 </when>
             </choose>
             <if test="category != null and category != ''">
