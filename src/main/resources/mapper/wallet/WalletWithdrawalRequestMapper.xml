@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.aewol.domain.wallet.mapper.WalletWithdrawalRequestMapper">
+
+    <select id="findByMemberIdAndKey" resultType="map">
+        SELECT *
+        FROM wallet_withdrawal_request
+        WHERE member_id = #{memberId}
+          AND idempotency_key = #{idempotencyKey}
+    </select>
+
+    <insert id="insertPending" parameterType="map" useGeneratedKeys="true"
+            keyProperty="withdrawalRequestId" keyColumn="withdrawal_request_id">
+        INSERT INTO wallet_withdrawal_request
+            (member_id, idempotency_key, request_hash, status, account_id)
+        VALUES
+            (#{memberId}, #{idempotencyKey}, #{requestHash}, 'PENDING', #{accountId})
+    </insert>
+
+    <update id="complete" parameterType="map">
+        UPDATE wallet_withdrawal_request
+        SET status = 'COMPLETED',
+            transaction_id = #{transactionId},
+            wallet_balance_after = #{walletBalance},
+            bank_name = #{bankName},
+            account_number_masked = #{accountNumberMasked},
+            withdrawn_at = #{withdrawnAt},
+            updated_at = NOW()
+        WHERE withdrawal_request_id = #{withdrawalRequestId}
+          AND status = 'PENDING'
+    </update>
+
+</mapper>

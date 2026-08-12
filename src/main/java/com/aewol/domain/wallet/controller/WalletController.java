@@ -48,8 +48,10 @@ public class WalletController {
     @PostMapping("/withdraw")
     public ResponseEntity<ApiResponse<WalletWithdrawResponse>> withdraw(
             @AuthenticationPrincipal String memberId,
+            @RequestHeader("Idempotency-Key") String idempotencyKey,
             @Valid @RequestBody WalletWithdrawRequest request) {
-        return ResponseEntity.ok(ApiResponse.success(walletWithdrawalService.withdraw(memberId, request)));
+        return ResponseEntity.ok(ApiResponse.success(
+                walletWithdrawalService.withdraw(memberId, idempotencyKey, request)));
     }
 
     @Operation(summary = "Toss 충전 주문 생성",

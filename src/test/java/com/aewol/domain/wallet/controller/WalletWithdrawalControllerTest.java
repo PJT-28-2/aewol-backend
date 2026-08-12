@@ -62,7 +62,7 @@ class WalletWithdrawalControllerTest {
 
     @Test
     void should_returnWithdrawalResult_when_requestIsValid() throws Exception {
-        when(walletWithdrawalService.withdraw(eq("member-1"), any())).thenReturn(
+        when(walletWithdrawalService.withdraw(eq("member-1"), eq("withdraw-key-0001"), any())).thenReturn(
                 WalletWithdrawResponse.builder()
                         .transactionId("2003")
                         .walletBalance(new BigDecimal("382600"))
@@ -73,6 +73,7 @@ class WalletWithdrawalControllerTest {
                         .build());
 
         MvcResult mvcResult = mockMvc.perform(post("/api/wallet/withdraw")
+                        .header("Idempotency-Key", "withdraw-key-0001")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"accountId\":\"12\",\"amount\":100000,"
                                 + "\"memo\":\"내 계좌로 출금\",\"password\":\"482913\"}"))
@@ -84,12 +85,13 @@ class WalletWithdrawalControllerTest {
         assertEquals(382600, result.get("walletBalance").asInt());
         assertEquals("********4444", result.get("accountNumberMasked").asText());
 
-        verify(walletWithdrawalService).withdraw(eq("member-1"), any());
+        verify(walletWithdrawalService).withdraw(eq("member-1"), eq("withdraw-key-0001"), any());
     }
 
     @Test
     void should_returnBadRequest_when_amountHasFraction() throws Exception {
         mockMvc.perform(post("/api/wallet/withdraw")
+                        .header("Idempotency-Key", "withdraw-key-0001")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"accountId\":\"12\",\"amount\":1000.50,"
                                 + "\"password\":\"482913\"}"))
@@ -101,11 +103,27 @@ class WalletWithdrawalControllerTest {
     @Test
     void should_returnBadRequest_when_passwordIsNotSixDigits() throws Exception {
         mockMvc.perform(post("/api/wallet/withdraw")
+                        .header("Idempotency-Key", "withdraw-key-0001")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"accountId\":\"12\",\"amount\":1000,"
                                 + "\"password\":\"12345a\"}"))
                 .andExpect(status().isBadRequest());
 
+        verifyNoInteractions(walletWithdrawalService);
+    }
+
+    @Test
+    void should_returnBadRequest_when_idempotencyKeyHeaderIsMissing() throws Exception {
+        MvcResult mvcResult = mockMvc.perform(post("/api/wallet/withdraw")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"accountId\":\"12\",\"amount\":1000,"
+                                + "\"password\":\"482913\"}"))
+                .andExpect(status().isBadRequest())
+                .andReturn();
+
+        JsonNode response = objectMapper.readTree(
+                mvcResult.getResponse().getContentAsString(StandardCharsets.UTF_8));
+        assertEquals("Idempotency-Key 헤더가 필요해요", response.get("message").asText());
         verifyNoInteractions(walletWithdrawalService);
     }
 }

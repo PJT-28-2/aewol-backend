@@ -7,12 +7,18 @@ import com.aewol.domain.transaction.mapper.TransactionMapper;
 import com.aewol.domain.wallet.dto.WalletWithdrawRequest;
 import com.aewol.domain.wallet.dto.WalletWithdrawResponse;
 import com.aewol.domain.wallet.mapper.WalletMapper;
+import com.aewol.domain.wallet.mapper.WalletWithdrawalRequestMapper;
 import com.aewol.external.bank.BankWithdrawalGateway;
 import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.sql.Timestamp;
 import java.time.LocalDateTime;
 import java.util.HashMap;
 import java.util.Map;
 import lombok.RequiredArgsConstructor;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -24,14 +30,45 @@ public class WalletWithdrawalService {
     private final AccountMapper accountMapper;
     private final WalletMapper walletMapper;
     private final TransactionMapper transactionMapper;
+    private final WalletWithdrawalRequestMapper withdrawalRequestMapper;
     private final SimplePasswordVerificationService simplePasswordVerificationService;
     private final BankWithdrawalGateway bankWithdrawalGateway;
 
     @Transactional
-    public WalletWithdrawResponse withdraw(String memberId, WalletWithdrawRequest request) {
+    public WalletWithdrawResponse withdraw(String memberId, String idempotencyKey, WalletWithdrawRequest request) {
+        validateIdempotencyKey(idempotencyKey);
         validateAmount(request.getAmount());
+        String requestHash = createRequestHash(request);
+
+        Map<String, Object> existingRequest = withdrawalRequestMapper
+                .findByMemberIdAndKey(memberId, idempotencyKey);
+        if (existingRequest != null) {
+            return reuseExistingResult(existingRequest, requestHash);
+        }
+
         Map<String, Object> account = accountMapper.findByAccountIdForUpdate(request.getAccountId());
         validateWithdrawAccount(memberId, account);
+
+        Map<String, Object> withdrawalRequest = new HashMap<>();
+        withdrawalRequest.put("memberId", memberId);
+        withdrawalRequest.put("idempotencyKey", idempotencyKey);
+        withdrawalRequest.put("requestHash", requestHash);
+        withdrawalRequest.put("accountId", request.getAccountId());
+        try {
+            withdrawalRequestMapper.insertPending(withdrawalRequest);
+        } catch (DuplicateKeyException exception) {
+            // 최초 조회와 INSERT 사이에 같은 키의 동시 요청이 완료된 경우다. UNIQUE 제약이
+            // 두 요청 중 하나만 PENDING 행을 만들게 하고, 나머지는 최초 결과를 재사용한다.
+            Map<String, Object> concurrentRequest = withdrawalRequestMapper
+                    .findByMemberIdAndKey(memberId, idempotencyKey);
+            if (concurrentRequest == null) {
+                throw BusinessException.conflict("동일한 출금 요청이 처리 중입니다.");
+            }
+            return reuseExistingResult(concurrentRequest, requestHash);
+        }
+        if (withdrawalRequest.get("withdrawalRequestId") == null) {
+            throw new BusinessException(HttpStatus.INTERNAL_SERVER_ERROR, "출금 요청 기록에 실패했습니다.");
+        }
 
         if (!simplePasswordVerificationService.verify(memberId, request.getPassword())) {
             throw new BusinessException("간편 비밀번호가 일치하지 않습니다.");
@@ -74,7 +111,7 @@ public class WalletWithdrawalService {
             throw BusinessException.notFound("지갑을 찾을 수 없습니다.");
         }
 
-        return WalletWithdrawResponse.builder()
+        WalletWithdrawResponse response = WalletWithdrawResponse.builder()
                 .transactionId(String.valueOf(transaction.get("txnId")))
                 .walletBalance((BigDecimal) updatedWallet.get("balance"))
                 .accountId(String.valueOf(account.get("account_id")))
@@ -82,6 +119,72 @@ public class WalletWithdrawalService {
                 .accountNumberMasked(maskAccountNumber(accountNumber))
                 .withdrawnAt(withdrawnAt)
                 .build();
+
+        Map<String, Object> completedRequest = new HashMap<>();
+        completedRequest.put("withdrawalRequestId", withdrawalRequest.get("withdrawalRequestId"));
+        completedRequest.put("transactionId", response.getTransactionId());
+        completedRequest.put("walletBalance", response.getWalletBalance());
+        completedRequest.put("bankName", response.getBankName());
+        completedRequest.put("accountNumberMasked", response.getAccountNumberMasked());
+        completedRequest.put("withdrawnAt", response.getWithdrawnAt());
+        if (withdrawalRequestMapper.complete(completedRequest) != 1) {
+            throw new BusinessException(HttpStatus.INTERNAL_SERVER_ERROR, "출금 요청 완료 기록에 실패했습니다.");
+        }
+
+        return response;
+    }
+
+    private WalletWithdrawResponse reuseExistingResult(Map<String, Object> existingRequest, String requestHash) {
+        if (!requestHash.equals(existingRequest.get("request_hash"))) {
+            throw BusinessException.conflict("동일한 멱등키를 다른 출금 요청에 사용할 수 없습니다.");
+        }
+        if (!"COMPLETED".equals(existingRequest.get("status"))) {
+            throw BusinessException.conflict("동일한 출금 요청이 처리 중입니다.");
+        }
+        return WalletWithdrawResponse.builder()
+                .transactionId(String.valueOf(existingRequest.get("transaction_id")))
+                .walletBalance((BigDecimal) existingRequest.get("wallet_balance_after"))
+                .accountId(String.valueOf(existingRequest.get("account_id")))
+                .bankName(String.valueOf(existingRequest.get("bank_name")))
+                .accountNumberMasked(String.valueOf(existingRequest.get("account_number_masked")))
+                .withdrawnAt(toLocalDateTime(existingRequest.get("withdrawn_at")))
+                .build();
+    }
+
+    private void validateIdempotencyKey(String idempotencyKey) {
+        if (idempotencyKey == null
+                || !idempotencyKey.matches("[A-Za-z0-9][A-Za-z0-9._:-]{7,63}")) {
+            throw new BusinessException("Idempotency-Key는 8~64자의 영문, 숫자 또는 ._:- 형식이어야 합니다.");
+        }
+    }
+
+    private String createRequestHash(WalletWithdrawRequest request) {
+        String accountId = request.getAccountId();
+        String amount = request.getAmount().stripTrailingZeros().toPlainString();
+        String memo = normalizeMemo(request.getMemo());
+        String canonicalRequest = accountId.length() + ":" + accountId
+                + "|" + amount + "|" + memo.length() + ":" + memo;
+        try {
+            byte[] hash = MessageDigest.getInstance("SHA-256")
+                    .digest(canonicalRequest.getBytes(StandardCharsets.UTF_8));
+            StringBuilder result = new StringBuilder(hash.length * 2);
+            for (byte value : hash) {
+                result.append(String.format("%02x", value & 0xff));
+            }
+            return result.toString();
+        } catch (NoSuchAlgorithmException exception) {
+            throw new IllegalStateException("SHA-256 미지원 환경", exception);
+        }
+    }
+
+    private LocalDateTime toLocalDateTime(Object value) {
+        if (value instanceof LocalDateTime) {
+            return (LocalDateTime) value;
+        }
+        if (value instanceof Timestamp) {
+            return ((Timestamp) value).toLocalDateTime();
+        }
+        throw new IllegalStateException("출금 완료 시각 형식이 올바르지 않습니다.");
     }
 
     private void validateAmount(BigDecimal amount) {
