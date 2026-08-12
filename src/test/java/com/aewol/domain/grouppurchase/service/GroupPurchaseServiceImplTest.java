@@ -281,6 +281,22 @@ class GroupPurchaseServiceImplTest {
     }
 
     @Test
+    @DisplayName("목표 수량이 0 이하인 비정상 데이터는 마감 전에 confirmed로 오판하지 않는다")
+    void should_returnWaiting_when_targetQuantityIsZero_onGetStatus() {
+        GroupPurchaseServiceImpl service = service();
+        Map<String, Object> gpRow = savedRow();
+        gpRow.put("deadline", LocalDateTime.now().plusDays(5));
+        gpRow.put("target_quantity", 0);
+        gpRow.put("current_quantity", 0);
+        when(groupPurchaseMapper.findById("1")).thenReturn(gpRow);
+        when(groupPurchaseMapper.findParticipant("1", "member-1")).thenReturn(null);
+
+        GroupPurchaseStatusResponse result = service.getStatus("member-1", "1");
+
+        assertEquals("waiting", result.getStatus());
+    }
+
+    @Test
     @DisplayName("작성자가 취소한 공동구매는 마감 전이어도 cancelled로 응답하고, 작성자 취소 문구를 안내한다")
     void should_returnCancelled_when_groupPurchaseIsCancelled_onGetStatus() {
         GroupPurchaseServiceImpl service = service();
@@ -394,6 +410,19 @@ class GroupPurchaseServiceImplTest {
         List<GroupPurchaseMyItemResponse> result = service.getMyList("member-1", null);
 
         assertEquals("COMPLETED", result.get(0).getStatus());
+    }
+
+    @Test
+    @DisplayName("목표 수량이 0 이하인 비정상 데이터는 마감 전에 COMPLETED로 오판하지 않는다")
+    void should_returnOpen_when_targetQuantityIsZero_onGetMyList() {
+        GroupPurchaseServiceImpl service = service();
+        LocalDateTime futureDeadline = LocalDateTime.now().plusDays(5);
+        when(groupPurchaseMapper.findMyGroupPurchases("member-1", null))
+                .thenReturn(List.of(listRow(1L, "OPEN", futureDeadline, 30000, 25000, 0, 0)));
+
+        List<GroupPurchaseMyItemResponse> result = service.getMyList("member-1", null);
+
+        assertEquals("OPEN", result.get(0).getStatus());
     }
 
     @Test
@@ -611,6 +640,19 @@ class GroupPurchaseServiceImplTest {
         GroupPurchaseListResponse result = service.list(null, null, null, null, 0, 10);
 
         assertEquals("마감(성공)", result.getItems().get(0).getStatus());
+    }
+
+    @Test
+    @DisplayName("목표 수량이 0 이하인 비정상 데이터는 마감 전에 마감(성공)으로 오판하지 않는다")
+    void should_returnInProgress_when_targetQuantityIsZero_onList() {
+        GroupPurchaseServiceImpl service = service();
+        LocalDateTime futureDeadline = LocalDateTime.now().plusDays(3);
+        when(groupPurchaseMapper.findList(isNull(), isNull(), isNull(), eq(11), eq(0)))
+                .thenReturn(List.of(listRow(1L, "OPEN", futureDeadline, 30000, 25000, 0, 0)));
+
+        GroupPurchaseListResponse result = service.list(null, null, null, null, 0, 10);
+
+        assertEquals("진행중", result.getItems().get(0).getStatus());
     }
 
     @Test

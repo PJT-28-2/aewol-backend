@@ -112,6 +112,16 @@ class GroupPurchaseMapperTest {
     }
 
     @Test
+    @DisplayName("목표 수량이 0 이하인 비정상 데이터는 마감 전이면 OPEN 필터에만 잡히고 COMPLETED 필터에는 잡히지 않는다")
+    void should_matchOpenFilterOnly_when_targetQuantityIsZero() {
+        long gpId = insertGroupPurchase(99L, "OPEN", 0, 0, LocalDateTime.now().plusDays(5));
+        insertParticipant(gpId, 1L);
+
+        assertEquals(1, findMyGroupPurchases("1", "OPEN").size());
+        assertEquals(0, findMyGroupPurchases("1", "COMPLETED").size());
+    }
+
+    @Test
     @DisplayName("마감이 지났고 목표 미달이면 FAILED 필터에만 잡힌다")
     void should_matchFailedFilterOnly_when_deadlinePassedAndTargetNotReached() {
         long gpId = insertGroupPurchase(99L, "OPEN", 3, 10, LocalDateTime.now().minusDays(1));
@@ -261,6 +271,15 @@ class GroupPurchaseMapperTest {
         insertParticipant(gpId, 1L, "PAID");
 
         assertEquals(0, findExpiredUnfulfilledPaidParticipants().size());
+    }
+
+    @Test
+    @DisplayName("목표 수량이 0 이하인 비정상 데이터는 마감이 지났으면 자동환불 후보에 포함된다 — 절대 채워질 수 없으므로 미달로 취급한다")
+    void should_includeCandidate_when_targetQuantityIsZeroAndDeadlinePassed() {
+        long gpId = insertGroupPurchase(99L, "OPEN", 0, 0, LocalDateTime.now().minusDays(1));
+        insertParticipant(gpId, 1L, "PAID");
+
+        assertEquals(1, findExpiredUnfulfilledPaidParticipants().size());
     }
 
     @Test
