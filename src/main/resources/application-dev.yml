@@ -44,6 +44,8 @@ external:
     client-id: ${KAKAO_CLIENT_ID:}
     client-secret: ${KAKAO_CLIENT_SECRET:}
     redirect-uri: ${KAKAO_REDIRECT_URI:http://localhost:5173/callback/kakao}
+  ocr-service:
+    url: ${OCR_SERVICE_URL:http://localhost:8000}
   toss:
     client-key: ${TOSS_CLIENT_KEY:}
     secret-key: ${TOSS_SECRET_KEY:}

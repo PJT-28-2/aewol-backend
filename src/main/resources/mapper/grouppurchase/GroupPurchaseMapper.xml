@@ -35,13 +35,15 @@
         SELECT * FROM group_purchase WHERE gp_id = #{gpId}
     </select>
 
+    <!-- delivery_date는 등록 시 deadline + delivery_estimate_days(잠정치)로 채워지고, 목표 수량 달성
+         시점에 updateDeliveryDate로 confirmedDate + delivery_estimate_days로 갱신된다(V22). -->
     <insert id="insert" parameterType="map" useGeneratedKeys="true" keyProperty="gpId" keyColumn="gp_id">
         INSERT INTO group_purchase
             (member_id, product_name, category, image, unit_price, group_price,
-             delivery_method, delivery_fee, delivery_date, description, target_quantity, deadline)
+             delivery_method, delivery_fee, delivery_date, delivery_estimate_days, description, target_quantity, deadline)
         VALUES
             (#{memberId}, #{productName}, #{category}, #{image}, #{unitPrice}, #{groupPrice},
-             #{deliveryMethod}, #{deliveryFee}, #{deliveryDate}, #{description}, #{targetQuantity}, #{deadline})
+             #{deliveryMethod}, #{deliveryFee}, #{deliveryDate}, #{deliveryEstimateDays}, #{description}, #{targetQuantity}, #{deadline})
     </insert>
 
     <!-- 목표 수량 초과·마감 여부·취소 여부를 조건절에 포함한 조건부 원자 UPDATE로 수량을 예약한다.
@@ -56,6 +58,15 @@
           AND current_quantity + #{quantity} &lt;= target_quantity
           AND deadline &gt;= NOW()
           AND status != 'CANCELLED'
+    </update>
+
+    <!-- 목표 수량을 처음 달성하는 순간(join()에서 감지) delivery_date를 confirmedDate + delivery_estimate_days로
+         갱신한다. updateQuantity의 WHERE 절이 이미 "목표 도달은 그 공동구매의 마지막 성공 join() 호출 단
+         한 번뿐"임을 보장하므로, 같은 트랜잭션 안에서 별도 가드 없이 호출해도 정확히 한 번만 반영된다. -->
+    <update id="updateDeliveryDate">
+        UPDATE group_purchase
+        SET delivery_date = #{deliveryDate}
+        WHERE gp_id = #{gpId}
     </update>
 
     <!-- join의 updateQuantity와 대칭. 목표 수량 달성(confirmed) 이후나 마감 후에는 참여 취소를 허용하지 않으므로
