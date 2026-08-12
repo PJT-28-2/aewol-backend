@@ -51,6 +51,12 @@ external:
     secret-key: ${TOSS_SECRET_KEY:}
   gemini:
     api-key: ${GEMINI_API_KEY:}
+  openai:
+    api-key: ${OPENAI_API_KEY:}
+    # 홈 인사이트 카드 문구 생성용. 2문장짜리 짧은 작업이라 추론 모델(gpt-5-*)은
+    # 품질 차이 없이 토큰만 10배 든다(실측 152 vs 1,514).
+    chat-model: ${OPENAI_CHAT_MODEL:gpt-4o-mini}
+    max-tokens: ${OPENAI_MAX_TOKENS:200}
   codef:
     client-id: ${CODEF_CLIENT_ID:}
     client-secret: ${CODEF_CLIENT_SECRET:}
