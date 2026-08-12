@@ -40,8 +40,8 @@ public class AccountServiceImpl implements AccountService {
     // 만료 처리하는 상황이 생길 수 있다.
     private static final long DEPOSIT_AUTH_TIMEOUT_SECONDS = 180;
 
-    // 입금자명 후보 공간을 완성형 한글 음절 4개 조합(11172^4가지)으로 넓혀도(CodeRabbit
-    // 지적), confirm API에 재시도 횟수 제한이 없으면 같은 transactionId로 계속 찍어보는
+    // 입금자명 후보 공간을 단어 조합(ADJECTIVES x NOUNS, 8,000가지 — CodefClient 참고)으로
+    // 넓혀도, confirm API에 재시도 횟수 제한이 없으면 같은 transactionId로 계속 찍어보는
     // 무차별 대입이 가능하다. 5번 틀리면 그 이후엔 정답을 넣어도 통과시키지 않는다
     // (2026-08-07).
     private static final int MAX_VERIFICATION_ATTEMPTS = 5;
