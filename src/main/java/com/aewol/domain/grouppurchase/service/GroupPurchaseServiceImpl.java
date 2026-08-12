@@ -303,7 +303,7 @@ public class GroupPurchaseServiceImpl implements GroupPurchaseService {
     }
 
     /**
-     * 지갑 잔액을 환급하고 환불 거래내역을 생성한 뒤 갱신된 지갑 잔액을 반환한다. REFUND 타입은 없으므로 WalletServiceImpl#deposit과 동일하게 DEPOSIT으로 기록한다.
+     * 지갑 잔액을 환급하고 REFUND 타입 환불 거래내역을 생성한 뒤 갱신된 지갑 잔액을 반환한다.
      * (마감 후 목표 미달 자동 환불은 GroupPurchaseRefundExecutor가 건별 독립 트랜잭션으로 별도 처리한다 — 이 메서드는 leave() 전용.)
      */
     private BigDecimal refundWallet(String memberId, String gpId, Map<String, Object> gp, BigDecimal amount) {
@@ -319,7 +319,7 @@ public class GroupPurchaseServiceImpl implements GroupPurchaseService {
         Map<String, Object> txn = new HashMap<>();
         txn.put("walletId", walletId);
         txn.put("petId", null);
-        txn.put("txnType", "DEPOSIT");
+        txn.put("txnType", "REFUND");
         txn.put("price", amount);
         txn.put("category", toTxnCategory((String) gp.get("category")));
         txn.put("merchantName", gp.get("product_name"));

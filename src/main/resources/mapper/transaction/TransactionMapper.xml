@@ -7,11 +7,14 @@
         SELECT * FROM `transaction` WHERE txn_id = #{txnId}
     </select>
 
+    <!-- CHARGE 필터는 REFUND를 DEPOSIT과 함께 포함한다 — REFUND 타입 신설 전까지 환불이 DEPOSIT으로
+         기록되어 CHARGE 필터에 잡히던 기존 노출 동작을 그대로 유지하기 위함이다(정책적으로 REFUND를
+         별도 필터로 분리하기로 하면 이 부분만 바꾸면 된다). -->
     <select id="findByWalletId" resultType="map">
         SELECT t.* FROM `transaction` t
         WHERE t.wallet_id = #{walletId}
         <if test="txnFilter == 'CHARGE'">
-            AND t.txn_type = 'DEPOSIT'
+            AND t.txn_type IN ('DEPOSIT', 'REFUND')
         </if>
         <if test="txnFilter == 'WITHDRAW'">
             AND t.txn_type IN ('PAYMENT', 'WITHDRAW', 'TRANSFER')
@@ -30,7 +33,7 @@
         SELECT t.* FROM `transaction` t
         WHERE t.wallet_id = #{walletId}
         <if test="txnFilter == 'CHARGE'">
-            AND t.txn_type = 'DEPOSIT'
+            AND t.txn_type IN ('DEPOSIT', 'REFUND')
         </if>
         <if test="txnFilter == 'WITHDRAW'">
             AND t.txn_type IN ('PAYMENT', 'WITHDRAW', 'TRANSFER')

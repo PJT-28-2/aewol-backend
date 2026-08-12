@@ -961,7 +961,7 @@ class GroupPurchaseServiceImplTest {
         verify(walletMapper).addBalance("wallet-1", new BigDecimal("50000"));
         ArgumentCaptor<Map<String, Object>> txnCaptor = ArgumentCaptor.forClass(Map.class);
         verify(transactionMapper).insert(txnCaptor.capture());
-        assertEquals("DEPOSIT", txnCaptor.getValue().get("txnType"));
+        assertEquals("REFUND", txnCaptor.getValue().get("txnType"));
         assertEquals(new BigDecimal("50000"), txnCaptor.getValue().get("price"));
     }
 

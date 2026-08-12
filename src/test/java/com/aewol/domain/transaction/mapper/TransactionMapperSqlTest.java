@@ -21,4 +21,28 @@ class TransactionMapperSqlTest {
         assertTrue(insert.contains("recurring_id"));
         assertTrue(insert.contains("#{recurringId}"));
     }
+
+    @Test
+    void should_includeRefundInChargeFilter_forFindByWalletId() throws Exception {
+        String sql = Files.readString(
+                Path.of("src/main/resources/mapper/transaction/TransactionMapper.xml"),
+                StandardCharsets.UTF_8);
+        int start = sql.indexOf("<select id=\"findByWalletId\"");
+        int end = sql.indexOf("</select>", start);
+        String select = sql.substring(start, end);
+
+        assertTrue(select.contains("'DEPOSIT', 'REFUND'"));
+    }
+
+    @Test
+    void should_includeRefundInChargeFilter_forFindRecentByWalletId() throws Exception {
+        String sql = Files.readString(
+                Path.of("src/main/resources/mapper/transaction/TransactionMapper.xml"),
+                StandardCharsets.UTF_8);
+        int start = sql.indexOf("<select id=\"findRecentByWalletId\"");
+        int end = sql.indexOf("</select>", start);
+        String select = sql.substring(start, end);
+
+        assertTrue(select.contains("'DEPOSIT', 'REFUND'"));
+    }
 }
