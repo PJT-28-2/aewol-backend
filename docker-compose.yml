@@ -35,6 +35,13 @@ services:
     volumes:
       - redis-data:/data
 
+  ocr-service:
+    build: ./ocr-service
+    container_name: aewol-ocr-service
+    restart: unless-stopped
+    ports:
+      - "${OCR_SERVICE_PORT:-8000}:8000"
+
 volumes:
   mysql-data:
   redis-data:

@@ -81,6 +81,16 @@ public class RestTemplateConfig {
         return new RestTemplate(factory);
     }
 
+    // ocr-service 전용 RestTemplate — RapidOCR(CPU) 실측 응답 시간은 영수증당
+    // 1.4~3.6초지만, 배포 환경 사양이 로컬보다 낮을 수 있어 여유를 크게 둔다.
+    @Bean(name = "ocrServiceRestTemplate")
+    public RestTemplate ocrServiceRestTemplate() {
+        SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
+        factory.setConnectTimeout(5000);
+        factory.setReadTimeout(120000);
+        return new RestTemplate(factory);
+    }
+
     // 이미지 생성 전용 — OCR과 달리 응답까지 10~15초가 걸린다(실측 전신 10.3초 / 프로필 12.2초).
     // geminiRestTemplate의 20초로는 여유가 없어 정상 응답도 타임아웃으로 끊길 수 있다.
     // 이 호출은 반드시 @Transactional 밖에서 이뤄져야 한다. 느린 외부 호출을 트랜잭션 안에

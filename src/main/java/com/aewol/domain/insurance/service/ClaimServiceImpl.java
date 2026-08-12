@@ -4,7 +4,7 @@ import com.aewol.common.exception.BusinessException;
 import com.aewol.common.storage.FileStorage;
 import com.aewol.domain.insurance.dto.ClaimResponse;
 import com.aewol.domain.insurance.mapper.InsuranceMapper;
-import com.aewol.external.gemini.GeminiVisionClient;
+import com.aewol.external.paddleocr.PaddleOcrClient;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -26,7 +26,7 @@ import java.util.stream.Collectors;
 public class ClaimServiceImpl implements ClaimService {
 
     private final InsuranceMapper insuranceMapper;
-    private final GeminiVisionClient geminiVisionClient;
+    private final PaddleOcrClient paddleOcrClient;
     private final FileStorage fileStorage;
 
     @Value("${file.upload-dir:./uploads}")
@@ -43,8 +43,8 @@ public class ClaimServiceImpl implements ClaimService {
 
             String imageUrl = "/uploads/receipts/" + filename;
 
-            // Gemini Vision OCR (트랜잭션 밖에서 호출 - 응답 지연이 DB 커넥션을 점유하지 않도록)
-            String extractedJson = geminiVisionClient.extractReceiptData(
+            // PaddleOCR (트랜잭션 밖에서 호출 - 응답 지연이 DB 커넥션을 점유하지 않도록)
+            String extractedJson = paddleOcrClient.extractReceiptData(
                     receipt.getBytes(), receipt.getContentType());
 
             Map<String, Object> claim = new HashMap<>();
