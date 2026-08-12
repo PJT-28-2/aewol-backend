@@ -47,7 +47,10 @@ public class SecurityConfig {
                         // URL에 실린 서명과 만료 시각으로 접근을 판단한다(FileController).
                         .requestMatchers(HttpMethod.GET, "/api/files/**").permitAll()
                         .requestMatchers("/ws/**").permitAll()
-                        .requestMatchers(HttpMethod.GET, "/api/support/**").permitAll()
+                        // /api/support는 지원정책(SupportController)과 고객센터(FAQ·1:1 문의)가
+                        // prefix를 나눠 쓴다. 공개해도 되는 것은 FAQ뿐이라 그것만 연다.
+                        // 지원정책은 회원 반려동물 기준 매칭이고 문의는 개인 기록이라 인증이 필요하다.
+                        .requestMatchers(HttpMethod.GET, "/api/support/faqs", "/api/support/faqs/**").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/banks").permitAll()
                         // User only (관리자는 공동구매에 참여/구매할 수 없음 — 등록·관리만 담당)
                         .requestMatchers(HttpMethod.POST, "/api/group-purchase/*/join").hasRole("USER")
