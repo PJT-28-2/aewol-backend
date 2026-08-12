@@ -601,6 +601,34 @@ class GroupPurchaseServiceImplTest {
     }
 
     @Test
+    @DisplayName("마감 전이어도 목표 수량을 채웠으면 마이페이지/상세와 동일하게 마감(성공)으로 계산한다")
+    void should_returnClosedSuccess_when_targetReachedBeforeDeadline() {
+        GroupPurchaseServiceImpl service = service();
+        LocalDateTime futureDeadline = LocalDateTime.now().plusDays(3);
+        when(groupPurchaseMapper.findList(isNull(), isNull(), isNull(), eq(11), eq(0)))
+                .thenReturn(List.of(listRow(1L, "OPEN", futureDeadline, 30000, 25000, 10, 10)));
+
+        GroupPurchaseListResponse result = service.list(null, null, null, null, 0, 10);
+
+        assertEquals("마감(성공)", result.getItems().get(0).getStatus());
+    }
+
+    @Test
+    @DisplayName("목록 응답에 unitPrice/groupPrice 원본 값이 그대로 내려간다")
+    void should_exposeUnitPriceAndGroupPrice_onListItem() {
+        GroupPurchaseServiceImpl service = service();
+        LocalDateTime deadline = LocalDateTime.now().plusDays(5);
+        when(groupPurchaseMapper.findList(isNull(), isNull(), isNull(), eq(11), eq(0)))
+                .thenReturn(List.of(listRow(1L, "OPEN", deadline, 30000, 25000)));
+
+        GroupPurchaseListResponse result = service.list(null, null, null, null, 0, 10);
+
+        GroupPurchaseListItemResponse item = result.getItems().get(0);
+        assertEquals(0, new BigDecimal("30000").compareTo(item.getUnitPrice()));
+        assertEquals(0, new BigDecimal("25000").compareTo(item.getGroupPrice()));
+    }
+
+    @Test
     @DisplayName("참여 수량이 0 이하이면 계산 전에 예외가 발생한다")
     void should_throwException_when_quantityIsNotPositive() {
         GroupPurchaseServiceImpl service = service();
