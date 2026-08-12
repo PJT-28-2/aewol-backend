@@ -15,6 +15,14 @@ services:
     command:
       - --character-set-server=utf8mb4
       - --collation-server=utf8mb4_unicode_ci
+      # MySQL은 접속 핸드셰이크에서 클라이언트가 요청한 문자셋을 그대로 받아준다.
+      # 그래서 문자셋을 지정하지 않은 DB 클라이언트로 붙으면 세션이 latin1로 떨어져
+      # 한글이 깨져 보이고, 그 상태로 INSERT하면 '?'로 저장되어 되돌릴 수 없다.
+      #
+      # 8.0에서 쓰던 --skip-character-set-client-handshake는 8.4에서 제거됐다.
+      # 대신 접속 직후 실행되는 init_connect로 세션 문자셋을 다시 덮어쓴다.
+      # (SUPER/CONNECTION_ADMIN 권한 계정에는 적용되지 않으므로 root 접속은 예외다.)
+      - --init-connect=SET NAMES utf8mb4 COLLATE utf8mb4_unicode_ci
     volumes:
       - mysql-data:/var/lib/mysql
 
