@@ -22,7 +22,7 @@ class LocalFileStorageTest {
 
     @BeforeEach
     void setUp() {
-        signature = new FileSignature("test-secret-key-for-file-signature-256bit", 3600);
+        signature = new FileSignature("test-secret-key-for-file-signature-256bit", 3600, 600);
         storage = new LocalFileStorage(root.toString(), signature);
     }
 
