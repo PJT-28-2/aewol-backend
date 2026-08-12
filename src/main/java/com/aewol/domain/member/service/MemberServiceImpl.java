@@ -192,6 +192,21 @@ public class MemberServiceImpl implements MemberService {
     @Override
     @Transactional
     public void setSimplePassword(String memberId, SimplePasswordRequest request) {
+        Map<String, Object> member = findMember(memberId);
+        String existingSimplePassword = (String) member.get("simple_password");
+
+        // 이미 PIN이 설정된 회원의 재설정은 기존 PIN 확인을 거쳐야 한다 — 그렇지 않으면
+        // Access Token만 탈취해도 PIN을 새로 설정해 송금 인증을 우회할 수 있다
+        // (2026-08-12, 리뷰 반영). 최초 설정(기존 PIN이 없는 회원)은 계좌 연동 직후
+        // 흐름이라 별도 확인 없이 허용한다.
+        if (existingSimplePassword != null) {
+            String currentPassword = request.getCurrentPassword();
+            if (!StringUtils.hasText(currentPassword)
+                    || !passwordEncoder.matches(currentPassword, existingSimplePassword)) {
+                throw new BusinessException(SIMPLE_PASSWORD_MISMATCH_MESSAGE);
+            }
+        }
+
         String password = request.getPassword();
         // 프론트(AccountPasswordSetupView.vue)와 동일하게 원인별로 다른 안내 문구를 준다.
         // 연속 숫자 규칙을 먼저 검사해야 "123456"처럼 두 조건에 다 걸리는 값도 더 구체적인
@@ -203,15 +218,13 @@ public class MemberServiceImpl implements MemberService {
             throw new BusinessException(WEAK_PIN_MESSAGE);
         }
 
-        int updated = memberMapper.updateSimplePassword(memberId, passwordEncoder.encode(password));
-        if (updated == 0) {
-            throw BusinessException.notFound("회원을 찾을 수 없습니다.");
-        }
+        memberMapper.updateSimplePassword(memberId, passwordEncoder.encode(password));
     }
 
     private static final int MIN_SEQUENTIAL_RUN = 3;
     private static final String WEAK_PIN_MESSAGE = "유추하기 쉬운 비밀번호예요. 다른 숫자를 입력해주세요.";
     private static final String SEQUENTIAL_PIN_MESSAGE = "연속된 숫자예요. 다른 비밀번호를 입력해주세요.";
+    private static final String SIMPLE_PASSWORD_MISMATCH_MESSAGE = "기존 간편 비밀번호가 일치하지 않습니다.";
 
     // 연속 숫자(hasSequentialRun)를 제외한 나머지 취약 패턴 — 전부 같은 숫자 / 두 자리·세 자리
     // 반복 / 두 자리씩 짝지은 오름차순·내림차순.
