@@ -2,6 +2,7 @@ package com.aewol.domain.auth.service;
 
 import com.aewol.common.exception.BusinessException;
 import com.aewol.common.util.JwtUtil;
+import com.aewol.common.util.RedisRateLimiter;
 import com.aewol.domain.auth.dto.SignupEmailCodeRequest;
 import com.aewol.domain.auth.dto.SignupEmailCodeResponse;
 import com.aewol.domain.auth.dto.SignupEmailVerificationRequest;
@@ -54,6 +55,7 @@ class AuthServiceImplEmailVerificationTest {
     @Mock JwtUtil jwtUtil;
     @Mock PasswordEncoder passwordEncoder;
     @Mock RedisTemplate<String, String> redisTemplate;
+    @Mock RedisRateLimiter redisRateLimiter;
     @Mock ValueOperations<String, String> valueOperations;
     @Mock EmailService emailService;
     @Mock KakaoAuthClient kakaoAuthClient;
@@ -65,7 +67,7 @@ class AuthServiceImplEmailVerificationTest {
     void setUp() {
         authService = new AuthServiceImpl(
                 memberMapper, walletMapper, notificationSettingMapper, jwtUtil, passwordEncoder,
-                redisTemplate, emailService, kakaoAuthClient, authCredentialStore);
+                redisTemplate, redisRateLimiter, emailService, kakaoAuthClient, authCredentialStore);
     }
 
     @Test

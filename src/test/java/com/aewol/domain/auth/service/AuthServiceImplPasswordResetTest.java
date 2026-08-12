@@ -2,6 +2,7 @@ package com.aewol.domain.auth.service;
 
 import com.aewol.common.exception.BusinessException;
 import com.aewol.common.util.JwtUtil;
+import com.aewol.common.util.RedisRateLimiter;
 import com.aewol.domain.auth.dto.PasswordResetEmailRequest;
 import com.aewol.domain.auth.dto.PasswordResetRequest;
 import com.aewol.domain.auth.dto.PasswordResetVerifyRequest;
@@ -26,6 +27,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
 import org.springframework.data.redis.core.script.RedisScript;
+import org.springframework.http.HttpStatus;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.transaction.support.TransactionSynchronization;
@@ -60,6 +62,7 @@ class AuthServiceImplPasswordResetTest {
     @Mock JwtUtil jwtUtil;
     @Mock PasswordEncoder passwordEncoder;
     @Mock RedisTemplate<String, String> redisTemplate;
+    @Mock RedisRateLimiter redisRateLimiter;
     @Mock ValueOperations<String, String> valueOperations;
     @Mock EmailService emailService;
     @Mock KakaoAuthClient kakaoAuthClient;
@@ -71,7 +74,7 @@ class AuthServiceImplPasswordResetTest {
     void setUp() {
         service = new AuthServiceImpl(
                 memberMapper, walletMapper, notificationSettingMapper, jwtUtil, passwordEncoder,
-                redisTemplate, emailService, kakaoAuthClient, authCredentialStore);
+                redisTemplate, redisRateLimiter, emailService, kakaoAuthClient, authCredentialStore);
     }
 
     @AfterEach
@@ -82,28 +85,55 @@ class AuthServiceImplPasswordResetTest {
     }
 
     @Test
-    void activeLocalResetRequestStoresOtpAndSendsMail() {
+    void activeLocalResetRequestsOneThroughFiveStoreOtpAndSendMail() {
         when(memberMapper.findActiveByEmail(EMAIL)).thenReturn(member("LOCAL", true, "old-hash"));
         when(redisTemplate.opsForValue()).thenReturn(valueOperations);
+        when(redisRateLimiter.incrementWithExpiry(
+                "password:reset:request-count:" + EMAIL, 1800L))
+                .thenReturn(1L, 2L, 3L, 4L, 5L);
 
-        SignupEmailCodeResponse response = service.sendPasswordResetVerificationCode(emailRequest(EMAIL));
+        SignupEmailCodeResponse response = null;
+        for (int i = 0; i < 5; i++) {
+            response = service.sendPasswordResetVerificationCode(emailRequest(EMAIL));
+        }
 
         ArgumentCaptor<String> value = ArgumentCaptor.forClass(String.class);
-        verify(valueOperations).set(
+        verify(valueOperations, times(5)).set(
                 eq("password:reset:verify:" + EMAIL), value.capture(), eq(300L), eq(TimeUnit.SECONDS));
-        String[] parts = value.getValue().split("\\|", -1);
-        assertEquals(3, parts.length);
-        assertTrue(parts[0].matches("[0-9a-f-]{36}"));
-        assertTrue(parts[1].matches("\\d{6}"));
-        assertEquals("0", parts[2]);
-        verify(emailService).sendPasswordResetEmail(EMAIL, parts[1]);
+        for (String storedValue : value.getAllValues()) {
+            String[] parts = storedValue.split("\\|", -1);
+            assertEquals(3, parts.length);
+            assertTrue(parts[0].matches("[0-9a-f-]{36}"));
+            assertTrue(parts[1].matches("\\d{6}"));
+            assertEquals("0", parts[2]);
+            verify(emailService).sendPasswordResetEmail(EMAIL, parts[1]);
+        }
         assertEquals(300L, response.getExpiresInSeconds());
+        verify(redisRateLimiter, times(5)).incrementWithExpiry(
+                "password:reset:request-count:" + EMAIL, 1800L);
+    }
+
+    @Test
+    void sixthActiveLocalResetRequestIsRejectedBeforeMemberLookupOrSideEffects() {
+        when(redisRateLimiter.incrementWithExpiry(
+                "password:reset:request-count:" + EMAIL, 1800L)).thenReturn(6L);
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.sendPasswordResetVerificationCode(emailRequest(EMAIL)));
+
+        assertEquals(HttpStatus.TOO_MANY_REQUESTS, exception.getStatus());
+        assertEquals("비밀번호 재설정 요청이 너무 많아요. 30분 후 다시 시도해주세요",
+                exception.getMessage());
+        verify(memberMapper, never()).findActiveByEmail(anyString());
+        verify(redisTemplate, never()).opsForValue();
+        verify(emailService, never()).sendPasswordResetEmail(anyString(), anyString());
     }
 
     @Test
     void resendOverwritesOtpSoPreviousStoredValueIsReplaced() {
         when(memberMapper.findActiveByEmail(EMAIL)).thenReturn(member("LOCAL", true, "old-hash"));
         when(redisTemplate.opsForValue()).thenReturn(valueOperations);
+        when(redisRateLimiter.incrementWithExpiry(anyString(), eq(1800L))).thenReturn(1L, 2L);
 
         service.sendPasswordResetVerificationCode(emailRequest(EMAIL));
         service.sendPasswordResetVerificationCode(emailRequest(EMAIL));
@@ -116,6 +146,7 @@ class AuthServiceImplPasswordResetTest {
 
     @Test
     void unknownKakaoAndInactiveRequestsReturnSameSuccessWithoutMail() {
+        when(redisRateLimiter.incrementWithExpiry(anyString(), eq(1800L))).thenReturn(1L);
         when(memberMapper.findActiveByEmail("unknown@aewol.com")).thenReturn(null);
         when(memberMapper.findActiveByEmail("kakao@aewol.com"))
                 .thenReturn(member("KAKAO", true, null));
@@ -130,6 +161,44 @@ class AuthServiceImplPasswordResetTest {
 
         verify(emailService, never()).sendPasswordResetEmail(anyString(), anyString());
         verify(redisTemplate, never()).opsForValue();
+        verify(redisRateLimiter).incrementWithExpiry(
+                "password:reset:request-count:unknown@aewol.com", 1800L);
+        verify(redisRateLimiter).incrementWithExpiry(
+                "password:reset:request-count:kakao@aewol.com", 1800L);
+        verify(redisRateLimiter).incrementWithExpiry(
+                "password:reset:request-count:inactive@aewol.com", 1800L);
+    }
+
+    @Test
+    void allAccountTypesReceiveSameRateLimitExceptionBeforeLookup() {
+        String[] emails = {EMAIL, "unknown@aewol.com", "kakao@aewol.com", "inactive@aewol.com"};
+        when(redisRateLimiter.incrementWithExpiry(anyString(), eq(1800L))).thenReturn(6L);
+
+        for (String email : emails) {
+            BusinessException exception = assertThrows(BusinessException.class,
+                    () -> service.sendPasswordResetVerificationCode(emailRequest(email)));
+            assertEquals(HttpStatus.TOO_MANY_REQUESTS, exception.getStatus());
+            assertEquals("비밀번호 재설정 요청이 너무 많아요. 30분 후 다시 시도해주세요",
+                    exception.getMessage());
+        }
+
+        verify(memberMapper, never()).findActiveByEmail(anyString());
+        verify(redisTemplate, never()).opsForValue();
+        verify(emailService, never()).sendPasswordResetEmail(anyString(), anyString());
+    }
+
+    @Test
+    void rateLimitKeyOnlyNormalizesEmailWithTrimAndLowercase() {
+        String requestedEmail = "  Local@AeWol.COM  ";
+        when(redisRateLimiter.incrementWithExpiry(
+                "password:reset:request-count:local@aewol.com", 1800L)).thenReturn(1L);
+        when(memberMapper.findActiveByEmail(requestedEmail)).thenReturn(null);
+
+        service.sendPasswordResetVerificationCode(emailRequest(requestedEmail));
+
+        verify(memberMapper).findActiveByEmail(requestedEmail);
+        verify(redisRateLimiter).incrementWithExpiry(
+                "password:reset:request-count:local@aewol.com", 1800L);
     }
 
     @Test
