@@ -7,7 +7,10 @@ public class PasswordValidator implements ConstraintValidator<ValidPassword, Str
 
     @Override
     public boolean isValid(String value, ConstraintValidatorContext context) {
-        if (value == null || value.length() > 20) {
+        if (value == null || value.isBlank()) {
+            return true;
+        }
+        if (value.length() > 20) {
             return false;
         }
 
@@ -33,14 +36,14 @@ public class PasswordValidator implements ConstraintValidator<ValidPassword, Str
         int categoryCount = (hasLetter ? 1 : 0)
                 + (hasDigit ? 1 : 0)
                 + (hasSpecialCharacter ? 1 : 0);
-        return categoryCount == 3 && value.length() >= 8
-                || categoryCount == 2 && value.length() >= 10;
+        return (categoryCount == 3 && value.length() >= 8)
+                || (categoryCount == 2 && value.length() >= 10);
     }
 
     private boolean isAsciiPunctuation(char character) {
-        return character >= '!' && character <= '/'
-                || character >= ':' && character <= '@'
-                || character >= '[' && character <= '`'
-                || character >= '{' && character <= '~';
+        return (character >= '!' && character <= '/')
+                || (character >= ':' && character <= '@')
+                || (character >= '[' && character <= '`')
+                || (character >= '{' && character <= '~');
     }
 }
