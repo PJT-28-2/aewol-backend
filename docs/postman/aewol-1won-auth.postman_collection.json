@@ -1,7 +1,7 @@
 {
   "info": {
-    "name": "애월 - 1원인증 테스트 (2026-08-06)",
-    "description": "0.로그인 -> 1.verify-deposit -> 2.confirm -> 3.계좌등록 -> 4.목록조회 순서로 실행. accessToken/transactionId/verificationCode는 이전 요청 응답에서 자동으로 컬렉션 변수에 저장됨.",
+    "name": "애월 - 1원인증 테스트 (2026-08-10)",
+    "description": "0.로그인 -> 1.verify-deposit -> 2.confirm -> 3.계좌등록 -> 4.목록조회 -> 5.간편비밀번호설정 순서로 실행. accessToken/transactionId/verificationCode는 이전 요청 응답에서 자동으로 컬렉션 변수에 저장됨.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "auth": {
@@ -16,7 +16,8 @@
     { "key": "bankCode", "value": "004", "description": "004=KB. 토스는 bank_master 참고" },
     { "key": "accountNumber", "value": "1234567890" },
     { "key": "transactionId", "value": "" },
-    { "key": "verificationCode", "value": "" }
+    { "key": "verificationCode", "value": "" },
+    { "key": "simplePassword", "value": "482913", "description": "전부 같은 숫자/완전 연속 숫자만 아니면 아무 6자리 숫자" }
   ],
   "item": [
     {
@@ -162,6 +163,56 @@
         "method": "GET",
         "url": { "raw": "{{baseUrl}}/api/accounts", "host": ["{{baseUrl}}"], "path": ["api", "accounts"] }
       }
+    },
+    {
+      "name": "5. 간편 비밀번호 설정",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('200 OK', function () {",
+              "    pm.response.to.have.status(200);",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "url": { "raw": "{{baseUrl}}/api/users/simple-password", "host": ["{{baseUrl}}"], "path": ["api", "users", "simple-password"] },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"password\": \"{{simplePassword}}\"\n}"
+        }
+      },
+      "description": "2026-08-10 구현. member.simple_password 컬럼에 BCrypt로 저장됨. 재호출하면 값이 덮어써짐(재설정)."
+    },
+    {
+      "name": "5-1. 간편 비밀번호 설정 (약한 PIN 거절 확인 - 400)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('400 Bad Request', function () {",
+              "    pm.response.to.have.status(400);",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "url": { "raw": "{{baseUrl}}/api/users/simple-password", "host": ["{{baseUrl}}"], "path": ["api", "users", "simple-password"] },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"password\": \"111111\"\n}"
+        }
+      },
+      "description": "전부 같은 숫자 -> 서버가 400으로 거절하는지 확인. 123456/654321/012345 등 완전 연속 숫자도 동일하게 400이어야 함."
     }
   ]
 }

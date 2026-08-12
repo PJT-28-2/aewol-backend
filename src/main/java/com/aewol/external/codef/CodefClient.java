@@ -82,8 +82,8 @@ public class CodefClient {
     // 자체에 제한이 없으면 결국 무제한 시도가 가능해진다(2026-08-07, 코드 리뷰 중
     // 발견). 그래서 같은 계좌로 30분 동안 만들 수 있는 1원 인증 요청 자체를
     // 5번으로 제한한다 — confirm의 5회 제한과 곱하면 최악의 경우 30분에 25번까지
-    // 추측할 수 있지만, 후보 공간을 11172^4로 늘려서(아래 randomDepositorName 참고)
-    // 25번 추측으로는 사실상 맞힐 수 없는 수준으로 낮춘다.
+    // 추측할 수 있지만, 단어풀 조합 수를 8,000가지로 넓혀서(아래 randomDepositorName
+    // 참고) 25번 추측으로 맞힐 확률을 0.3% 수준으로 낮춘다.
     private static final String TRANSFER_AUTH_RATE_LIMIT_PREFIX = "codef:transfer-auth-count:";
     private static final long TRANSFER_AUTH_RATE_LIMIT_WINDOW_SECONDS = 1800;
     private static final long TRANSFER_AUTH_RATE_LIMIT_MAX = 5;
@@ -96,31 +96,73 @@ public class CodefClient {
     // 개발가이드 "기타 계좌 인증(1원 이체) API" 문서 예시 참고). 실제 돈이 오가는 진짜
     // 1원 인증이라는 성격은 그대로 유지되면서 길이는 항상 4자로 고정된다(2026-08-06).
     //
-    // 수식어x명사 조합(18x21=378가지)도 brute-force 방어엔 너무 좁다(CodeRabbit 지적,
-    // 2026-08-07) — 계좌당 30분에 5회 요청 x transaction당 5회 확인 = 최대 25회 추측이
-    // 가능해서 성공 확률이 약 6.5%까지 올라간다. 단어 조합 대신 완성형 한글 음절
-    // 전체(가~힣, 11,172자) 범위에서 4글자를 독립적으로 뽑아 UI 4자 고정은 유지하면서
-    // 후보 공간을 11172^4(약 1.56x10^16가지)로 늘린다. 의미 있는 단어가 아니어도
-    // 은행 앱 알림에 찍히는 값과 화면에 뜨는 값을 그대로 대조하기만 하면 되므로
-    // 문제없다. SecureRandom은 그대로 유지(예측 가능한 PRNG는 인증 값 생성에 부적절).
+    // 2026-08-07: 수식어x명사 조합(18x21=378가지)이 brute-force 방어엔 너무 좁다는
+    // CodeRabbit 지적으로 완성형 한글 음절 전체(가~힣, 11172^4가지) 무작위 방식으로
+    // 바꿨었다. 하지만 "궭뛟밝꿁" 같은 임의 음절 조합은 사용자가 읽고 옮겨 적기 어렵다는
+    // 피드백(2026-08-11, 민주)으로 다시 자연어 단어 조합으로 되돌린다 — 대신 그때 문제였던
+    // "후보 공간이 너무 좁다"는 지적을 해결하기 위해 단어풀 자체를 크게 키운다.
+    // ADJECTIVES(80개) x NOUNS(100개) = 8,000가지. 계좌당 30분 5회 요청 x confirm 5회
+    // 오답 허용 = 최대 25회 추측 가능(AccountServiceImpl 정책)이라 성공 확률은
+    // 25/8000 = 0.3125% — 예전 378가지(6.5%)보다 약 21배 안전하다. 단어풀을 더
+    // 키우고 싶으면 ADJECTIVES/NOUNS에 자연스러운 2음절 단어만 추가하면 된다(반드시
+    // 정확히 2글자 — 검증은 아래 static 블록에서 자동으로 함).
+    //
+    // 형용사/명사 모두 정확히 2음절(2글자)로만 구성해서, 조합 결과가 항상 4글자가
+    // 되도록 한다 — 프론트(AccountAuthOneWon.vue)가 depositorNameLength(항상 4)만큼
+    // 입력 칸을 고정으로 그리기 때문에, 길이가 어긋나면 입력 UI 자체가 깨진다.
     private static final int DEPOSITOR_NAME_LENGTH = 4;
-    private static final int HANGUL_SYLLABLE_START = 0xAC00; // '가'
-    private static final int HANGUL_SYLLABLE_COUNT = 11172; // '가'(0xAC00) ~ '힣'(0xD7A3)
     private static final java.security.SecureRandom RANDOM = new java.security.SecureRandom();
 
-    private static String randomDepositorName() {
-        StringBuilder sb = new StringBuilder(DEPOSITOR_NAME_LENGTH);
-        for (int i = 0; i < DEPOSITOR_NAME_LENGTH; i++) {
-            sb.append((char) (HANGUL_SYLLABLE_START + RANDOM.nextInt(HANGUL_SYLLABLE_COUNT)));
+    private static final String[] ADJECTIVES = {
+            "파란", "노란", "하얀", "까만", "빨간", "검은", "붉은", "푸른", "맑은", "밝은",
+            "넓은", "좁은", "높은", "낮은", "빠른", "느린", "강한", "약한", "매운", "시린",
+            "추운", "더운", "젖은", "마른", "굵은", "가는", "깊은", "낡은", "묵은", "여린",
+            "고운", "굳은", "잦은", "다른", "이른", "늦은", "옅은", "짙은", "묽은", "구운",
+            "삶은", "튀긴", "볶은", "말린", "얼린", "익은", "젊은", "늙은", "작은", "굽은",
+            "곧은", "무딘", "여문", "닳은", "열린", "닫힌", "둥근", "오랜", "여윈", "굳센",
+            "순한", "독한", "진한", "연한", "흔한", "귀한", "편한", "굶은", "곪은", "성긴",
+            "짧은", "무른", "질긴", "거친", "엷은", "텅빈", "곱은", "삭은", "묶인", "쌓인",
+    };
+
+    private static final String[] NOUNS = {
+            "하늘", "바다", "구름", "나무", "바람", "태양", "강물", "호수", "들판", "파도",
+            "모래", "이슬", "서리", "노을", "새벽", "저녁", "아침", "감자", "당근", "양파",
+            "오이", "호박", "버섯", "딸기", "사과", "포도", "수박", "참외", "감귤", "레몬",
+            "커피", "홍차", "우유", "치즈", "정원", "마당", "계단", "창문", "지붕", "다리",
+            "골목", "등대", "항구", "우산", "모자", "장갑", "이불", "베개", "의자", "책상",
+            "시계", "거울", "열쇠", "편지", "악보", "리본", "단추", "향초", "화분", "나비",
+            "참새", "토끼", "사슴", "여우", "구슬", "조개", "진주", "산호", "바위", "자갈",
+            "모종", "씨앗", "새싹", "뿌리", "가지", "단풍", "낙엽", "들꽃", "풀잎", "냇물",
+            "언덕", "마루", "처마", "대문", "우물", "벽돌", "기와", "접시", "냄비", "촛불",
+            "등불", "별빛", "달빛", "햇살", "눈길", "빗길", "물결", "파문", "번개", "천둥",
+    };
+
+    static {
+        // 단어풀 항목 하나라도 2글자가 아니면 입금자명 길이가 4자를 벗어나 프론트
+        // 입력 UI가 깨진다 — 배포 전에 반드시 걸러지도록 앱 기동 시점에 검증한다.
+        for (String word : ADJECTIVES) {
+            if (word.length() != 2) {
+                throw new IllegalStateException("ADJECTIVES 항목은 2글자여야 합니다: " + word);
+            }
         }
-        return sb.toString();
+        for (String word : NOUNS) {
+            if (word.length() != 2) {
+                throw new IllegalStateException("NOUNS 항목은 2글자여야 합니다: " + word);
+            }
+        }
+    }
+
+    private static String randomDepositorName() {
+        String adjective = ADJECTIVES[RANDOM.nextInt(ADJECTIVES.length)];
+        String noun = NOUNS[RANDOM.nextInt(NOUNS.length)];
+        return adjective + noun;
     }
 
     /**
      * CODEF 계좌 인증(1원 이체) 요청.
      * bankCode는 bank_master의 금융결제원 3자리 코드 — CODEF organization(4자리)으로
      * 패딩해서 보낸다("0" + bankCode, 예: "004" -> "0004").
-     * inPrintType=9(고객사 직접 입력)로 완성형 한글 음절 4개를 독립적으로 뽑아
+     * inPrintType=9(고객사 직접 입력)로 형용사+명사 조합의 단어를 골라
      * inPrintContent로 보낸다 — 우리가 고른 값이 그대로 실제 1원 이체의 입금자명이
      * 되므로 길이가 항상 4자로 고정된다. 프론트(AccountAuthOneWon.vue)는 응답의
      * depositorNameLength(항상 4)만큼 입력 칸을 그린다.
