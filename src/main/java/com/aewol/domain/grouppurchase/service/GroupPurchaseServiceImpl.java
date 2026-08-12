@@ -82,9 +82,19 @@ public class GroupPurchaseServiceImpl implements GroupPurchaseService {
                 .build();
     }
 
+    /**
+     * 배송예정일은 관리자가 직접 입력하지 않고 "목표 달성일 + 예상 소요일"로 계산한다.
+     * 등록 시점엔 아직 목표를 달성하지 않았으므로, 마감일에 확정된다고 가정한 잠정치(deadline + X)를 넣어두고,
+     * join()에서 목표 수량을 처음 달성하는 순간 confirmedDate + X로 갱신한다.
+     */
     @Override
     @Transactional
     public GroupPurchaseResponse create(String memberId, GroupPurchaseCreateRequest request) {
+        Integer estimateDays = request.getDeliveryEstimateDays();
+        LocalDate provisionalDeliveryDate = estimateDays == null
+                ? null
+                : request.getDeadline().toLocalDate().plusDays(estimateDays);
+
         Map<String, Object> gp = new HashMap<>();
         gp.put("memberId", memberId);
         gp.put("productName", request.getProductName());
@@ -94,7 +104,8 @@ public class GroupPurchaseServiceImpl implements GroupPurchaseService {
         gp.put("groupPrice", request.getGroupPrice());
         gp.put("deliveryMethod", request.getDeliveryMethod());
         gp.put("deliveryFee", request.getDeliveryFee());
-        gp.put("deliveryDate", request.getDeliveryDate());
+        gp.put("deliveryDate", provisionalDeliveryDate);
+        gp.put("deliveryEstimateDays", estimateDays);
         gp.put("description", request.getDescription());
         gp.put("targetQuantity", request.getTargetQuantity());
         gp.put("deadline", request.getDeadline());
@@ -144,6 +155,8 @@ public class GroupPurchaseServiceImpl implements GroupPurchaseService {
                 .deadline(deadline)
                 .unitPrice(toDecimal(gp.get("unit_price")))
                 .groupPrice(toDecimal(gp.get("group_price")))
+                .deliveryDate(toLocalDate(gp.get("delivery_date")))
+                .deliveryEstimateDays(toInt(gp.get("delivery_estimate_days")))
                 .participantInfo(participantInfo)
                 .noticeMessage(toNoticeMessage(status))
                 .build();
@@ -212,12 +225,22 @@ public class GroupPurchaseServiceImpl implements GroupPurchaseService {
         Map<String, Object> savedParticipant = groupPurchaseMapper.findParticipant(gpId, memberId);
         Map<String, Object> updatedGp = groupPurchaseMapper.findById(gpId);
 
+        // updateQuantity의 WHERE 절이 "목표 도달은 그 공동구매의 마지막 성공 join() 호출 단 한 번뿐"임을
+        // 이미 보장하므로(도달 이후엔 어떤 join도 이 조건을 만족할 수 없다), 별도 가드 없이 여기서 한 번만
+        // delivery_date를 confirmedDate + delivery_estimate_days로 갱신하면 정확히 한 번만 반영된다.
+        Integer currentQuantity = toInt(updatedGp.get("current_quantity"));
+        Integer targetQuantity = toInt(updatedGp.get("target_quantity"));
+        Integer estimateDays = toInt(updatedGp.get("delivery_estimate_days"));
+        if (currentQuantity != null && currentQuantity.equals(targetQuantity) && estimateDays != null) {
+            groupPurchaseMapper.updateDeliveryDate(gpId, LocalDate.now().plusDays(estimateDays));
+        }
+
         return GroupPurchaseJoinResponse.builder()
                 .gpId(gpId)
                 .participantId(toLong(savedParticipant.get("participant_id")))
                 .quantity(toInt(savedParticipant.get("purchase_quantity")))
-                .currentQuantity(toInt(updatedGp.get("current_quantity")))
-                .targetQuantity(toInt(updatedGp.get("target_quantity")))
+                .currentQuantity(currentQuantity)
+                .targetQuantity(targetQuantity)
                 .recipientName((String) savedParticipant.get("recipient_name"))
                 .recipientPhone((String) savedParticipant.get("recipient_phone"))
                 .zipCode((String) savedParticipant.get("zip_code"))
@@ -280,7 +303,7 @@ public class GroupPurchaseServiceImpl implements GroupPurchaseService {
     }
 
     /**
-     * 지갑 잔액을 환급하고 환불 거래내역을 생성한 뒤 갱신된 지갑 잔액을 반환한다. REFUND 타입은 없으므로 WalletServiceImpl#deposit과 동일하게 DEPOSIT으로 기록한다.
+     * 지갑 잔액을 환급하고 REFUND 타입 환불 거래내역을 생성한 뒤 갱신된 지갑 잔액을 반환한다.
      * (마감 후 목표 미달 자동 환불은 GroupPurchaseRefundExecutor가 건별 독립 트랜잭션으로 별도 처리한다 — 이 메서드는 leave() 전용.)
      */
     private BigDecimal refundWallet(String memberId, String gpId, Map<String, Object> gp, BigDecimal amount) {
@@ -296,7 +319,7 @@ public class GroupPurchaseServiceImpl implements GroupPurchaseService {
         Map<String, Object> txn = new HashMap<>();
         txn.put("walletId", walletId);
         txn.put("petId", null);
-        txn.put("txnType", "DEPOSIT");
+        txn.put("txnType", "REFUND");
         txn.put("price", amount);
         txn.put("category", toTxnCategory((String) gp.get("category")));
         txn.put("merchantName", gp.get("product_name"));
@@ -385,6 +408,7 @@ public class GroupPurchaseServiceImpl implements GroupPurchaseService {
                 .deliveryMethod((String) gp.get("delivery_method"))
                 .deliveryFee(toDecimal(gp.get("delivery_fee")))
                 .deliveryDate(toLocalDate(gp.get("delivery_date")))
+                .deliveryEstimateDays(toInt(gp.get("delivery_estimate_days")))
                 .description((String) gp.get("description"))
                 .targetQuantity(toInt(gp.get("target_quantity")))
                 .currentQuantity(toInt(gp.get("current_quantity")))

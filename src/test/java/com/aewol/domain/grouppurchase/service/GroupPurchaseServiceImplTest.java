@@ -120,6 +120,7 @@ class GroupPurchaseServiceImplTest {
         assertEquals(0, result.getCurrentQuantity());
         assertEquals("OPEN", result.getStatus());
         assertEquals(LocalDate.of(2026, 8, 20), result.getDeliveryDate());
+        assertEquals(5, result.getDeliveryEstimateDays());
         assertEquals(LocalDateTime.of(2026, 8, 15, 0, 0), result.getDeadline());
 
         ArgumentCaptor<Map<String, Object>> captor = ArgumentCaptor.forClass(Map.class);
@@ -127,6 +128,30 @@ class GroupPurchaseServiceImplTest {
         assertEquals("member-1", captor.getValue().get("memberId"));
         assertEquals("사료 5kg", captor.getValue().get("productName"));
         assertEquals(10, captor.getValue().get("targetQuantity"));
+        // deliveryDate는 admin 입력값이 아니라 deadline(8/15) + deliveryEstimateDays(5일)로 계산된 잠정치여야 한다.
+        assertEquals(LocalDate.of(2026, 8, 20), captor.getValue().get("deliveryDate"));
+        assertEquals(5, captor.getValue().get("deliveryEstimateDays"));
+    }
+
+    @Test
+    @DisplayName("배송 예상 소요일을 입력하지 않으면 배송예정일 잠정치를 계산하지 않고 null로 저장한다")
+    void should_saveNullDeliveryDate_when_deliveryEstimateDaysIsNotProvided() {
+        GroupPurchaseServiceImpl service = service();
+        GroupPurchaseCreateRequest request = createRequest();
+        ReflectionTestUtils.setField(request, "deliveryEstimateDays", null);
+        doAnswer(invocation -> {
+            Map<String, Object> gp = invocation.getArgument(0);
+            gp.put("gpId", "1");
+            return null;
+        }).when(groupPurchaseMapper).insert(anyMap());
+        when(groupPurchaseMapper.findById("1")).thenReturn(savedRow());
+
+        service.create("member-1", request);
+
+        ArgumentCaptor<Map<String, Object>> captor = ArgumentCaptor.forClass(Map.class);
+        verify(groupPurchaseMapper).insert(captor.capture());
+        assertNull(captor.getValue().get("deliveryDate"));
+        assertNull(captor.getValue().get("deliveryEstimateDays"));
     }
 
     @Test
@@ -213,6 +238,8 @@ class GroupPurchaseServiceImplTest {
         assertEquals(10, result.getTargetQuantity());
         assertEquals(new BigDecimal("30000"), result.getUnitPrice());
         assertEquals(new BigDecimal("25000"), result.getGroupPrice());
+        assertEquals(LocalDate.of(2026, 8, 20), result.getDeliveryDate());
+        assertEquals(5, result.getDeliveryEstimateDays());
         assertNotNull(result.getParticipantInfo());
         assertEquals(10523L, result.getParticipantInfo().getParticipantId());
         assertEquals(2, result.getParticipantInfo().getPurchaseQuantity());
@@ -654,6 +681,55 @@ class GroupPurchaseServiceImplTest {
         assertEquals("PAID", captor.getValue().get("paymentStatus"));
         assertEquals(777L, captor.getValue().get("txnId"));
         verify(groupPurchaseMapper).updateQuantity("1", 2);
+        // 목표(10) 미달성(2) 상태라 배송예정일 확정 로직이 돌면 안 된다.
+        verify(groupPurchaseMapper, never()).updateDeliveryDate(any(), any());
+    }
+
+    @Test
+    @DisplayName("이번 참여로 목표 수량을 처음 달성하면 배송예정일을 확정일 + 예상소요일로 갱신한다")
+    void should_confirmDeliveryDate_when_joinReachesTargetQuantity() {
+        GroupPurchaseServiceImpl service = service();
+        Map<String, Object> gpRow = savedRow();
+        gpRow.put("group_price", null); // 결제 로직은 이 테스트의 관심사가 아니므로 무결제 케이스로 단순화한다.
+        Map<String, Object> updatedGpRow = savedRow();
+        updatedGpRow.put("group_price", null);
+        updatedGpRow.put("current_quantity", 10);
+        updatedGpRow.put("target_quantity", 10);
+        updatedGpRow.put("delivery_estimate_days", 5);
+        Map<String, Object> savedParticipantRow = participantRow(10523L, "1", "member-1", 8);
+
+        when(groupPurchaseMapper.findById("1")).thenReturn(gpRow, updatedGpRow);
+        when(groupPurchaseMapper.findParticipant("1", "member-1")).thenReturn(null, savedParticipantRow);
+        when(groupPurchaseMapper.updateQuantity("1", 8)).thenReturn(1);
+
+        service.join("member-1", "1", 8, joinRequest());
+
+        ArgumentCaptor<LocalDate> dateCaptor = ArgumentCaptor.forClass(LocalDate.class);
+        verify(groupPurchaseMapper).updateDeliveryDate(eq("1"), dateCaptor.capture());
+        assertEquals(LocalDate.now().plusDays(5), dateCaptor.getValue());
+        verifyNoInteractions(walletMapper);
+    }
+
+    @Test
+    @DisplayName("목표 수량을 달성해도 배송 예상 소요일이 없으면 배송예정일을 갱신하지 않는다")
+    void should_notConfirmDeliveryDate_when_estimateDaysIsMissing_evenIfTargetReached() {
+        GroupPurchaseServiceImpl service = service();
+        Map<String, Object> gpRow = savedRow();
+        gpRow.put("group_price", null);
+        Map<String, Object> updatedGpRow = savedRow();
+        updatedGpRow.put("group_price", null);
+        updatedGpRow.put("current_quantity", 10);
+        updatedGpRow.put("target_quantity", 10);
+        updatedGpRow.put("delivery_estimate_days", null);
+        Map<String, Object> savedParticipantRow = participantRow(10523L, "1", "member-1", 8);
+
+        when(groupPurchaseMapper.findById("1")).thenReturn(gpRow, updatedGpRow);
+        when(groupPurchaseMapper.findParticipant("1", "member-1")).thenReturn(null, savedParticipantRow);
+        when(groupPurchaseMapper.updateQuantity("1", 8)).thenReturn(1);
+
+        service.join("member-1", "1", 8, joinRequest());
+
+        verify(groupPurchaseMapper, never()).updateDeliveryDate(any(), any());
     }
 
     @Test
@@ -885,7 +961,7 @@ class GroupPurchaseServiceImplTest {
         verify(walletMapper).addBalance("wallet-1", new BigDecimal("50000"));
         ArgumentCaptor<Map<String, Object>> txnCaptor = ArgumentCaptor.forClass(Map.class);
         verify(transactionMapper).insert(txnCaptor.capture());
-        assertEquals("DEPOSIT", txnCaptor.getValue().get("txnType"));
+        assertEquals("REFUND", txnCaptor.getValue().get("txnType"));
         assertEquals(new BigDecimal("50000"), txnCaptor.getValue().get("price"));
     }
 
@@ -1036,7 +1112,7 @@ class GroupPurchaseServiceImplTest {
         ReflectionTestUtils.setField(request, "groupPrice", new BigDecimal("25000"));
         ReflectionTestUtils.setField(request, "deliveryMethod", "택배배송");
         ReflectionTestUtils.setField(request, "deliveryFee", new BigDecimal("3000"));
-        ReflectionTestUtils.setField(request, "deliveryDate", LocalDate.of(2026, 8, 20));
+        ReflectionTestUtils.setField(request, "deliveryEstimateDays", 5);
         ReflectionTestUtils.setField(request, "description", "5kg 사료 공동구매");
         ReflectionTestUtils.setField(request, "targetQuantity", 10);
         ReflectionTestUtils.setField(request, "deadline", LocalDateTime.of(2026, 8, 15, 0, 0));
@@ -1055,6 +1131,7 @@ class GroupPurchaseServiceImplTest {
         row.put("delivery_method", "택배배송");
         row.put("delivery_fee", new BigDecimal("3000"));
         row.put("delivery_date", LocalDate.of(2026, 8, 20));
+        row.put("delivery_estimate_days", 5);
         row.put("description", "5kg 사료 공동구매");
         row.put("target_quantity", 10);
         row.put("current_quantity", 0);

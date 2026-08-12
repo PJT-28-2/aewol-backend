@@ -7,7 +7,6 @@ import javax.validation.constraints.NotBlank;
 import javax.validation.constraints.NotNull;
 import javax.validation.constraints.Pattern;
 import java.math.BigDecimal;
-import java.time.LocalDate;
 import java.time.LocalDateTime;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
@@ -38,7 +37,8 @@ public class GroupPurchaseCreateRequest {
     @DecimalMin(value = "0.00", message = "배송비는 0 이상이어야 합니다.")
     private BigDecimal deliveryFee;
 
-    private LocalDate deliveryDate;
+    @Min(value = 1, message = "배송 예상 소요일은 1일 이상이어야 합니다.")
+    private Integer deliveryEstimateDays;
 
     private String description;
 

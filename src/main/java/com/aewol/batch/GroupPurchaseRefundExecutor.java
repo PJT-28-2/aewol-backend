@@ -51,7 +51,7 @@ public class GroupPurchaseRefundExecutor {
         return true;
     }
 
-    /** 지갑 잔액을 환급하고 환불 거래내역을 생성한다. REFUND 타입은 없으므로 DEPOSIT으로 기록한다. */
+    /** 지갑 잔액을 환급하고 REFUND 타입 환불 거래내역을 생성한다. */
     private void refundWallet(String memberId, String gpId, Map<String, Object> gp, BigDecimal amount) {
         Map<String, Object> wallet = walletMapper.findByMemberId(memberId);
         if (wallet == null) {
@@ -65,7 +65,7 @@ public class GroupPurchaseRefundExecutor {
         Map<String, Object> txn = new HashMap<>();
         txn.put("walletId", walletId);
         txn.put("petId", null);
-        txn.put("txnType", "DEPOSIT");
+        txn.put("txnType", "REFUND");
         txn.put("price", amount);
         txn.put("category", toTxnCategory((String) gp.get("category")));
         txn.put("merchantName", gp.get("product_name"));

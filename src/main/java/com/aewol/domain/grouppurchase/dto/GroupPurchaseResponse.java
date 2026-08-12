@@ -19,6 +19,7 @@ public class GroupPurchaseResponse {
     private String deliveryMethod;
     private BigDecimal deliveryFee;
     private LocalDate deliveryDate;
+    private Integer deliveryEstimateDays;
     private String description;
     private Integer targetQuantity;
     private Integer currentQuantity;
