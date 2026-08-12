@@ -7,6 +7,7 @@ import com.aewol.config.SecurityConfig;
 import com.aewol.domain.member.dto.MemberResponse;
 import com.aewol.domain.member.mapper.MemberMapper;
 import com.aewol.domain.member.service.MemberService;
+import com.aewol.domain.member.service.SimplePasswordVerificationService;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.jsonwebtoken.Claims;
@@ -47,6 +48,7 @@ class MemberProfileSecurityTest {
     private MockMvc mockMvc;
     private final ObjectMapper objectMapper = new ObjectMapper();
     private MemberService memberService;
+    private SimplePasswordVerificationService simplePasswordVerificationService;
     private MemberMapper memberMapper;
     private JwtUtil jwtUtil;
 
@@ -63,9 +65,10 @@ class MemberProfileSecurityTest {
         context.refresh();
 
         memberService = context.getBean(MemberService.class);
+        simplePasswordVerificationService = context.getBean(SimplePasswordVerificationService.class);
         memberMapper = context.getBean(MemberMapper.class);
         jwtUtil = context.getBean(JwtUtil.class);
-        reset(memberService, memberMapper, jwtUtil);
+        reset(memberService, simplePasswordVerificationService, memberMapper, jwtUtil);
         mockMvc = MockMvcBuilders.webAppContextSetup(context)
                 .apply(springSecurity())
                 .build();
@@ -88,6 +91,40 @@ class MemberProfileSecurityTest {
                         .contentType("application/json")
                         .content("{\"currentPassword\":\"password\",\"newPassword\":\"new-password\"}"))
                 .andExpect(status().isUnauthorized());
+        mockMvc.perform(post("/api/users/simple-password/verify")
+                        .contentType("application/json").content("{\"password\":\"123456\"}"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void accessTokenCanVerifySimplePasswordWithoutChangingIt() throws Exception {
+        stubAccessToken(true);
+        when(simplePasswordVerificationService.verify("member-1", "123456")).thenReturn(true);
+
+        MvcResult result = mockMvc.perform(post("/api/users/simple-password/verify")
+                        .header("Authorization", "Bearer access-token")
+                        .contentType("application/json")
+                        .content("{\"password\":\"123456\"}"))
+                .andExpect(status().isOk()).andReturn();
+
+        assertEquals(true, json(result).get("result").get("verified").asBoolean());
+        verify(simplePasswordVerificationService).verify("member-1", "123456");
+        verify(memberService, never()).setSimplePassword(
+                org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.any());
+    }
+
+    @Test
+    void simplePasswordVerificationRejectsInvalidFormat() throws Exception {
+        stubAccessToken(true);
+
+        mockMvc.perform(post("/api/users/simple-password/verify")
+                        .header("Authorization", "Bearer access-token")
+                        .contentType("application/json")
+                        .content("{\"password\":\"12345a\"}"))
+                .andExpect(status().isBadRequest());
+
+        verify(simplePasswordVerificationService, never()).verify(
+                org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyString());
     }
 
     @Test
@@ -256,6 +293,11 @@ class MemberProfileSecurityTest {
         }
 
         @Bean
+        SimplePasswordVerificationService simplePasswordVerificationService() {
+            return mock(SimplePasswordVerificationService.class);
+        }
+
+        @Bean
         MemberMapper memberMapper() {
             return mock(MemberMapper.class);
         }
@@ -271,8 +313,9 @@ class MemberProfileSecurityTest {
         }
 
         @Bean
-        MemberController memberController(MemberService memberService) {
-            return new MemberController(memberService);
+        MemberController memberController(MemberService memberService,
+                                          SimplePasswordVerificationService simplePasswordVerificationService) {
+            return new MemberController(memberService, simplePasswordVerificationService);
         }
 
         @Bean
