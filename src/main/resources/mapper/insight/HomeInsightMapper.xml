@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.aewol.domain.insight.mapper.HomeInsightMapper">
+
+    <select id="findFreshByMemberId" resultType="map">
+        SELECT card_type, headline, body, cta_label, cta_path,
+               source_digest, fallback, generated_at
+          FROM home_insight
+         WHERE member_id = #{memberId}
+           AND expires_at &gt; NOW()
+    </select>
+
+    <!-- 회원당 카드 종류별 1건만 유지한다(uk_home_insight_member_card). -->
+    <insert id="upsert" parameterType="map">
+        INSERT INTO home_insight (member_id, card_type, headline, body, cta_label, cta_path,
+                                  source_digest, fallback, generated_at, expires_at)
+        VALUES (#{memberId}, #{cardType}, #{headline}, #{body}, #{ctaLabel}, #{ctaPath},
+                #{sourceDigest}, #{fallback}, NOW(),
+                DATE_ADD(NOW(), INTERVAL #{ttlHours} HOUR))
+        ON DUPLICATE KEY UPDATE headline      = VALUES(headline),
+                                body          = VALUES(body),
+                                cta_label     = VALUES(cta_label),
+                                cta_path      = VALUES(cta_path),
+                                source_digest = VALUES(source_digest),
+                                fallback      = VALUES(fallback),
+                                generated_at  = VALUES(generated_at),
+                                expires_at    = VALUES(expires_at)
+    </insert>
+
+    <delete id="deleteByMemberId">
+        DELETE FROM home_insight WHERE member_id = #{memberId}
+    </delete>
+
+    <select id="findWarmUpTargetMemberIds" resultType="string">
+        SELECT DISTINCT m.member_id
+          FROM member m
+          JOIN pet p ON p.member_id = m.member_id AND p.is_active = 1
+         WHERE m.is_active = 1
+           AND m.withdrawn_at IS NULL
+         ORDER BY m.member_id
+    </select>
+</mapper>

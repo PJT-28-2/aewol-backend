@@ -33,3 +33,11 @@ mybatis:
     map-underscore-to-camel-case: true
     default-fetch-size: 100
     default-statement-timeout: 30
+
+# 홈 AI 인사이트 카드
+insight:
+  # 회원·카드 종류별 캐시 유효시간. 배치가 매일 새벽에 미리 채우므로
+  # 실사용에서는 대부분 캐시 적중이다.
+  ttl-hours: ${INSIGHT_TTL_HOURS:24}
+  # false로 두면 카드 API가 빈 배열을 돌려주고 외부 호출도 하지 않는다.
+  enabled: ${INSIGHT_ENABLED:true}
