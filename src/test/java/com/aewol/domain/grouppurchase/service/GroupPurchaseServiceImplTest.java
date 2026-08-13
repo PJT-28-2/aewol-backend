@@ -217,6 +217,22 @@ class GroupPurchaseServiceImplTest {
     }
 
     @Test
+    @DisplayName("target_quantity가 0 이하인 비정상 데이터는 존재하지 않는 것처럼 예외가 발생한다")
+    void should_throwException_when_targetQuantityIsNotPositive_onGetDetail() {
+        GroupPurchaseServiceImpl service = service();
+        Map<String, Object> gpRow = savedRow();
+        gpRow.put("target_quantity", 0);
+        when(groupPurchaseMapper.findById("1")).thenReturn(gpRow);
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.getDetail("member-1", "1"));
+
+        assertEquals(org.springframework.http.HttpStatus.NOT_FOUND, exception.getStatus());
+        assertEquals("공동구매를 찾을 수 없습니다.", exception.getMessage());
+        verify(groupPurchaseMapper, never()).findParticipant(any(), any());
+    }
+
+    @Test
     @DisplayName("참여자가 조회하면 participantInfo가 채워진 상태 정보를 반환한다")
     void should_returnStatusWithParticipantInfo_when_requesterIsParticipant() {
         GroupPurchaseServiceImpl service = service();
@@ -278,6 +294,22 @@ class GroupPurchaseServiceImplTest {
 
         assertEquals("confirmed", result.getStatus());
         assertEquals("목표 인원이 모두 모여 공동구매가 확정되었습니다.", result.getNoticeMessage());
+    }
+
+    @Test
+    @DisplayName("목표 수량이 0 이하인 비정상 데이터는 마감 전에 confirmed로 오판하지 않는다")
+    void should_returnWaiting_when_targetQuantityIsZero_onGetStatus() {
+        GroupPurchaseServiceImpl service = service();
+        Map<String, Object> gpRow = savedRow();
+        gpRow.put("deadline", LocalDateTime.now().plusDays(5));
+        gpRow.put("target_quantity", 0);
+        gpRow.put("current_quantity", 0);
+        when(groupPurchaseMapper.findById("1")).thenReturn(gpRow);
+        when(groupPurchaseMapper.findParticipant("1", "member-1")).thenReturn(null);
+
+        GroupPurchaseStatusResponse result = service.getStatus("member-1", "1");
+
+        assertEquals("waiting", result.getStatus());
     }
 
     @Test
@@ -394,6 +426,19 @@ class GroupPurchaseServiceImplTest {
         List<GroupPurchaseMyItemResponse> result = service.getMyList("member-1", null);
 
         assertEquals("COMPLETED", result.get(0).getStatus());
+    }
+
+    @Test
+    @DisplayName("목표 수량이 0 이하인 비정상 데이터는 마감 전에 COMPLETED로 오판하지 않는다")
+    void should_returnOpen_when_targetQuantityIsZero_onGetMyList() {
+        GroupPurchaseServiceImpl service = service();
+        LocalDateTime futureDeadline = LocalDateTime.now().plusDays(5);
+        when(groupPurchaseMapper.findMyGroupPurchases("member-1", null))
+                .thenReturn(List.of(listRow(1L, "OPEN", futureDeadline, 30000, 25000, 0, 0)));
+
+        List<GroupPurchaseMyItemResponse> result = service.getMyList("member-1", null);
+
+        assertEquals("OPEN", result.get(0).getStatus());
     }
 
     @Test
@@ -598,6 +643,47 @@ class GroupPurchaseServiceImplTest {
         GroupPurchaseListResponse result = service.list(null, null, null, null, 0, 10);
 
         assertEquals("마감(미달)", result.getItems().get(0).getStatus());
+    }
+
+    @Test
+    @DisplayName("마감 전이어도 목표 수량을 채웠으면 마이페이지/상세와 동일하게 마감(성공)으로 계산한다")
+    void should_returnClosedSuccess_when_targetReachedBeforeDeadline() {
+        GroupPurchaseServiceImpl service = service();
+        LocalDateTime futureDeadline = LocalDateTime.now().plusDays(3);
+        when(groupPurchaseMapper.findList(isNull(), isNull(), isNull(), eq(11), eq(0)))
+                .thenReturn(List.of(listRow(1L, "OPEN", futureDeadline, 30000, 25000, 10, 10)));
+
+        GroupPurchaseListResponse result = service.list(null, null, null, null, 0, 10);
+
+        assertEquals("마감(성공)", result.getItems().get(0).getStatus());
+    }
+
+    @Test
+    @DisplayName("목표 수량이 0 이하인 비정상 데이터는 마감 전에 마감(성공)으로 오판하지 않는다")
+    void should_returnInProgress_when_targetQuantityIsZero_onList() {
+        GroupPurchaseServiceImpl service = service();
+        LocalDateTime futureDeadline = LocalDateTime.now().plusDays(3);
+        when(groupPurchaseMapper.findList(isNull(), isNull(), isNull(), eq(11), eq(0)))
+                .thenReturn(List.of(listRow(1L, "OPEN", futureDeadline, 30000, 25000, 0, 0)));
+
+        GroupPurchaseListResponse result = service.list(null, null, null, null, 0, 10);
+
+        assertEquals("진행중", result.getItems().get(0).getStatus());
+    }
+
+    @Test
+    @DisplayName("목록 응답에 unitPrice/groupPrice 원본 값이 그대로 내려간다")
+    void should_exposeUnitPriceAndGroupPrice_onListItem() {
+        GroupPurchaseServiceImpl service = service();
+        LocalDateTime deadline = LocalDateTime.now().plusDays(5);
+        when(groupPurchaseMapper.findList(isNull(), isNull(), isNull(), eq(11), eq(0)))
+                .thenReturn(List.of(listRow(1L, "OPEN", deadline, 30000, 25000)));
+
+        GroupPurchaseListResponse result = service.list(null, null, null, null, 0, 10);
+
+        GroupPurchaseListItemResponse item = result.getItems().get(0);
+        assertEquals(0, new BigDecimal("30000").compareTo(item.getUnitPrice()));
+        assertEquals(0, new BigDecimal("25000").compareTo(item.getGroupPrice()));
     }
 
     @Test

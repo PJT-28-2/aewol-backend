@@ -5,6 +5,7 @@ import com.aewol.domain.grouppurchase.mapper.GroupPurchaseMapper;
 import com.aewol.domain.transaction.mapper.TransactionMapper;
 import com.aewol.domain.wallet.mapper.WalletMapper;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -18,6 +19,7 @@ import java.util.Map;
  * (배치 메서드에서 self-invocation으로 @Transactional을 붙이면 프록시가 적용되지 않으므로 별도 빈으로 분리
  * — RecurringPaymentExecutor와 동일 패턴. 한 후보의 실패가 같은 배치 실행의 다른 후보 처리를 롤백시키지 않는다.)
  */
+@Slf4j
 @Component
 @RequiredArgsConstructor
 public class GroupPurchaseRefundExecutor {
@@ -46,6 +48,13 @@ public class GroupPurchaseRefundExecutor {
         BigDecimal refundedAmount = toBigDecimal(candidate.get("paid_amount"));
         if (refundedAmount != null) {
             Map<String, Object> gp = groupPurchaseMapper.findById(gpId);
+            Integer targetQuantity = toInt(gp.get("target_quantity"));
+            if (targetQuantity == null || targetQuantity <= 0) {
+                // 정상 생성 경로로는 나올 수 없는 값이다(@Min(1) + NOT NULL DEFAULT 1). 목록/상세에서는
+                // 이런 데이터를 숨기지만, 이미 결제한 참여자의 환불까지 막을 이유는 없어 배치는 그대로
+                // 처리한다 — 대신 운영이 데이터 이상을 인지할 수 있도록 경고 로그를 남긴다.
+                log.warn("공동구매 target_quantity가 비정상입니다 - gpId: {}, targetQuantity: {}", gpId, targetQuantity);
+            }
             refundWallet(memberId, gpId, gp, refundedAmount);
         }
         return true;

@@ -1,6 +1,7 @@
 package com.aewol.domain.grouppurchase.dto;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
+import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import lombok.AccessLevel;
 import lombok.Builder;
@@ -14,6 +15,8 @@ public class GroupPurchaseListItemResponse {
     private String productName;
     private String category;
     private String status;
+    private BigDecimal unitPrice;
+    private BigDecimal groupPrice;
     private Integer currentQuantity;
     private Integer targetQuantity;
     @Getter(AccessLevel.NONE)

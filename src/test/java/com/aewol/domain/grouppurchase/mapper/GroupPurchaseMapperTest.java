@@ -112,6 +112,46 @@ class GroupPurchaseMapperTest {
     }
 
     @Test
+    @DisplayName("목표 수량이 0 이하인 비정상 데이터는 마감 전이면 OPEN 필터에만 잡히고 COMPLETED 필터에는 잡히지 않는다")
+    void should_matchOpenFilterOnly_when_targetQuantityIsZero() {
+        long gpId = insertGroupPurchase(99L, "OPEN", 0, 0, LocalDateTime.now().plusDays(5));
+        insertParticipant(gpId, 1L);
+
+        assertEquals(1, findMyGroupPurchases("1", "OPEN").size());
+        assertEquals(0, findMyGroupPurchases("1", "COMPLETED").size());
+    }
+
+    @Test
+    @DisplayName("target_quantity가 0 이하인 비정상 데이터는 status 필터 없이도 findList 결과에서 제외된다")
+    void should_excludeNonPositiveTargetQuantity_fromFindList_regardlessOfStatusFilter() {
+        long corruptedGpId = insertGroupPurchase(99L, "OPEN", 0, 0, LocalDateTime.now().plusDays(5));
+        long normalGpId = insertGroupPurchase(99L, "OPEN", 3, 10, LocalDateTime.now().plusDays(5));
+
+        List<Map<String, Object>> result = findList(null, null, null, 10, 0);
+
+        assertEquals(1, result.size());
+        assertEquals(normalGpId, ((Number) result.get(0).get("gp_id")).longValue());
+        assertTrue(result.stream().noneMatch(row -> ((Number) row.get("gp_id")).longValue() == corruptedGpId));
+    }
+
+    @Test
+    @DisplayName("target_quantity가 0 이하인 비정상 데이터는 OPEN 필터에서도 제외된다")
+    void should_excludeNonPositiveTargetQuantity_fromFindList_underOpenFilter() {
+        insertGroupPurchase(99L, "OPEN", 0, 0, LocalDateTime.now().plusDays(5));
+
+        assertEquals(0, findList("OPEN", null, null, 10, 0).size());
+    }
+
+    @Test
+    @DisplayName("마감 전이어도 목표 수량을 채웠으면 findList의 COMPLETED 필터에 잡히고 OPEN 필터에서는 빠진다")
+    void should_matchCompletedFilterOnFindList_notOpenFilter_when_targetReachedBeforeDeadline() {
+        insertGroupPurchase(99L, "OPEN", 10, 10, LocalDateTime.now().plusDays(5));
+
+        assertEquals(1, findList("COMPLETED", null, null, 10, 0).size());
+        assertEquals(0, findList("OPEN", null, null, 10, 0).size());
+    }
+
+    @Test
     @DisplayName("마감이 지났고 목표 미달이면 FAILED 필터에만 잡힌다")
     void should_matchFailedFilterOnly_when_deadlinePassedAndTargetNotReached() {
         long gpId = insertGroupPurchase(99L, "OPEN", 3, 10, LocalDateTime.now().minusDays(1));
@@ -264,6 +304,15 @@ class GroupPurchaseMapperTest {
     }
 
     @Test
+    @DisplayName("목표 수량이 0 이하인 비정상 데이터는 마감이 지났으면 자동환불 후보에 포함된다 — 절대 채워질 수 없으므로 미달로 취급한다")
+    void should_includeCandidate_when_targetQuantityIsZeroAndDeadlinePassed() {
+        long gpId = insertGroupPurchase(99L, "OPEN", 0, 0, LocalDateTime.now().minusDays(1));
+        insertParticipant(gpId, 1L, "PAID");
+
+        assertEquals(1, findExpiredUnfulfilledPaidParticipants().size());
+    }
+
+    @Test
     @DisplayName("작성자가 취소(CANCELLED)한 공동구매는 자동환불 후보에서 빠진다 — 작성자 취소 API가 이미 환불을 처리한다")
     void should_excludeCandidate_when_ownerCancelled() {
         long gpId = insertGroupPurchase(99L, "CANCELLED", 3, 10, LocalDateTime.now().minusDays(1));
@@ -361,6 +410,12 @@ class GroupPurchaseMapperTest {
     private List<Map<String, Object>> findMyGroupPurchases(String memberId, String status) {
         try (SqlSession session = sqlSessionFactory.openSession(true)) {
             return session.getMapper(GroupPurchaseMapper.class).findMyGroupPurchases(memberId, status);
+        }
+    }
+
+    private List<Map<String, Object>> findList(String status, String keyword, String category, int limit, int offset) {
+        try (SqlSession session = sqlSessionFactory.openSession(true)) {
+            return session.getMapper(GroupPurchaseMapper.class).findList(status, keyword, category, limit, offset);
         }
     }
 

@@ -116,7 +116,11 @@ public class GroupPurchaseServiceImpl implements GroupPurchaseService {
     @Override
     public GroupPurchaseResponse getDetail(String memberId, String gpId) {
         Map<String, Object> gp = groupPurchaseMapper.findById(gpId);
-        if (gp == null) throw BusinessException.notFound("공동구매를 찾을 수 없습니다.");
+        // target_quantity <= 0(정상 생성 경로로는 나올 수 없는 레거시/비정상 데이터)은 findList와 동일하게
+        // 노출하지 않는다 — 참여 여부와 무관하게 상세/결제 미리보기 화면에 잘못된 상품으로 보이는 것을 막는다.
+        if (gp == null || toInt(gp.get("target_quantity")) == null || toInt(gp.get("target_quantity")) <= 0) {
+            throw BusinessException.notFound("공동구매를 찾을 수 없습니다.");
+        }
         boolean isParticipating = memberId != null && groupPurchaseMapper.findParticipant(gpId, memberId) != null;
         return toResponse(gp, isParticipating);
     }
@@ -423,6 +427,8 @@ public class GroupPurchaseServiceImpl implements GroupPurchaseService {
         LocalDateTime deadline = toLocalDateTime(gp.get("deadline"));
         Integer currentQuantity = toInt(gp.get("current_quantity"));
         Integer targetQuantity = toInt(gp.get("target_quantity"));
+        BigDecimal unitPrice = toDecimal(gp.get("unit_price"));
+        BigDecimal groupPrice = toDecimal(gp.get("group_price"));
         String gpId = String.valueOf(gp.get("gp_id"));
         boolean isParticipating = memberId != null && groupPurchaseMapper.findParticipant(gpId, memberId) != null;
         return GroupPurchaseListItemResponse.builder()
@@ -431,23 +437,33 @@ public class GroupPurchaseServiceImpl implements GroupPurchaseService {
                 .productName((String) gp.get("product_name"))
                 .category((String) gp.get("category"))
                 .status(computeDisplayStatus(deadline, currentQuantity, targetQuantity))
+                .unitPrice(unitPrice)
+                .groupPrice(groupPrice)
                 .currentQuantity(currentQuantity)
                 .targetQuantity(targetQuantity)
                 .dDay(toDDay(deadline))
-                .badgeText(toBadgeText(toDecimal(gp.get("unit_price")), toDecimal(gp.get("group_price"))))
+                .badgeText(toBadgeText(unitPrice, groupPrice))
                 .isParticipating(isParticipating)
                 .createdAt(toLocalDateTime(gp.get("created_at")))
                 .build();
     }
 
-    /** 저장된 status 컬럼이 아니라 마감 시각·목표 수량 달성 여부로 화면 표시 상태를 계산한다. SQL 필터(findList)와 동일한 기준을 사용해야 한다. */
+    /**
+     * 저장된 status 컬럼이 아니라 목표 수량 달성 여부·마감 시각으로 화면 표시 상태를 계산한다.
+     * 판정 순서를 마이페이지(toMyStatus)/상세(toWaitStatus)와 동일하게 [목표 수량 도달 여부] → [마감일 경과 여부]로 맞춘다
+     * — 목표 수량은 달성 즉시 updateQuantity에서 추가 참여를 막으므로, 마감 전이라도 "마감(성공)"으로 확정 표시해야 한다.
+     * SQL 필터(findList)와 동일한 기준을 사용해야 한다.
+     */
     private static String computeDisplayStatus(LocalDateTime deadline, Integer currentQuantity, Integer targetQuantity) {
-        if (deadline == null || !deadline.isBefore(LocalDateTime.now())) {
-            return "진행중";
-        }
         int current = currentQuantity == null ? 0 : currentQuantity;
         int target = targetQuantity == null ? 0 : targetQuantity;
-        return current >= target ? "마감(성공)" : "마감(미달)";
+        if (isTargetReached(current, target)) {
+            return "마감(성공)";
+        }
+        if (deadline != null && deadline.isBefore(LocalDateTime.now())) {
+            return "마감(미달)";
+        }
+        return "진행중";
     }
 
     /**
@@ -462,7 +478,7 @@ public class GroupPurchaseServiceImpl implements GroupPurchaseService {
         }
         int current = currentQuantity == null ? 0 : currentQuantity;
         int target = targetQuantity == null ? 0 : targetQuantity;
-        if (current >= target) {
+        if (isTargetReached(current, target)) {
             return "confirmed";
         }
         if (deadline != null && deadline.isBefore(LocalDateTime.now())) {
@@ -509,13 +525,23 @@ public class GroupPurchaseServiceImpl implements GroupPurchaseService {
         }
         int current = currentQuantity == null ? 0 : currentQuantity;
         int target = targetQuantity == null ? 0 : targetQuantity;
-        if (current >= target) {
+        if (isTargetReached(current, target)) {
             return "COMPLETED";
         }
         if (deadline != null && deadline.isBefore(LocalDateTime.now())) {
             return "FAILED";
         }
         return "OPEN";
+    }
+
+    /**
+     * target이 0 이하(마이그레이션 누락·초기 등록 오류 등 비정상 데이터)이면 current(기본값 0)와의
+     * 비교만으로 "목표 달성"으로 오판하지 않도록 방어한다. 정상 생성 경로는
+     * {@link com.aewol.domain.grouppurchase.dto.GroupPurchaseCreateRequest}의 @Min(1) 검증과
+     * target_quantity 컬럼의 NOT NULL DEFAULT 1 제약으로 이 값이 1 이상임을 보장한다.
+     */
+    private static boolean isTargetReached(int current, int target) {
+        return target > 0 && current >= target;
     }
 
     private static String toDDay(LocalDateTime deadline) {
