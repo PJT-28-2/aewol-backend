@@ -143,6 +143,15 @@ class GroupPurchaseMapperTest {
     }
 
     @Test
+    @DisplayName("마감 전이어도 목표 수량을 채웠으면 findList의 COMPLETED 필터에 잡히고 OPEN 필터에서는 빠진다")
+    void should_matchCompletedFilterOnFindList_notOpenFilter_when_targetReachedBeforeDeadline() {
+        insertGroupPurchase(99L, "OPEN", 10, 10, LocalDateTime.now().plusDays(5));
+
+        assertEquals(1, findList("COMPLETED", null, null, 10, 0).size());
+        assertEquals(0, findList("OPEN", null, null, 10, 0).size());
+    }
+
+    @Test
     @DisplayName("마감이 지났고 목표 미달이면 FAILED 필터에만 잡힌다")
     void should_matchFailedFilterOnly_when_deadlinePassedAndTargetNotReached() {
         long gpId = insertGroupPurchase(99L, "OPEN", 3, 10, LocalDateTime.now().minusDays(1));
