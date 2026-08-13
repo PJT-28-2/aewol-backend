@@ -3,6 +3,7 @@ package com.aewol.domain.pet.controller;
 import com.aewol.common.response.ApiResponse;
 import com.aewol.domain.pet.dto.PetCharacterResponse;
 import com.aewol.domain.pet.dto.PetCreateRequest;
+import com.aewol.domain.pet.dto.PetDocumentDetailResponse;
 import com.aewol.domain.pet.dto.PetDocumentResponse;
 import com.aewol.domain.pet.dto.PetResponse;
 import com.aewol.domain.pet.dto.PetRegistrationResponse;
@@ -114,6 +115,28 @@ public class PetController {
             @AuthenticationPrincipal String memberId,
             @PathVariable String petId) {
         return ResponseEntity.ok(ApiResponse.success(petService.getPetDocuments(memberId, petId)));
+    }
+
+    @Operation(summary = "반려동물 문서 상세 조회",
+            description = "동물등록증이면 동물등록정보를 함께 담아 돌려준다.")
+    @GetMapping("/{petId}/documents/{docId}")
+    public ResponseEntity<ApiResponse<PetDocumentDetailResponse>> getPetDocument(
+            @AuthenticationPrincipal String memberId,
+            @PathVariable String petId,
+            @PathVariable String docId) {
+        return ResponseEntity.ok(
+                ApiResponse.success(petRegistrationService.getDocument(memberId, petId, docId)));
+    }
+
+    @Operation(summary = "동물등록증 재동기화",
+            description = "저장된 등록번호로 APMS를 다시 조회한다. 재인증(이름·생년월일)은 필요 없다.")
+    @PostMapping("/{petId}/documents/{docId}/resync")
+    public ResponseEntity<ApiResponse<PetRegistrationResponse>> resyncPetRegistration(
+            @AuthenticationPrincipal String memberId,
+            @PathVariable String petId,
+            @PathVariable String docId) {
+        return ResponseEntity.ok(
+                ApiResponse.success(petRegistrationService.resync(memberId, petId, docId)));
     }
 
     @Operation(summary = "반려동물 문서 삭제")

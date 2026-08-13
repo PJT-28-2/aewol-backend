@@ -21,5 +21,7 @@ public class PetRegistrationResponse {
     private String aprGbnNm;
     private String regTm;
     private String aprTm;
+    /** 마지막으로 APMS에서 다시 받아온 시각. 재동기화 버튼 옆에 표시한다. */
+    private String lastSyncedAt;
     private boolean verified;
 }

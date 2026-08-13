@@ -8,6 +8,12 @@
         LIMIT 1
     </select>
 
+    <!-- 상세 조회·재동기화용. 등록증 문서 한 건의 전체 항목이 필요하다. -->
+    <select id="findByDocIdAndPetId" resultType="map">
+        SELECT * FROM pet_registration
+        WHERE doc_id = #{docId} AND pet_id = #{petId}
+    </select>
+
     <insert id="insert" parameterType="map">
         INSERT INTO pet_registration
             (doc_id, pet_id, reg_number, name, breed, gender, neutered, birth_date,

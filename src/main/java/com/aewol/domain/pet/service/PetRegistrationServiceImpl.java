@@ -1,6 +1,8 @@
 package com.aewol.domain.pet.service;
 
 import com.aewol.common.exception.BusinessException;
+import com.aewol.common.storage.FileStorage;
+import com.aewol.domain.pet.dto.PetDocumentDetailResponse;
 import com.aewol.domain.pet.dto.PetRegistrationResponse;
 import com.aewol.domain.pet.dto.PetRegistrationVerifyRequest;
 import com.aewol.domain.pet.mapper.PetDocumentMapper;
@@ -31,6 +33,7 @@ public class PetRegistrationServiceImpl implements PetRegistrationService {
     private final PetDocumentMapper petDocumentMapper;
     private final PetRegistrationMapper petRegistrationMapper;
     private final ApmsClient apmsClient;
+    private final FileStorage fileStorage;
 
     @Override
     @Transactional
@@ -94,6 +97,88 @@ public class PetRegistrationServiceImpl implements PetRegistrationService {
             throw BusinessException.notFound("반려동물을 찾을 수 없습니다.");
         }
         return response(registration);
+    }
+
+    @Override
+    public PetDocumentDetailResponse getDocument(String memberId, String petId, String docId) {
+        requireOwnedPet(memberId, petId);
+
+        Map<String, Object> document = petDocumentMapper.findByIdAndPetId(docId, petId);
+        if (document == null) {
+            throw BusinessException.notFound("문서를 찾을 수 없습니다.");
+        }
+
+        // 등록증이 아닌 문서(접종증명서 등)는 외부 조회 정보가 없어 registration이 빈다.
+        Map<String, Object> registration = REGISTRATION.equals(string(document.get("doc_type")))
+                ? petRegistrationMapper.findByDocIdAndPetId(docId, petId)
+                : null;
+
+        return PetDocumentDetailResponse.builder()
+                .docId(string(document.get("doc_id")))
+                .petId(string(document.get("pet_id")))
+                .docName(string(document.get("doc_name")))
+                .docType(string(document.get("doc_type")))
+                // 업로드 파일은 비공개라 만료되는 서명 URL로만 내려간다.
+                .fileUrl(fileStorage.signedUrl(string(document.get("file_url"))))
+                .issuedDate(string(document.get("issued_date")))
+                .createdAt(string(document.get("created_at")))
+                .registration(registration == null ? null : fromRow(registration))
+                .build();
+    }
+
+    @Override
+    @Transactional
+    public PetRegistrationResponse resync(String memberId, String petId, String docId) {
+        requireOwnedPet(memberId, petId);
+
+        Map<String, Object> stored = petRegistrationMapper.findByDocIdAndPetId(docId, petId);
+        if (stored == null) {
+            throw BusinessException.notFound("동물등록정보를 찾을 수 없습니다.");
+        }
+        String regNumber = string(stored.get("reg_number"));
+        if (regNumber == null) {
+            throw new BusinessException("등록번호가 없어 재조회할 수 없습니다.");
+        }
+
+        // 이미 한 번 인증해 저장해 둔 등록번호라 소유자 이름·생년월일을 다시 받지 않는다.
+        // APMS는 owner_nm이 비면 등록번호만으로 조회한다.
+        Map<String, Object> external = apmsClient.findRegistration(regNumber, null)
+                .orElseThrow(() -> new BusinessException("동물등록정보를 다시 불러오지 못했습니다."));
+
+        Map<String, Object> registration = normalize(external, petId);
+        validateExternalResponse(registration);
+        registration.put("docId", docId);
+        if (petRegistrationMapper.update(registration) != 1) {
+            throw BusinessException.notFound("동물등록정보를 찾을 수 없습니다.");
+        }
+
+        // last_synced_at은 update()가 NOW()로 채우므로 갱신된 행을 다시 읽어 내려준다.
+        return fromRow(petRegistrationMapper.findByDocIdAndPetId(docId, petId));
+    }
+
+    private Map<String, Object> requireOwnedPet(String memberId, String petId) {
+        Map<String, Object> pet = petMapper.findById(petId);
+        if (pet == null) {
+            throw BusinessException.notFound("반려동물을 찾을 수 없습니다.");
+        }
+        if (!Objects.equals(memberId, String.valueOf(pet.get("member_id")))) {
+            throw BusinessException.forbidden("대표 보호자만 이 작업을 할 수 있습니다.");
+        }
+        return pet;
+    }
+
+    /** DB 행(snake_case)을 응답으로 옮긴다. {@link #response}는 정규화된 map(camelCase)용이다. */
+    private PetRegistrationResponse fromRow(Map<String, Object> row) {
+        return PetRegistrationResponse.builder()
+                .docId(string(row.get("doc_id"))).petId(string(row.get("pet_id")))
+                .regNumber(string(row.get("reg_number"))).name(string(row.get("name")))
+                .breed(string(row.get("breed"))).gender(string(row.get("gender")))
+                .neutered(string(row.get("neutered"))).birthDate(string(row.get("birth_date")))
+                .rfidCd(string(row.get("rfid_cd"))).rfidGubun(string(row.get("rfid_gubun")))
+                .orgNm(string(row.get("org_nm"))).officeTel(string(row.get("office_tel")))
+                .aprGbnNm(string(row.get("apr_gbn_nm"))).regTm(string(row.get("reg_tm")))
+                .aprTm(string(row.get("apr_tm"))).lastSyncedAt(string(row.get("last_synced_at")))
+                .verified(true).build();
     }
 
     private void validateDuplicate(String petId, String regNumber) {

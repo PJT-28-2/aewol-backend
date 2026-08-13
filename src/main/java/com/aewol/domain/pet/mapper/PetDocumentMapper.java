@@ -19,6 +19,10 @@ public interface PetDocumentMapper {
     Map<String, Object> findByIdAndPetIdForUpdate(@Param("docId") String docId,
                                                   @Param("petId") String petId);
 
+    /** 조회 전용. 갱신이 없는 흐름에서 행을 잠그지 않기 위해 ForUpdate와 나눠 둔다. */
+    Map<String, Object> findByIdAndPetId(@Param("docId") String docId,
+                                         @Param("petId") String petId);
+
     void update(Map<String, Object> document);
 
     int deleteByIdAndPetId(@Param("docId") String docId,
