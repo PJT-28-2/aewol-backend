@@ -122,6 +122,27 @@ class GroupPurchaseMapperTest {
     }
 
     @Test
+    @DisplayName("target_quantity가 0 이하인 비정상 데이터는 status 필터 없이도 findList 결과에서 제외된다")
+    void should_excludeNonPositiveTargetQuantity_fromFindList_regardlessOfStatusFilter() {
+        long corruptedGpId = insertGroupPurchase(99L, "OPEN", 0, 0, LocalDateTime.now().plusDays(5));
+        long normalGpId = insertGroupPurchase(99L, "OPEN", 3, 10, LocalDateTime.now().plusDays(5));
+
+        List<Map<String, Object>> result = findList(null, null, null, 10, 0);
+
+        assertEquals(1, result.size());
+        assertEquals(normalGpId, ((Number) result.get(0).get("gp_id")).longValue());
+        assertTrue(result.stream().noneMatch(row -> ((Number) row.get("gp_id")).longValue() == corruptedGpId));
+    }
+
+    @Test
+    @DisplayName("target_quantity가 0 이하인 비정상 데이터는 OPEN 필터에서도 제외된다")
+    void should_excludeNonPositiveTargetQuantity_fromFindList_underOpenFilter() {
+        insertGroupPurchase(99L, "OPEN", 0, 0, LocalDateTime.now().plusDays(5));
+
+        assertEquals(0, findList("OPEN", null, null, 10, 0).size());
+    }
+
+    @Test
     @DisplayName("마감이 지났고 목표 미달이면 FAILED 필터에만 잡힌다")
     void should_matchFailedFilterOnly_when_deadlinePassedAndTargetNotReached() {
         long gpId = insertGroupPurchase(99L, "OPEN", 3, 10, LocalDateTime.now().minusDays(1));
@@ -380,6 +401,12 @@ class GroupPurchaseMapperTest {
     private List<Map<String, Object>> findMyGroupPurchases(String memberId, String status) {
         try (SqlSession session = sqlSessionFactory.openSession(true)) {
             return session.getMapper(GroupPurchaseMapper.class).findMyGroupPurchases(memberId, status);
+        }
+    }
+
+    private List<Map<String, Object>> findList(String status, String keyword, String category, int limit, int offset) {
+        try (SqlSession session = sqlSessionFactory.openSession(true)) {
+            return session.getMapper(GroupPurchaseMapper.class).findList(status, keyword, category, limit, offset);
         }
     }
 

@@ -217,6 +217,22 @@ class GroupPurchaseServiceImplTest {
     }
 
     @Test
+    @DisplayName("target_quantity가 0 이하인 비정상 데이터는 존재하지 않는 것처럼 예외가 발생한다")
+    void should_throwException_when_targetQuantityIsNotPositive_onGetDetail() {
+        GroupPurchaseServiceImpl service = service();
+        Map<String, Object> gpRow = savedRow();
+        gpRow.put("target_quantity", 0);
+        when(groupPurchaseMapper.findById("1")).thenReturn(gpRow);
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.getDetail("member-1", "1"));
+
+        assertEquals(org.springframework.http.HttpStatus.NOT_FOUND, exception.getStatus());
+        assertEquals("공동구매를 찾을 수 없습니다.", exception.getMessage());
+        verify(groupPurchaseMapper, never()).findParticipant(any(), any());
+    }
+
+    @Test
     @DisplayName("참여자가 조회하면 participantInfo가 채워진 상태 정보를 반환한다")
     void should_returnStatusWithParticipantInfo_when_requesterIsParticipant() {
         GroupPurchaseServiceImpl service = service();
