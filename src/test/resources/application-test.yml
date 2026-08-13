@@ -21,6 +21,12 @@ jwt:
   access-token-expiry: 1800000
   refresh-token-expiry: 604800000
 
+# 계좌번호 암호화(AccountNumberCrypto) 테스트 전용 고정 키 — 실제 비밀값 아님.
+security:
+  account:
+    encryption-key: gK1L1wUh76cY2JxWNrJKy7BDjsrXfCZQo0a8Gi3tBF8=
+    hash-key: aLjLtXstTULNVE9hp5Hpn3910DXa/v0tGa0cQ7AZ5BA=
+
 logging:
   level:
     com.aewol: DEBUG

@@ -1,0 +1,139 @@
+package com.aewol.common.util;
+
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Component;
+import org.springframework.util.StringUtils;
+
+import javax.crypto.Cipher;
+import javax.crypto.Mac;
+import javax.crypto.spec.GCMParameterSpec;
+import javax.crypto.spec.SecretKeySpec;
+import java.nio.charset.StandardCharsets;
+import java.security.GeneralSecurityException;
+import java.security.SecureRandom;
+import java.util.Arrays;
+import java.util.Base64;
+
+/**
+ * 계좌번호 등 민감정보를 AES-256-GCM으로 암호화/복호화하고, 중복 체크용
+ * HMAC-SHA256 해시를 만든다.
+ *
+ * ERD_수정안_계좌관리_고객센터.md 1.3에서 "결정 완료"로 명시했지만 실제 코드에는
+ * 반영되지 않았던 부분(2026-08-13 코드리뷰 지적)을 구현한다.
+ * - AES-256-GCM(호출마다 랜덤 IV): 같은 계좌번호를 암호화해도 매번 다른 암호문이
+ *   나와서, 암호문끼리 직접 비교(중복 체크)는 할 수 없다.
+ * - 그래서 중복 체크는 별도 HMAC-SHA256 해시로 한다. 예전에는 salt/키 없는
+ *   sha256(accountNumber)를 썼는데, 계좌번호는 숫자 10~16자리라 경우의 수가
+ *   제한적이라 레인보우테이블/무차별 대입으로 원문을 역산할 수 있었다. HMAC은
+ *   비밀 키가 있어야 같은 해시를 만들 수 있어서 이 공격이 막힌다.
+ */
+@Component
+public class AccountNumberCrypto {
+
+    private static final String AES_TRANSFORMATION = "AES/GCM/NoPadding";
+    private static final int GCM_IV_LENGTH_BYTES = 12;
+    private static final int GCM_TAG_LENGTH_BITS = 128;
+    private static final String HMAC_ALGORITHM = "HmacSHA256";
+    private static final int MIN_KEY_BYTES = 32;
+
+    private final SecretKeySpec aesKey;
+    private final SecretKeySpec hmacKey;
+    private final SecureRandom secureRandom = new SecureRandom();
+
+    public AccountNumberCrypto(
+            @Value("${security.account.encryption-key}") String encryptionKeyBase64,
+            @Value("${security.account.hash-key}") String hashKeyBase64) {
+        this.aesKey = new SecretKeySpec(
+                decodeKey(encryptionKeyBase64, "security.account.encryption-key"), "AES");
+        this.hmacKey = new SecretKeySpec(
+                decodeKey(hashKeyBase64, "security.account.hash-key"), HMAC_ALGORITHM);
+    }
+
+    private byte[] decodeKey(String base64Value, String propertyName) {
+        if (!StringUtils.hasText(base64Value)) {
+            throw new IllegalStateException(propertyName + " 설정이 비어 있어요. "
+                    + "`openssl rand -base64 32` 로 키를 생성해서 채워주세요.");
+        }
+        byte[] decoded;
+        try {
+            decoded = Base64.getDecoder().decode(base64Value);
+        } catch (IllegalArgumentException e) {
+            throw new IllegalStateException(propertyName + " 값이 올바른 base64 문자열이 아니에요.", e);
+        }
+        if (decoded.length < MIN_KEY_BYTES) {
+            throw new IllegalStateException(propertyName + "는 최소 " + MIN_KEY_BYTES
+                    + "바이트(base64 인코딩 전)여야 해요.");
+        }
+        return decoded;
+    }
+
+    /** AES-256-GCM으로 암호화한 뒤 base64(iv + ciphertext+tag) 문자열로 반환한다. */
+    public String encrypt(String plainText) {
+        try {
+            byte[] iv = new byte[GCM_IV_LENGTH_BYTES];
+            secureRandom.nextBytes(iv);
+
+            Cipher cipher = Cipher.getInstance(AES_TRANSFORMATION);
+            cipher.init(Cipher.ENCRYPT_MODE, aesKey, new GCMParameterSpec(GCM_TAG_LENGTH_BITS, iv));
+            byte[] cipherText = cipher.doFinal(plainText.getBytes(StandardCharsets.UTF_8));
+
+            byte[] combined = new byte[iv.length + cipherText.length];
+            System.arraycopy(iv, 0, combined, 0, iv.length);
+            System.arraycopy(cipherText, 0, combined, iv.length, cipherText.length);
+            return Base64.getEncoder().encodeToString(combined);
+        } catch (GeneralSecurityException e) {
+            throw new IllegalStateException("계좌번호 암호화에 실패했어요", e);
+        }
+    }
+
+    /** encrypt()로 만든 값을 복호화해서 원문을 돌려준다. */
+    public String decrypt(String encoded) {
+        try {
+            byte[] combined = Base64.getDecoder().decode(encoded);
+            byte[] iv = Arrays.copyOfRange(combined, 0, GCM_IV_LENGTH_BYTES);
+            byte[] cipherText = Arrays.copyOfRange(combined, GCM_IV_LENGTH_BYTES, combined.length);
+
+            Cipher cipher = Cipher.getInstance(AES_TRANSFORMATION);
+            cipher.init(Cipher.DECRYPT_MODE, aesKey, new GCMParameterSpec(GCM_TAG_LENGTH_BITS, iv));
+            byte[] plain = cipher.doFinal(cipherText);
+            return new String(plain, StandardCharsets.UTF_8);
+        } catch (GeneralSecurityException | IllegalArgumentException e) {
+            // 키가 바뀌었거나(예: 환경별 키 불일치) 저장된 값이 손상된 경우 — 호출부가
+            // 500으로 처리하도록 런타임 예외로 던진다.
+            throw new IllegalStateException("계좌번호 복호화에 실패했어요", e);
+        }
+    }
+
+    /** 중복 체크 전용 HMAC-SHA256 해시(hex 64자). 원문 대신 이 값으로만 비교한다. */
+    public String hash(String plainText) {
+        try {
+            Mac mac = Mac.getInstance(HMAC_ALGORITHM);
+            mac.init(hmacKey);
+            byte[] result = mac.doFinal(plainText.getBytes(StandardCharsets.UTF_8));
+            StringBuilder sb = new StringBuilder(result.length * 2);
+            for (byte b : result) {
+                sb.append(String.format("%02x", b));
+            }
+            return sb.toString();
+        } catch (GeneralSecurityException e) {
+            throw new IllegalStateException("계좌번호 해시 생성에 실패했어요", e);
+        }
+    }
+
+    /**
+     * 뒤 4자리만 남기고 나머지는 *로 가린다. 프론트(stores/account.js
+     * requestDepositAuth의 마스킹 로직)와 동일한 규칙 — 하나만 바꾸면 프론트가
+     * 직접 계산하는 값(연동 중 화면)과 백엔드가 내려주는 값(연동 완료 후 화면)이
+     * 서로 달라 보일 수 있으니 항상 같이 맞출 것.
+     */
+    public static String mask(String plainAccountNumber) {
+        if (plainAccountNumber == null) {
+            return null;
+        }
+        int length = plainAccountNumber.length();
+        if (length <= 4) {
+            return plainAccountNumber;
+        }
+        return "*".repeat(length - 4) + plainAccountNumber.substring(length - 4);
+    }
+}

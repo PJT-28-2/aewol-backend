@@ -2,6 +2,7 @@ package com.aewol.domain.account.service;
 
 import com.aewol.common.exception.BusinessException;
 import com.aewol.domain.account.dto.AccountPrimaryRequest;
+import com.aewol.common.util.AccountNumberCrypto;
 import com.aewol.common.util.RedisRateLimiter;
 import com.aewol.domain.account.dto.AccountRegisterRequest;
 import com.aewol.domain.account.dto.AccountResponse;
@@ -34,6 +35,7 @@ public class AccountServiceImpl implements AccountService {
     private final CodefClient codefClient;
     private final Environment environment;
     private final RedisRateLimiter redisRateLimiter;
+    private final AccountNumberCrypto accountNumberCrypto;
 
     // 프론트(store.requestDepositAuth의 DEPOSIT_AUTH_TIMEOUT_SECONDS)와 동일한 유효시간.
     // 여기서 안 맞추면 프론트는 아직 타이머가 남았다고 보여주는데 서버는 이미
@@ -71,7 +73,10 @@ public class AccountServiceImpl implements AccountService {
         verification.put("transactionId", transactionId);
         verification.put("memberId", memberId);
         verification.put("bankCode", request.getBankCode());
-        verification.put("accountNumber", request.getAccountNumber());
+        // 계좌번호는 여기서부터 암호화해서 저장한다(AES-256-GCM) — account_verification도
+        // linked_account와 마찬가지로 원문 계좌번호를 평문으로 들고 있으면 안 된다
+        // (ERD_수정안_계좌관리_고객센터.md 1.3 "결정 완료" 항목, 2026-08-13 반영).
+        verification.put("accountNumber", accountNumberCrypto.encrypt(request.getAccountNumber()));
         verification.put("verificationCode", depositorName);
         // DB DEFAULT CURRENT_TIMESTAMP에 맡기면 MySQL 컨테이너 시간대(TZ 미설정 시 UTC)와
         // JVM 로컬 시간대(KST)가 어긋나서 isExpired()가 저장 직후에도 만료로 오판할 수 있다.
@@ -167,7 +172,13 @@ public class AccountServiceImpl implements AccountService {
         }
 
         String bankCode = (String) verification.get("bank_code");
-        String accountNumber = (String) verification.get("account_number");
+        // account_verification에 이미 암호화된 상태로 저장돼 있으므로(requestDepositVerification)
+        // 그대로 linked_account에 옮겨 담으면 된다 — 다시 암호화할 필요 없다.
+        String encryptedAccountNumber = (String) verification.get("account_number");
+        // 다만 중복 체크용 해시(HMAC)는 원문 기준이어야 해서, 저장할 때만 잠깐 복호화한다.
+        // GCM은 매번 IV가 달라 같은 계좌번호도 암호문이 서로 다르므로 암호문끼리는
+        // 비교할 수 없다 — 그래서 해시는 항상 평문에서 만든다.
+        String plainAccountNumber = accountNumberCrypto.decrypt(encryptedAccountNumber);
 
         // setPrimaryAccount만 기존 대표 계좌를 내리고 있어서, 이미 대표 계좌가 있는
         // 회원이 isPrimary=true로 새 계좌를 등록하면 대표 계좌가 2개가 될 수 있었다
@@ -181,8 +192,8 @@ public class AccountServiceImpl implements AccountService {
         Map<String, Object> account = new HashMap<>();
         account.put("memberId", memberId);
         account.put("bankCode", bankCode);
-        account.put("accountNumber", accountNumber);
-        account.put("accountNumberHash", sha256(accountNumber));
+        account.put("accountNumber", encryptedAccountNumber);
+        account.put("accountNumberHash", accountNumberCrypto.hash(plainAccountNumber));
         account.put("isPrimary", makePrimary ? 1 : 0);
         accountMapper.insert(account); // account_id AUTO_INCREMENT로 채워짐
 
@@ -289,12 +300,18 @@ public class AccountServiceImpl implements AccountService {
     // CODEF에 사용자의 인터넷뱅킹 아이디/비밀번호를 넘겨야 해서 신뢰 장벽이 크고, 애월의
     // 핵심 기능(버킷/지출관리)은 어차피 이 계좌 잔액이 아니라 내부 지갑(wallet) 잔액만
     // 쓴다. AccountResponse에도 balance 필드 자체가 없다.
+    //
+    // account_number는 DB에 암호화 저장돼 있어서(AccountNumberCrypto), 응답을 만들 때
+    // 딱 한 번 복호화한 뒤 뒤 4자리만 남기고 마스킹해서 내려준다 — 원본 계좌번호 전체를
+    // 응답 바디에 실어 보내지 않는다(2026-08-13, 코드리뷰 지적으로 마스킹 필드
+    // accountNumberMasked 신설 + 원본 accountNumber 필드 제거).
     private AccountResponse toAccountResponse(Map<String, Object> a) {
+        String plainAccountNumber = accountNumberCrypto.decrypt((String) a.get("account_number"));
         return AccountResponse.builder()
                 .accountId(String.valueOf(a.get("account_id")))
                 .bankCode((String) a.get("bank_code"))
                 .bankName((String) a.get("bank_name"))
-                .accountNumber((String) a.get("account_number"))
+                .accountNumberMasked(AccountNumberCrypto.mask(plainAccountNumber))
                 .isPrimary(toBool(a.get("is_primary")))
                 .status((String) a.get("status"))
                 .build();
@@ -326,19 +343,6 @@ public class AccountServiceImpl implements AccountService {
             return false;
         }
         return requestedTime.plusSeconds(DEPOSIT_AUTH_TIMEOUT_SECONDS).isBefore(LocalDateTime.now());
-    }
-
-    /** 계좌번호 중복 등록 방지용 해시 (V4 uk_linked_member_account_hash) */
-    private String sha256(String value) {
-        try {
-            java.security.MessageDigest digest = java.security.MessageDigest.getInstance("SHA-256");
-            byte[] hash = digest.digest(value.getBytes(java.nio.charset.StandardCharsets.UTF_8));
-            StringBuilder sb = new StringBuilder();
-            for (byte b : hash) sb.append(String.format("%02x", b));
-            return sb.toString();
-        } catch (java.security.NoSuchAlgorithmException e) {
-            throw new IllegalStateException("SHA-256 미지원 환경", e);
-        }
     }
 
     /** TINYINT(1)은 커넥터 설정에 따라 Boolean 또는 Number로 반환된다 */

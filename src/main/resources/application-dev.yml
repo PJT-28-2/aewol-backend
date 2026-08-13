@@ -38,6 +38,14 @@ jwt:
   access-token-expiry: 1800000
   refresh-token-expiry: 604800000
 
+# 계좌번호 암호화(AccountNumberCrypto, 2026-08-13 추가). 아래는 dev 서버 전용 고정
+# fallback 키(jwt.secret과 동일한 패턴) — 운영에서는 반드시 ACCOUNT_ENCRYPTION_KEY/
+# ACCOUNT_HASH_KEY 환경변수로 실제 비밀키를 주입해서 이 fallback을 덮어써야 한다.
+security:
+  account:
+    encryption-key: ${ACCOUNT_ENCRYPTION_KEY:liVOuhPUgfZg49XQmub+BeJUknuVrosgSzsEGvT3fpU=}
+    hash-key: ${ACCOUNT_HASH_KEY:BmP/kACQqnPEKhp305MgxoiRFeLOTF4XsmCdnA9JTUU=}
+
 # External APIs
 external:
   kakao:

@@ -2,6 +2,7 @@ package com.aewol.domain.account.service;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 import com.aewol.common.exception.BusinessException;
+import com.aewol.common.util.AccountNumberCrypto;
 import com.aewol.domain.account.dto.AccountPrimaryRequest;
 import com.aewol.domain.account.dto.AccountRegisterRequest;
 import com.aewol.domain.account.dto.AccountResponse;
@@ -14,6 +15,7 @@ import java.time.LocalDateTime;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -27,11 +29,24 @@ class AccountServiceImplTest {
     @Mock AccountVerificationMapper accountVerificationMapper;
     @Mock CodefClient codefClient;
     @Mock Environment environment;
+    @Mock AccountNumberCrypto accountNumberCrypto;
     @InjectMocks AccountServiceImpl service;
     private static final String MEMBER_ID = "9001";
 private static final String ACCOUNT_ID = "1";
     private static final String TRANSACTION_ID = "TX20260807abc";
     private static final String CORRECT_CODE = "포근애월";
+
+    // accountNumberCrypto는 실제 암복호화 로직 없이(unit test 범위 밖) "암호문 == 평문"으로
+    // 취급하는 identity 스텁을 기본으로 깔아둔다 — toAccountResponse/registerAccount가
+    // decrypt/hash를 호출할 때마다 값을 채워줘야 NPE 없이 각 테스트의 실제 관심사(대표 계좌
+    // 전환, 동시성 처리 등)만 검증할 수 있다. lenient()라서 이 스텁을 안 쓰는 테스트에서도
+    // UnnecessaryStubbingException 없이 통과한다.
+    @BeforeEach
+    void setUpCrypto() {
+        lenient().when(accountNumberCrypto.decrypt(anyString())).thenAnswer(inv -> inv.getArgument(0));
+        lenient().when(accountNumberCrypto.hash(anyString())).thenAnswer(inv -> "hash-" + inv.getArgument(0));
+    }
+
     @Test
     @DisplayName("본인 소유의 활성 계좌를 대표 계좌로 설정한다")
     void should_setPrimary_when_ownerAndActiveAccount() {
@@ -236,6 +251,39 @@ private static final String ACCOUNT_ID = "1";
 
         verify(accountMapper, never()).clearPrimaryByMemberId(any());
     }
+
+    @Test
+    @DisplayName("계좌 등록 시 account_verification에 저장된 암호문을 그대로 옮기고, 해시는 복호화한 평문으로 만든다")
+    void should_reuseCiphertext_and_hashPlainAccountNumber_when_registering() {
+        // account_verification.account_number는 requestDepositVerification 시점에 이미
+        // 암호화돼 있으므로, registerAccount는 그 값을 그대로 linked_account에 복사하기만
+        // 하면 된다(다시 암호화하지 않음). 다만 중복 체크용 해시(HMAC)는 암호문끼리 비교할
+        // 수 없어서(GCM 랜덤 IV) 항상 복호화한 평문 기준으로 만든다(2026-08-13).
+        Map<String, Object> verification = new HashMap<>();
+        verification.put("member_id", MEMBER_ID);
+        verification.put("status", "VERIFIED");
+        verification.put("bank_code", "004");
+        verification.put("account_number", "ciphertext-abc");
+        when(accountVerificationMapper.findById(TRANSACTION_ID)).thenReturn(verification);
+        when(accountVerificationMapper.markUsedIfVerified(TRANSACTION_ID)).thenReturn(1);
+        when(accountNumberCrypto.decrypt("ciphertext-abc")).thenReturn("1234567890");
+        when(accountNumberCrypto.hash("1234567890")).thenReturn("hash-of-plain");
+        doAnswer(invocation -> {
+            Map<String, Object> arg = invocation.getArgument(0);
+            arg.put("accountId", 101L);
+            return null;
+        }).when(accountMapper).insert(any());
+        when(accountMapper.findByAccountId("101"))
+                .thenReturn(accountRow("101", MEMBER_ID, "ACTIVE", false));
+
+        service.registerAccount(MEMBER_ID, new AccountRegisterRequest(TRANSACTION_ID, null));
+
+        var captor = org.mockito.ArgumentCaptor.forClass(Map.class);
+        verify(accountMapper).insert(captor.capture());
+        assertEquals("ciphertext-abc", captor.getValue().get("accountNumber"));
+        assertEquals("hash-of-plain", captor.getValue().get("accountNumberHash"));
+    }
+
     @Test
     @DisplayName("입금자명이 일치하고 시도 횟수가 한도 미만이면 인증에 성공한다")
     void should_verify_when_codeCorrectAndUnderLimit() {
