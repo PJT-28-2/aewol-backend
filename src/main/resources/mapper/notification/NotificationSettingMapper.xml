@@ -1,6 +1,13 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
 <mapper namespace="com.aewol.domain.notification.mapper.NotificationSettingMapper">
+    <select id="findByMemberId" resultType="map">
+        SELECT member_id, payment_enabled, recurring_payment_enabled,
+               family_share_enabled, community_enabled, marketing_enabled
+        FROM notification_setting
+        WHERE member_id = #{memberId}
+    </select>
+
     <insert id="insert" parameterType="map">
         INSERT INTO notification_setting (
             member_id, payment_enabled, recurring_payment_enabled,
@@ -10,6 +17,28 @@
             #{familyShareEnabled}, #{communityEnabled}, #{marketingEnabled}
         )
     </insert>
+
+    <update id="updatePartial">
+        UPDATE notification_setting
+        <set>
+            <if test="paymentEnabled != null">
+                payment_enabled = #{paymentEnabled},
+            </if>
+            <if test="recurringPaymentEnabled != null">
+                recurring_payment_enabled = #{recurringPaymentEnabled},
+            </if>
+            <if test="familyShareEnabled != null">
+                family_share_enabled = #{familyShareEnabled},
+            </if>
+            <if test="communityEnabled != null">
+                community_enabled = #{communityEnabled},
+            </if>
+            <if test="marketingEnabled != null">
+                marketing_enabled = #{marketingEnabled},
+            </if>
+        </set>
+        WHERE member_id = #{memberId}
+    </update>
 
     <insert id="upsertForRecovery">
         INSERT INTO notification_setting (
