@@ -579,7 +579,7 @@ class GroupPurchaseServiceImplTest {
         when(groupPurchaseMapper.findList(eq("COMPLETED"), isNull(), eq("사료"), eq(11), eq(0)))
                 .thenReturn(List.of());
 
-        service.list(null, "마감(성공)", null, "사료", 0, 10);
+        service.list(null, "달성", null, "사료", 0, 10);
 
         verify(groupPurchaseMapper).findList("COMPLETED", null, "사료", 11, 0);
     }
@@ -620,7 +620,7 @@ class GroupPurchaseServiceImplTest {
     }
 
     @Test
-    @DisplayName("마감 후 목표 수량을 채웠으면 저장된 status가 OPEN이어도 마감(성공)으로 계산한다")
+    @DisplayName("마감 후 목표 수량을 채웠으면 저장된 status가 OPEN이어도 달성으로 계산한다")
     void should_returnClosedSuccess_when_deadlinePassedAndTargetReached() {
         GroupPurchaseServiceImpl service = service();
         LocalDateTime pastDeadline = LocalDateTime.now().minusDays(1);
@@ -629,7 +629,7 @@ class GroupPurchaseServiceImplTest {
 
         GroupPurchaseListResponse result = service.list(null, null, null, null, 0, 10);
 
-        assertEquals("마감(성공)", result.getItems().get(0).getStatus());
+        assertEquals("달성", result.getItems().get(0).getStatus());
     }
 
     @Test
@@ -646,7 +646,7 @@ class GroupPurchaseServiceImplTest {
     }
 
     @Test
-    @DisplayName("마감 전이어도 목표 수량을 채웠으면 마이페이지/상세와 동일하게 마감(성공)으로 계산한다")
+    @DisplayName("마감 전이어도 목표 수량을 채웠으면 마이페이지/상세와 동일하게 달성으로 계산한다")
     void should_returnClosedSuccess_when_targetReachedBeforeDeadline() {
         GroupPurchaseServiceImpl service = service();
         LocalDateTime futureDeadline = LocalDateTime.now().plusDays(3);
@@ -655,11 +655,11 @@ class GroupPurchaseServiceImplTest {
 
         GroupPurchaseListResponse result = service.list(null, null, null, null, 0, 10);
 
-        assertEquals("마감(성공)", result.getItems().get(0).getStatus());
+        assertEquals("달성", result.getItems().get(0).getStatus());
     }
 
     @Test
-    @DisplayName("목표 수량이 0 이하인 비정상 데이터는 마감 전에 마감(성공)으로 오판하지 않는다")
+    @DisplayName("목표 수량이 0 이하인 비정상 데이터는 마감 전에 달성으로 오판하지 않는다")
     void should_returnInProgress_when_targetQuantityIsZero_onList() {
         GroupPurchaseServiceImpl service = service();
         LocalDateTime futureDeadline = LocalDateTime.now().plusDays(3);
