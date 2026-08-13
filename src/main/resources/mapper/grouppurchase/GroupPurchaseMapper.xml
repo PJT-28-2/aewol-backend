@@ -32,7 +32,11 @@
                 AND product_name LIKE CONCAT('%', #{keyword}, '%')
             </if>
         </where>
-        ORDER BY deadline ASC, gp_id ASC
+        <!-- 진행중(마감 전이고 목표 미달)인 게시글을 먼저, 마감된(목표 달성/미달) 게시글을 뒤로 묶어서
+             각 그룹 안에서는 최신 등록순으로 보여준다. -->
+        ORDER BY
+            CASE WHEN current_quantity &lt; target_quantity AND deadline &gt;= NOW() THEN 0 ELSE 1 END,
+            created_at DESC
         LIMIT #{limit} OFFSET #{offset}
     </select>
 
