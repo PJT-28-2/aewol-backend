@@ -24,9 +24,11 @@ class CertificateServiceImplTest {
 
     @Mock ApmsClient apmsClient;
     @Mock PetMapper petMapper;
+    @Mock com.aewol.domain.pet.mapper.PetDocumentMapper petDocumentMapper;
+    @Mock com.aewol.domain.pet.mapper.PetRegistrationMapper petRegistrationMapper;
 
     private CertificateServiceImpl service() {
-        return new CertificateServiceImpl(apmsClient, petMapper);
+        return new CertificateServiceImpl(apmsClient, petMapper, petDocumentMapper, petRegistrationMapper);
     }
 
     private ApmsSyncRequest request() {

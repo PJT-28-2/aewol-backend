@@ -27,13 +27,14 @@ class PetRegistrationServiceImplTest {
     @Mock PetDocumentMapper petDocumentMapper;
     @Mock PetRegistrationMapper petRegistrationMapper;
     @Mock ApmsClient apmsClient;
+    @Mock com.aewol.common.storage.FileStorage fileStorage;
 
     private PetRegistrationServiceImpl service;
 
     @BeforeEach
     void setUp() {
         service = new PetRegistrationServiceImpl(
-                petMapper, petDocumentMapper, petRegistrationMapper, apmsClient);
+                petMapper, petDocumentMapper, petRegistrationMapper, apmsClient, fileStorage);
     }
 
     @Test
