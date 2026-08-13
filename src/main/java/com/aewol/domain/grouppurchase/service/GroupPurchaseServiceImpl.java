@@ -116,7 +116,11 @@ public class GroupPurchaseServiceImpl implements GroupPurchaseService {
     @Override
     public GroupPurchaseResponse getDetail(String memberId, String gpId) {
         Map<String, Object> gp = groupPurchaseMapper.findById(gpId);
-        if (gp == null) throw BusinessException.notFound("공동구매를 찾을 수 없습니다.");
+        // target_quantity <= 0(정상 생성 경로로는 나올 수 없는 레거시/비정상 데이터)은 findList와 동일하게
+        // 노출하지 않는다 — 참여 여부와 무관하게 상세/결제 미리보기 화면에 잘못된 상품으로 보이는 것을 막는다.
+        if (gp == null || toInt(gp.get("target_quantity")) == null || toInt(gp.get("target_quantity")) <= 0) {
+            throw BusinessException.notFound("공동구매를 찾을 수 없습니다.");
+        }
         boolean isParticipating = memberId != null && groupPurchaseMapper.findParticipant(gpId, memberId) != null;
         return toResponse(gp, isParticipating);
     }
