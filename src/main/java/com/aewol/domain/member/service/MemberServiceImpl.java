@@ -56,6 +56,10 @@ public class MemberServiceImpl implements MemberService {
                 .zipCode((String) member.get("zip_code"))
                 .address((String) member.get("address"))
                 .addressDetail((String) member.get("address_detail"))
+                // simple_password 컬럼 값 자체는 절대 내려주지 않고, 설정 여부만 boolean으로
+                // 알려준다 — 프론트가 로그인/앱 진입 시마다 이 값으로 accountStore의
+                // hasSimplePassword를 서버 기준으로 동기화한다(2026-08-13).
+                .hasSimplePassword(member.get("simple_password") != null)
                 .build();
     }
 
