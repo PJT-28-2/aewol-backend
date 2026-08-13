@@ -1,6 +1,7 @@
 package com.aewol.domain.grouppurchase.controller;
 
 import com.aewol.common.response.ApiResponse;
+import com.aewol.domain.grouppurchase.dto.GroupPurchaseCancelResponse;
 import com.aewol.domain.grouppurchase.dto.GroupPurchaseCreateRequest;
 import com.aewol.domain.grouppurchase.dto.GroupPurchaseImageUploadResponse;
 import com.aewol.domain.grouppurchase.dto.GroupPurchaseJoinRequest;
@@ -101,6 +102,17 @@ public class GroupPurchaseController {
                                                                             @PathVariable String gpId) {
         return ResponseEntity.ok(ApiResponse.success("공동구매 참여가 취소되었습니다.",
                 groupPurchaseService.leave(memberId, gpId)));
+    }
+
+    /**
+     * 관리자(role=ADMIN) 전용. SecurityConfig에서 POST /api/group-purchase/{gpId}/cancel에 ROLE_ADMIN을 요구한다.
+     * leave()와 달리 게시글 전체를 취소하며, 이미 결제한 참여자 전원을 함께 환불한다. OPEN(진행중) 상태에서만 가능하다.
+     */
+    @Operation(summary = "공동구매 취소 (작성자 전용)")
+    @PostMapping("/{gpId}/cancel")
+    public ResponseEntity<ApiResponse<GroupPurchaseCancelResponse>> cancel(@PathVariable String gpId) {
+        return ResponseEntity.ok(ApiResponse.success("공동구매가 취소되었습니다.",
+                groupPurchaseService.cancel(gpId)));
     }
 
     /** 관리자(role=ADMIN) 전용. SecurityConfig에서 POST /api/group-purchase/images에 ROLE_ADMIN을 요구한다. */

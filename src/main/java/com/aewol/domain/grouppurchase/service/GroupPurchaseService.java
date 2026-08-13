@@ -1,5 +1,6 @@
 package com.aewol.domain.grouppurchase.service;
 
+import com.aewol.domain.grouppurchase.dto.GroupPurchaseCancelResponse;
 import com.aewol.domain.grouppurchase.dto.GroupPurchaseCreateRequest;
 import com.aewol.domain.grouppurchase.dto.GroupPurchaseImageUploadResponse;
 import com.aewol.domain.grouppurchase.dto.GroupPurchaseJoinRequest;
@@ -20,5 +21,6 @@ public interface GroupPurchaseService {
     List<GroupPurchaseMyItemResponse> getMyList(String memberId, String status);
     GroupPurchaseJoinResponse join(String memberId, String gpId, int quantity, GroupPurchaseJoinRequest request);
     GroupPurchaseLeaveResponse leave(String memberId, String gpId);
+    GroupPurchaseCancelResponse cancel(String gpId);
     GroupPurchaseImageUploadResponse uploadImage(MultipartFile image);
 }

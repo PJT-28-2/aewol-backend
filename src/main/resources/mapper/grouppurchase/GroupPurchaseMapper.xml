@@ -164,4 +164,22 @@
           AND (gp.target_quantity &lt;= 0 OR gp.current_quantity &lt; gp.target_quantity)
     </select>
 
+    <!-- 작성자(관리자) 전체 취소(순서18). join()의 updateQuantity와 동일한 원자적 조건부 UPDATE 패턴 —
+         이미 취소됐거나(status='CANCELLED'), 목표 수량을 채웠거나(현재수량 >= 목표수량), 마감이 지난
+         공동구매는 취소할 수 없다. 영향받은 행이 0이면 호출부에서 취소를 거절해야 한다. -->
+    <update id="cancelGroupPurchase">
+        UPDATE group_purchase
+        SET status = 'CANCELLED'
+        WHERE gp_id = #{gpId}
+          AND status != 'CANCELLED'
+          AND current_quantity &lt; target_quantity
+          AND deadline &gt;= NOW()
+    </update>
+
+    <!-- 작성자 전체 취소 시 환불 대상인 결제 완료 참여자를 조회한다(순서18 전용). -->
+    <select id="findPaidParticipants" resultType="map">
+        SELECT * FROM group_purchase_participant
+        WHERE gp_id = #{gpId} AND payment_status = 'PAID'
+    </select>
+
 </mapper>

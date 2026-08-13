@@ -58,7 +58,7 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.GET, "/api/group-purchase/my").hasRole("USER")
                         // Admin only
                         .requestMatchers("/api/admin/**").hasRole("ADMIN")
-                        .requestMatchers(HttpMethod.POST, "/api/group-purchase", "/api/group-purchase/images").hasRole("ADMIN")
+                        .requestMatchers(HttpMethod.POST, "/api/group-purchase", "/api/group-purchase/images", "/api/group-purchase/*/cancel").hasRole("ADMIN")
                         // All other requests require authentication
                         .anyRequest().authenticated()
                 )
