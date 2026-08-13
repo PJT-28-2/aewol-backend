@@ -37,9 +37,9 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
- * 공동구매 게시글 등록/이미지 업로드는 role=ADMIN만 호출할 수 있어야 한다(SecurityConfig의
- * POST /api/group-purchase, /api/group-purchase/images 경로 제한). 실제 시큐리티 필터 체인을
- * 태워서 검증하며, 서비스/매퍼는 목으로 대체한다(UserWithdrawalSecurityTest와 동일한 패턴).
+ * 공동구매 게시글 등록/이미지 업로드/작성자 취소는 role=ADMIN만 호출할 수 있어야 한다(SecurityConfig의
+ * POST /api/group-purchase, /api/group-purchase/images, /api/group-purchase/*\/cancel 경로 제한).
+ * 실제 시큐리티 필터 체인을 태워서 검증하며, 서비스/매퍼는 목으로 대체한다(UserWithdrawalSecurityTest와 동일한 패턴).
  */
 class GroupPurchaseAdminOnlySecurityTest {
 
@@ -134,6 +134,28 @@ class GroupPurchaseAdminOnlySecurityTest {
                 .andExpect(status().isCreated());
 
         verify(groupPurchaseService).uploadImage(org.mockito.ArgumentMatchers.any());
+    }
+
+    @Test
+    void cancelIsBlockedForUserRole() throws Exception {
+        stubAccessToken("USER");
+
+        mockMvc.perform(post("/api/group-purchase/1/cancel")
+                        .header("Authorization", "Bearer access-token"))
+                .andExpect(status().isForbidden());
+
+        verify(groupPurchaseService, never()).cancel(org.mockito.ArgumentMatchers.any());
+    }
+
+    @Test
+    void cancelIsAllowedForAdminRole() throws Exception {
+        stubAccessToken("ADMIN");
+
+        mockMvc.perform(post("/api/group-purchase/1/cancel")
+                        .header("Authorization", "Bearer access-token"))
+                .andExpect(status().isOk());
+
+        verify(groupPurchaseService).cancel("1");
     }
 
     @Test

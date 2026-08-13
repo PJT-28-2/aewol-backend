@@ -5,6 +5,7 @@ import static org.mockito.Mockito.*;
 
 import com.aewol.common.exception.BusinessException;
 import com.aewol.common.util.FileUtil;
+import com.aewol.domain.grouppurchase.dto.GroupPurchaseCancelResponse;
 import com.aewol.domain.grouppurchase.dto.GroupPurchaseCreateRequest;
 import com.aewol.domain.grouppurchase.dto.GroupPurchaseImageUploadResponse;
 import com.aewol.domain.grouppurchase.dto.GroupPurchaseJoinRequest;
@@ -1176,6 +1177,119 @@ class GroupPurchaseServiceImplTest {
 
         assertEquals(org.springframework.http.HttpStatus.CONFLICT, exception.getStatus());
         assertEquals("목표 수량 달성 또는 마감 후에는 참여를 취소할 수 없습니다. 관리자에게 문의해주세요.", exception.getMessage());
+        verifyNoInteractions(walletMapper);
+        verifyNoInteractions(transactionMapper);
+    }
+
+    @Test
+    @DisplayName("결제 완료(PAID) 참여자 전원을 환불하며 게시글을 취소한다")
+    void should_cancelAndRefundAllPaidParticipants_when_groupPurchaseIsOpen() {
+        GroupPurchaseServiceImpl service = service();
+        Map<String, Object> gpRow = savedRow();
+        gpRow.put("deadline", LocalDateTime.now().plusDays(5));
+        when(groupPurchaseMapper.findById("1")).thenReturn(gpRow);
+        when(groupPurchaseMapper.cancelGroupPurchase("1")).thenReturn(1);
+
+        Map<String, Object> participant1 = participantRow(10523L, "1", "member-1", 2);
+        participant1.put("paid_amount", new BigDecimal("50000"));
+        participant1.put("payment_status", "PAID");
+        Map<String, Object> participant2 = participantRow(10524L, "1", "member-2", 1);
+        participant2.put("paid_amount", new BigDecimal("25000"));
+        participant2.put("payment_status", "PAID");
+        when(groupPurchaseMapper.findPaidParticipants("1")).thenReturn(List.of(participant1, participant2));
+        when(groupPurchaseMapper.cancelParticipant(eq("1"), eq("member-1"), any())).thenReturn(1);
+        when(groupPurchaseMapper.cancelParticipant(eq("1"), eq("member-2"), any())).thenReturn(1);
+
+        Map<String, Object> wallet1 = new HashMap<>();
+        wallet1.put("wallet_id", "wallet-1");
+        Map<String, Object> wallet2 = new HashMap<>();
+        wallet2.put("wallet_id", "wallet-2");
+        when(walletMapper.findByMemberId("member-1")).thenReturn(wallet1);
+        when(walletMapper.findByMemberId("member-2")).thenReturn(wallet2);
+        when(walletMapper.addBalance("wallet-1", new BigDecimal("50000"))).thenReturn(1);
+        when(walletMapper.addBalance("wallet-2", new BigDecimal("25000"))).thenReturn(1);
+
+        GroupPurchaseCancelResponse result = service.cancel("1");
+
+        assertEquals("1", result.getGpId());
+        assertEquals("CANCELLED", result.getStatus());
+        assertNotNull(result.getCanceledAt());
+        assertEquals(2, result.getRefundedParticipants().size());
+        assertTrue(result.getRefundedParticipants().stream()
+                .allMatch(p -> "CANCELLED".equals(p.getPaymentStatus())));
+
+        verify(walletMapper).addBalance("wallet-1", new BigDecimal("50000"));
+        verify(walletMapper).addBalance("wallet-2", new BigDecimal("25000"));
+        ArgumentCaptor<Map<String, Object>> txnCaptor = ArgumentCaptor.forClass(Map.class);
+        verify(transactionMapper, times(2)).insert(txnCaptor.capture());
+        assertTrue(txnCaptor.getAllValues().stream().allMatch(txn -> "REFUND".equals(txn.get("txnType"))));
+        assertTrue(txnCaptor.getAllValues().stream()
+                .allMatch(txn -> ((String) txn.get("memo")).contains("작성자 취소로 인한 환불")));
+    }
+
+    @Test
+    @DisplayName("동시에 leave()로 이미 취소된 참여자는 환불 대상에서 자연히 제외된다")
+    void should_skipParticipant_when_alreadyCancelledConcurrently_onCancel() {
+        GroupPurchaseServiceImpl service = service();
+        Map<String, Object> gpRow = savedRow();
+        gpRow.put("deadline", LocalDateTime.now().plusDays(5));
+        when(groupPurchaseMapper.findById("1")).thenReturn(gpRow);
+        when(groupPurchaseMapper.cancelGroupPurchase("1")).thenReturn(1);
+
+        Map<String, Object> participant1 = participantRow(10523L, "1", "member-1", 2);
+        participant1.put("paid_amount", new BigDecimal("50000"));
+        participant1.put("payment_status", "PAID");
+        when(groupPurchaseMapper.findPaidParticipants("1")).thenReturn(List.of(participant1));
+        // member-1이 이 배치 조회 이후, 환불 처리 직전에 leave()로 먼저 취소를 완료한 상황을 재현한다.
+        when(groupPurchaseMapper.cancelParticipant(eq("1"), eq("member-1"), any())).thenReturn(0);
+
+        GroupPurchaseCancelResponse result = service.cancel("1");
+
+        assertTrue(result.getRefundedParticipants().isEmpty());
+        verifyNoInteractions(walletMapper);
+        verifyNoInteractions(transactionMapper);
+    }
+
+    @Test
+    @DisplayName("존재하지 않는 공동구매를 취소하려 하면 예외가 발생한다")
+    void should_throwException_when_gpNotFound_onCancel() {
+        GroupPurchaseServiceImpl service = service();
+        when(groupPurchaseMapper.findById("999")).thenReturn(null);
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.cancel("999"));
+
+        assertEquals("공동구매를 찾을 수 없습니다.", exception.getMessage());
+        verify(groupPurchaseMapper, never()).cancelGroupPurchase(any());
+    }
+
+    @Test
+    @DisplayName("목표 수량 달성/마감 후/이미 취소된 공동구매는 cancelGroupPurchase의 영향 행이 0이라 거절한다")
+    void should_throwConflict_when_cancelGroupPurchaseAffectsNoRows() {
+        GroupPurchaseServiceImpl service = service();
+        when(groupPurchaseMapper.findById("1")).thenReturn(savedRow());
+        when(groupPurchaseMapper.cancelGroupPurchase("1")).thenReturn(0);
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.cancel("1"));
+
+        assertEquals(org.springframework.http.HttpStatus.CONFLICT, exception.getStatus());
+        assertEquals("목표 수량 달성 또는 마감 후에는 취소할 수 없습니다.", exception.getMessage());
+        verify(groupPurchaseMapper, never()).findPaidParticipants(any());
+        verifyNoInteractions(walletMapper);
+    }
+
+    @Test
+    @DisplayName("결제 참여자가 없으면 환불 없이 빈 목록으로 취소만 처리한다")
+    void should_cancelWithoutRefund_when_noPaidParticipants() {
+        GroupPurchaseServiceImpl service = service();
+        when(groupPurchaseMapper.findById("1")).thenReturn(savedRow());
+        when(groupPurchaseMapper.cancelGroupPurchase("1")).thenReturn(1);
+        when(groupPurchaseMapper.findPaidParticipants("1")).thenReturn(List.of());
+
+        GroupPurchaseCancelResponse result = service.cancel("1");
+
+        assertTrue(result.getRefundedParticipants().isEmpty());
         verifyNoInteractions(walletMapper);
         verifyNoInteractions(transactionMapper);
     }
