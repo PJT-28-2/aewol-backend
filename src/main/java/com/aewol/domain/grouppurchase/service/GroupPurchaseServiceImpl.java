@@ -38,33 +38,35 @@ public class GroupPurchaseServiceImpl implements GroupPurchaseService {
 
     private static final List<String> ALLOWED_IMAGE_EXTENSIONS = List.of("jpg", "jpeg", "png", "webp");
 
-    private static final Map<String, String> KOREAN_TO_STATUS = Map.of(
-            "진행중", "OPEN",
-            "달성", "COMPLETED",
-            "마감(미달)", "CLOSED"
-    );
+    // 목록(findList)은 마감(취소)된 게시글을 SQL에서 무조건 제외하므로(status != 'CANCELLED'),
+    // CANCELLED는 이 API의 유효한 필터 값이 아니다.
+    private static final Set<String> LIST_STATUS_VALUES = Set.of("OPEN", "COMPLETED", "FAILED");
 
     private final GroupPurchaseMapper groupPurchaseMapper;
     private final FileUtil fileUtil;
     private final WalletMapper walletMapper;
     private final TransactionMapper transactionMapper;
 
-    private static String toDbStatus(String status) {
+    /**
+     * 목록 API의 status 쿼리 파라미터를 검증한다. 다른 3개 조회 API(getDetail/getStatus/getMyList)와
+     * 이미 동일한 OPEN/COMPLETED/FAILED/CANCELLED 값을 쓰므로(computeStatus 참고) 별도 한글 번역이
+     * 필요 없고, findList가 지원하지 않는 값만 걸러내면 된다.
+     */
+    private static String validateListStatus(String status) {
         if (status == null || status.isBlank()) {
             return null;
         }
-        String dbStatus = KOREAN_TO_STATUS.get(status);
-        if (dbStatus == null) {
+        if (!LIST_STATUS_VALUES.contains(status)) {
             throw new BusinessException("지원하지 않는 상태 값입니다: " + status);
         }
-        return dbStatus;
+        return status;
     }
 
     @Override
     public GroupPurchaseListResponse list(String memberId, String status, String keyword, String category, int page, int size) {
         int safePage = Math.max(page, 0);
         int safeSize = size <= 0 ? 10 : size;
-        String dbStatus = toDbStatus(status);
+        String dbStatus = validateListStatus(status);
 
         List<Map<String, Object>> rows = groupPurchaseMapper.findList(
                 dbStatus, keyword, category, safeSize + 1, safePage * safeSize);
@@ -148,7 +150,7 @@ public class GroupPurchaseServiceImpl implements GroupPurchaseService {
                         .build();
 
         boolean ownerCancelled = "CANCELLED".equals(gp.get("status"));
-        String status = toWaitStatus(ownerCancelled, deadline, currentQuantity, targetQuantity);
+        String status = computeStatus(ownerCancelled, deadline, currentQuantity, targetQuantity);
 
         return GroupPurchaseStatusResponse.builder()
                 .memberId(String.valueOf(gp.get("member_id")))
@@ -258,9 +260,9 @@ public class GroupPurchaseServiceImpl implements GroupPurchaseService {
     }
 
     /**
-     * 참여 취소(순서15). "진행중"(waiting) 상태에서만 허용한다 — 목표 수량 달성(confirmed) 이후에는
-     * 관리자 문의로만 취소 가능하고, 마감 후 미달(failed)/작성자 취소(cancelled)는 별도의 자동 환불
-     * 처리(Notion 순서19, 미구현) 대상이라 이 API의 범위가 아니다.
+     * 참여 취소(순서15). OPEN(진행중) 상태에서만 허용한다 — 목표 수량 달성(COMPLETED) 이후에는
+     * 관리자 문의로만 취소 가능하고, 마감 후 미달(FAILED)/작성자 취소(CANCELLED)는 별도의 자동 환불
+     * 처리(Notion 순서19, GroupPurchaseRefundExecutor) 대상이라 이 API의 범위가 아니다.
      * 취소 이력은 row를 삭제하지 않고 payment_status='CANCELLED'로 남긴다(V18 마이그레이션).
      * 동시 중복 취소 요청은 cancelParticipant의 영향받은 행 수로 감지해 거절한다.
      */
@@ -401,6 +403,10 @@ public class GroupPurchaseServiceImpl implements GroupPurchaseService {
     }
 
     private GroupPurchaseResponse toResponse(Map<String, Object> gp, boolean isParticipating) {
+        LocalDateTime deadline = toLocalDateTime(gp.get("deadline"));
+        Integer currentQuantity = toInt(gp.get("current_quantity"));
+        Integer targetQuantity = toInt(gp.get("target_quantity"));
+        boolean cancelled = "CANCELLED".equals(gp.get("status"));
         return GroupPurchaseResponse.builder()
                 .gpId(String.valueOf(gp.get("gp_id")))
                 .memberId(String.valueOf(gp.get("member_id")))
@@ -414,10 +420,10 @@ public class GroupPurchaseServiceImpl implements GroupPurchaseService {
                 .deliveryDate(toLocalDate(gp.get("delivery_date")))
                 .deliveryEstimateDays(toInt(gp.get("delivery_estimate_days")))
                 .description((String) gp.get("description"))
-                .targetQuantity(toInt(gp.get("target_quantity")))
-                .currentQuantity(toInt(gp.get("current_quantity")))
-                .status((String) gp.get("status"))
-                .deadline(toLocalDateTime(gp.get("deadline")))
+                .targetQuantity(targetQuantity)
+                .currentQuantity(currentQuantity)
+                .status(computeStatus(cancelled, deadline, currentQuantity, targetQuantity))
+                .deadline(deadline)
                 .createdAt(toLocalDateTime(gp.get("created_at")))
                 .isParticipating(isParticipating)
                 .build();
@@ -429,6 +435,8 @@ public class GroupPurchaseServiceImpl implements GroupPurchaseService {
         Integer targetQuantity = toInt(gp.get("target_quantity"));
         BigDecimal unitPrice = toDecimal(gp.get("unit_price"));
         BigDecimal groupPrice = toDecimal(gp.get("group_price"));
+        // findList SQL이 status != 'CANCELLED'를 무조건 적용하므로 이 목록에는 취소된 게시글이 없다.
+        boolean cancelled = "CANCELLED".equals(gp.get("status"));
         String gpId = String.valueOf(gp.get("gp_id"));
         boolean isParticipating = memberId != null && groupPurchaseMapper.findParticipant(gpId, memberId) != null;
         return GroupPurchaseListItemResponse.builder()
@@ -436,7 +444,7 @@ public class GroupPurchaseServiceImpl implements GroupPurchaseService {
                 .memberId(toLong(gp.get("member_id")))
                 .productName((String) gp.get("product_name"))
                 .category((String) gp.get("category"))
-                .status(computeDisplayStatus(deadline, currentQuantity, targetQuantity))
+                .status(computeStatus(cancelled, deadline, currentQuantity, targetQuantity))
                 .unitPrice(unitPrice)
                 .groupPrice(groupPrice)
                 .currentQuantity(currentQuantity)
@@ -449,78 +457,15 @@ public class GroupPurchaseServiceImpl implements GroupPurchaseService {
     }
 
     /**
-     * 저장된 status 컬럼이 아니라 목표 수량 달성 여부·마감 시각으로 화면 표시 상태를 계산한다.
-     * 판정 순서를 마이페이지(toMyStatus)/상세(toWaitStatus)와 동일하게 [목표 수량 도달 여부] → [마감일 경과 여부]로 맞춘다
-     * — 목표 수량은 달성 즉시 updateQuantity에서 추가 참여를 막으므로, 마감 전이라도 "달성"으로 확정 표시해야 한다.
-     * SQL 필터(findList)와 동일한 기준을 사용해야 한다.
-     */
-    private static String computeDisplayStatus(LocalDateTime deadline, Integer currentQuantity, Integer targetQuantity) {
-        int current = currentQuantity == null ? 0 : currentQuantity;
-        int target = targetQuantity == null ? 0 : targetQuantity;
-        if (isTargetReached(current, target)) {
-            return "달성";
-        }
-        if (deadline != null && deadline.isBefore(LocalDateTime.now())) {
-            return "마감(미달)";
-        }
-        return "진행중";
-    }
-
-    /**
-     * 상태 화면 전용 waiting/confirmed/failed/cancelled 값을 계산한다(Notion 2026-08-10 정책 변경).
+     * 공동구매 조회 API 4개(list/getDetail/getStatus/getMyList) 공통 상태 계산.
+     * 저장된 status 컬럼을 그대로 내려주지 않고(COMPLETED/FAILED는 컬럼에 저장되지 않는 계산값이라
+     * 그대로 내려주면 항상 OPEN으로만 보임) 매번 여기서 다시 계산해야 한다.
      * 판정 순서: [관리자 취소 여부] → [목표 수량 도달 여부] → [마감일 경과 여부].
-     * 목표 수량 달성은 마감 전이라도 즉시 confirmed로 확정하고(초과 참여는 updateQuantity에서 이미 막혀 있음),
-     * 마감 후 미달성은 failed(환불 대상), 관리자 취소는 cancelled로 각각 구분한다.
+     * 목표 수량 달성은 마감 전이라도 즉시 COMPLETED로 확정하고(초과 참여는 updateQuantity에서 이미
+     * 막혀 있음), 마감 후 미달성은 FAILED(환불 대상), 관리자 취소는 CANCELLED로 각각 구분한다.
      */
-    private static String toWaitStatus(boolean ownerCancelled, LocalDateTime deadline, Integer currentQuantity, Integer targetQuantity) {
-        if (ownerCancelled) {
-            return "cancelled";
-        }
-        int current = currentQuantity == null ? 0 : currentQuantity;
-        int target = targetQuantity == null ? 0 : targetQuantity;
-        if (isTargetReached(current, target)) {
-            return "confirmed";
-        }
-        if (deadline != null && deadline.isBefore(LocalDateTime.now())) {
-            return "failed";
-        }
-        return "waiting";
-    }
-
-    /** 각 status 값에 맞는 안내 문구를 반환한다. */
-    private static String toNoticeMessage(String status) {
-        return switch (status) {
-            case "confirmed" -> "목표 인원이 모두 모여 공동구매가 확정되었습니다.";
-            case "failed" -> "목표 인원 미달로 공동구매가 취소되어 환불됩니다.";
-            case "cancelled" -> "작성자가 취소한 공동구매입니다.";
-            default -> "목표 인원이 모두 모이면 공동구매가 최종 확정됩니다.";
-        };
-    }
-
-    private GroupPurchaseMyItemResponse toMyItemResponse(Map<String, Object> gp) {
-        LocalDateTime deadline = toLocalDateTime(gp.get("deadline"));
-        Integer currentQuantity = toInt(gp.get("current_quantity"));
-        Integer targetQuantity = toInt(gp.get("target_quantity"));
-        return GroupPurchaseMyItemResponse.builder()
-                .gpId(toLong(gp.get("gp_id")))
-                .memberId(toLong(gp.get("member_id")))
-                .productName((String) gp.get("product_name"))
-                .status(toMyStatus((String) gp.get("status"), deadline, currentQuantity, targetQuantity))
-                .currentQuantity(currentQuantity)
-                .targetQuantity(targetQuantity)
-                .deadline(deadline)
-                .createdAt(toLocalDateTime(gp.get("created_at")))
-                .build();
-    }
-
-    /**
-     * 마이페이지 목록 전용 OPEN/COMPLETED/FAILED/CANCELLED 값을 계산한다(Notion 2026-08-10 정책 변경,
-     * 순서7 getStatus/toWaitStatus와 동일한 4분리 기준). DB status 컬럼은 실제로 OPEN/CANCELLED만
-     * 저장되므로(COMPLETED/FAILED는 findList처럼 계산값), 여기서도 저장값을 그대로 내려주지 않고
-     * 판정 순서([관리자 취소 여부] → [목표 수량 도달 여부] → [마감일 경과 여부])로 계산한다.
-     */
-    private static String toMyStatus(String dbStatus, LocalDateTime deadline, Integer currentQuantity, Integer targetQuantity) {
-        if ("CANCELLED".equals(dbStatus)) {
+    private static String computeStatus(boolean cancelled, LocalDateTime deadline, Integer currentQuantity, Integer targetQuantity) {
+        if (cancelled) {
             return "CANCELLED";
         }
         int current = currentQuantity == null ? 0 : currentQuantity;
@@ -532,6 +477,33 @@ public class GroupPurchaseServiceImpl implements GroupPurchaseService {
             return "FAILED";
         }
         return "OPEN";
+    }
+
+    /** 각 status 값에 맞는 안내 문구를 반환한다(상태 화면 전용). */
+    private static String toNoticeMessage(String status) {
+        return switch (status) {
+            case "COMPLETED" -> "목표 인원이 모두 모여 공동구매가 확정되었습니다.";
+            case "FAILED" -> "목표 인원 미달로 공동구매가 취소되어 환불됩니다.";
+            case "CANCELLED" -> "작성자가 취소한 공동구매입니다.";
+            default -> "목표 인원이 모두 모이면 공동구매가 최종 확정됩니다.";
+        };
+    }
+
+    private GroupPurchaseMyItemResponse toMyItemResponse(Map<String, Object> gp) {
+        LocalDateTime deadline = toLocalDateTime(gp.get("deadline"));
+        Integer currentQuantity = toInt(gp.get("current_quantity"));
+        Integer targetQuantity = toInt(gp.get("target_quantity"));
+        boolean cancelled = "CANCELLED".equals(gp.get("status"));
+        return GroupPurchaseMyItemResponse.builder()
+                .gpId(toLong(gp.get("gp_id")))
+                .memberId(toLong(gp.get("member_id")))
+                .productName((String) gp.get("product_name"))
+                .status(computeStatus(cancelled, deadline, currentQuantity, targetQuantity))
+                .currentQuantity(currentQuantity)
+                .targetQuantity(targetQuantity)
+                .deadline(deadline)
+                .createdAt(toLocalDateTime(gp.get("created_at")))
+                .build();
     }
 
     /**

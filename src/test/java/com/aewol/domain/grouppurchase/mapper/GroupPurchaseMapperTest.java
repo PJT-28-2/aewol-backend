@@ -152,6 +152,32 @@ class GroupPurchaseMapperTest {
     }
 
     @Test
+    @DisplayName("마감이 지났고 목표 미달이면 findList의 FAILED 필터에만 잡힌다")
+    void should_matchFailedFilterOnFindList_when_deadlinePassedAndTargetNotReached() {
+        insertGroupPurchase(99L, "OPEN", 3, 10, LocalDateTime.now().minusDays(1));
+
+        assertEquals(1, findList("FAILED", null, null, 10, 0).size());
+        assertEquals(0, findList("OPEN", null, null, 10, 0).size());
+        assertEquals(0, findList("COMPLETED", null, null, 10, 0).size());
+    }
+
+    @Test
+    @DisplayName("필터 없이 조회하면 진행중(마감 전+목표 미달) 게시글이 그룹 전체가 먼저, 마감된(목표 달성/미달) 게시글이 뒤에 오고 각 그룹 안에서는 최신 등록순이다")
+    void should_orderOpenGroupBeforeClosedGroup_andLatestFirstWithinEachGroup() {
+        LocalDateTime now = LocalDateTime.now();
+        long oldOpen = insertGroupPurchase(99L, "OPEN", 3, 10, now.plusDays(5), now.minusDays(3));
+        long newOpen = insertGroupPurchase(99L, "OPEN", 3, 10, now.plusDays(5), now.minusHours(1));
+        long oldClosed = insertGroupPurchase(99L, "OPEN", 10, 10, now.plusDays(5), now.minusDays(2));
+        long newClosed = insertGroupPurchase(99L, "OPEN", 3, 10, now.minusDays(1), now.minusHours(2));
+
+        List<Map<String, Object>> result = findList(null, null, null, 10, 0);
+
+        assertEquals(
+                List.of(newOpen, oldOpen, newClosed, oldClosed),
+                result.stream().map(row -> ((Number) row.get("gp_id")).longValue()).toList());
+    }
+
+    @Test
     @DisplayName("마감이 지났고 목표 미달이면 FAILED 필터에만 잡힌다")
     void should_matchFailedFilterOnly_when_deadlinePassedAndTargetNotReached() {
         long gpId = insertGroupPurchase(99L, "OPEN", 3, 10, LocalDateTime.now().minusDays(1));
@@ -421,6 +447,11 @@ class GroupPurchaseMapperTest {
 
     private long insertGroupPurchase(long memberId, String status, int currentQuantity, int targetQuantity,
                                       LocalDateTime deadline) {
+        return insertGroupPurchase(memberId, status, currentQuantity, targetQuantity, deadline, LocalDateTime.now());
+    }
+
+    private long insertGroupPurchase(long memberId, String status, int currentQuantity, int targetQuantity,
+                                      LocalDateTime deadline, LocalDateTime createdAt) {
         KeyHolder keyHolder = new GeneratedKeyHolder();
         jdbcTemplate.update(connection -> {
             PreparedStatement statement = connection.prepareStatement(
@@ -434,7 +465,7 @@ class GroupPurchaseMapperTest {
             statement.setInt(4, currentQuantity);
             statement.setInt(5, targetQuantity);
             statement.setObject(6, deadline);
-            statement.setObject(7, LocalDateTime.now());
+            statement.setObject(7, createdAt);
             return statement;
         }, keyHolder);
         return keyHolder.getKey().longValue();
