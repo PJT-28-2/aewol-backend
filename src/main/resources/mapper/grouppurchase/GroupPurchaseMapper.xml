@@ -3,8 +3,10 @@
 <mapper namespace="com.aewol.domain.grouppurchase.mapper.GroupPurchaseMapper">
     <!-- V1: 작성자 컴럼은 member_id, 참여 테이블은 group_purchase_participant(purchase_quantity) -->
 
-    <!-- status 필터는 저장 코드가 아니라 GroupPurchaseServiceImpl#computeDisplayStatus와 동일한
+    <!-- status 필터는 저장 코드가 아니라 GroupPurchaseServiceImpl#computeStatus와 동일한
          계산 규칙(마감 시각, 목표 수량 달성 여부)으로 판정한다. 필터는 반드시 LIMIT/OFFSET 이전에 적용한다.
+         OPEN/COMPLETED/FAILED는 다른 3개 조회 API(getDetail/getStatus/getMyList)와 동일한 값이다 —
+         마감(취소)된 게시글은 이 목록에서 아예 노출하지 않으므로(status != 'CANCELLED') CANCELLED 분기는 없다.
          target_quantity <= 0인 행(정상 생성 경로로는 나올 수 없는 레거시/비정상 데이터)은 목록 자체에서
          제외한다 — 마감 자동 환불 배치(findExpiredUnfulfilledPaidParticipants)는 이 목록과 무관하게
          계속 처리하므로 결제된 참여자 환불에는 영향이 없다. -->
@@ -19,7 +21,7 @@
                 <when test="status == 'COMPLETED'">
                     AND current_quantity &gt;= target_quantity
                 </when>
-                <when test="status == 'CLOSED'">
+                <when test="status == 'FAILED'">
                     AND current_quantity &lt; target_quantity AND deadline &lt; NOW()
                 </when>
             </choose>

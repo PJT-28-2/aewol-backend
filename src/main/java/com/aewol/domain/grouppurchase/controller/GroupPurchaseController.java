@@ -93,7 +93,7 @@ public class GroupPurchaseController {
 
     /**
      * 일반 유저(role=USER) 전용. SecurityConfig에서 POST /api/group-purchase/{gpId}/leave에 ROLE_USER를 요구한다.
-     * "진행중"(waiting) 상태에서만 취소 가능하며, 목표 수량 달성(confirmed) 이후에는 관리자 문의로만 취소할 수 있다.
+     * OPEN(진행중) 상태에서만 취소 가능하며, 목표 수량 달성(COMPLETED) 이후에는 관리자 문의로만 취소할 수 있다.
      */
     @Operation(summary = "공동구매 참여 취소 (일반 유저 전용)")
     @PostMapping("/{gpId}/leave")
