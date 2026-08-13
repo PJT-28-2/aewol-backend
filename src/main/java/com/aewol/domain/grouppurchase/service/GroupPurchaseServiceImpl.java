@@ -40,7 +40,7 @@ public class GroupPurchaseServiceImpl implements GroupPurchaseService {
 
     private static final Map<String, String> KOREAN_TO_STATUS = Map.of(
             "진행중", "OPEN",
-            "마감(성공)", "COMPLETED",
+            "달성", "COMPLETED",
             "마감(미달)", "CLOSED"
     );
 
@@ -451,14 +451,14 @@ public class GroupPurchaseServiceImpl implements GroupPurchaseService {
     /**
      * 저장된 status 컬럼이 아니라 목표 수량 달성 여부·마감 시각으로 화면 표시 상태를 계산한다.
      * 판정 순서를 마이페이지(toMyStatus)/상세(toWaitStatus)와 동일하게 [목표 수량 도달 여부] → [마감일 경과 여부]로 맞춘다
-     * — 목표 수량은 달성 즉시 updateQuantity에서 추가 참여를 막으므로, 마감 전이라도 "마감(성공)"으로 확정 표시해야 한다.
+     * — 목표 수량은 달성 즉시 updateQuantity에서 추가 참여를 막으므로, 마감 전이라도 "달성"으로 확정 표시해야 한다.
      * SQL 필터(findList)와 동일한 기준을 사용해야 한다.
      */
     private static String computeDisplayStatus(LocalDateTime deadline, Integer currentQuantity, Integer targetQuantity) {
         int current = currentQuantity == null ? 0 : currentQuantity;
         int target = targetQuantity == null ? 0 : targetQuantity;
         if (isTargetReached(current, target)) {
-            return "마감(성공)";
+            return "달성";
         }
         if (deadline != null && deadline.isBefore(LocalDateTime.now())) {
             return "마감(미달)";
