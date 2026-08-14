@@ -23,17 +23,35 @@ public class FileSignature {
 
     private final byte[] secret;
     private final long ttlSeconds;
+    private final long bucketSeconds;
 
     public FileSignature(@Value("${jwt.secret}") String jwtSecret,
-                         @Value("${file.signed-url-ttl-seconds:3600}") long ttlSeconds) {
+                         @Value("${file.signed-url-ttl-seconds:3600}") long ttlSeconds,
+                         @Value("${file.signed-url-bucket-seconds:600}") long bucketSeconds) {
         // 파일 서명 전용 키를 따로 두지 않고 JWT 시크릿에서 파생시킨다. 같은 값을 그대로
         // 쓰면 한쪽이 유출됐을 때 다른 쪽까지 위조할 수 있어 용도 문자열을 섞어 분리한다.
         this.secret = hmac(jwtSecret.getBytes(StandardCharsets.UTF_8), "aewol-file-signature");
         this.ttlSeconds = ttlSeconds;
+        this.bucketSeconds = bucketSeconds;
     }
 
+    /**
+     * 만료 시각을 구간 단위로 끊어 돌려준다.
+     *
+     * <p>호출 시각을 그대로 쓰면 초마다 값이 달라져 서명도, URL도 매번 바뀐다. 브라우저
+     * 캐시는 URL을 키로 쓰기 때문에 그러면 {@code Cache-Control}을 붙여도 항상 다시
+     * 내려받는다. 캐릭터 이미지가 장당 1~2MB라 목록을 열 때마다 그만큼 낭비된다.
+     *
+     * <p>그래서 만료 시각을 구간 경계로 올림한다. 같은 구간 안에서 요청하면 같은 값이
+     * 나와 URL이 그대로 유지된다. 남은 유효시간은 항상 {@code [ttl, ttl + bucket)}이라
+     * 설정한 TTL보다 짧아지지 않는다.
+     */
     public long expiresAt() {
-        return Instant.now().getEpochSecond() + ttlSeconds;
+        long deadline = Instant.now().getEpochSecond() + ttlSeconds;
+        if (bucketSeconds <= 0) {
+            return deadline;
+        }
+        return Math.floorDiv(deadline, bucketSeconds) * bucketSeconds + bucketSeconds;
     }
 
     public String sign(String key, long expiresAt) {

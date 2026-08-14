@@ -50,6 +50,7 @@ class GroupPurchaseRefundExecutorTest {
         row.put("gp_id", gpId);
         row.put("product_name", "사료 5kg");
         row.put("category", "사료");
+        row.put("target_quantity", 10);
         return row;
     }
 
@@ -106,6 +107,28 @@ class GroupPurchaseRefundExecutorTest {
 
         // 실제로 잔액이 안 들어갔는데 거래내역만 남는 유령 환불 기록을 막는다.
         verify(transactionMapper, never()).insert(anyMap());
+    }
+
+    @Test
+    void should_stillRefund_when_groupPurchaseTargetQuantityIsNotPositive() {
+        // target_quantity <= 0은 정상 생성 경로로는 나올 수 없는 레거시/비정상 데이터다(GroupPurchaseServiceImpl
+        // isTargetReached 참고). 목록/상세에서는 이런 데이터를 숨기지만, 이미 결제한 참여자의 환불까지
+        // 막을 이유는 없으므로 배치는 경고 로그만 남기고 정상적으로 환불을 진행해야 한다.
+        Map<String, Object> candidate = candidate("1", "member-1", 2, "50000");
+        Map<String, Object> corruptedGp = gp("1");
+        corruptedGp.put("target_quantity", 0);
+        when(groupPurchaseMapper.cancelParticipant(eq("1"), eq("member-1"), any())).thenReturn(1);
+        when(groupPurchaseMapper.findById("1")).thenReturn(corruptedGp);
+        Map<String, Object> wallet = new HashMap<>();
+        wallet.put("wallet_id", "wallet-1");
+        when(walletMapper.findByMemberId("member-1")).thenReturn(wallet);
+        when(walletMapper.addBalance("wallet-1", new BigDecimal("50000"))).thenReturn(1);
+
+        boolean result = executor().execute(candidate);
+
+        assertTrue(result);
+        verify(walletMapper).addBalance("wallet-1", new BigDecimal("50000"));
+        verify(transactionMapper).insert(anyMap());
     }
 
     @Test

@@ -102,4 +102,15 @@ public class RestTemplateConfig {
         factory.setReadTimeout(60_000);
         return new RestTemplate(factory);
     }
+
+    // 홈 인사이트 카드 문구 생성 전용. 2문장짜리 짧은 응답이라 실측 1~2초면 끝난다.
+    // 홈 화면이 이 호출을 기다릴 수 있으므로 오래 붙들지 않도록 짧게 끊는다 —
+    // 실패하면 데이터로 만든 대체 문구를 쓰면 되기 때문이다.
+    @Bean(name = "openAiRestTemplate")
+    public RestTemplate openAiRestTemplate() {
+        SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
+        factory.setConnectTimeout(3_000);
+        factory.setReadTimeout(15_000);
+        return new RestTemplate(factory);
+    }
 }

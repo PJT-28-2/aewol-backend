@@ -327,6 +327,9 @@ public class PetServiceImpl implements PetService {
                 .iconType((String) pet.get("icon_type"))
                 .medicalHistory((String) pet.get("medical_history"))
                 .profileImg(fileStorage.signedUrl((String) pet.get("profile_img")))
+                // 홈 화면 히어로용 전신 캐릭터. 조회할 때마다 새 서명 URL을 발급하므로
+                // 프론트는 이 값을 저장하지 말고 매번 받은 것을 써야 만료로 깨지지 않는다.
+                .characterImg(fileStorage.signedUrl((String) pet.get("character_img")))
                 .isActive(toBool(pet.get("is_active")))
                 .build();
     }
