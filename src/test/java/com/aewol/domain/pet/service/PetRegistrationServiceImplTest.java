@@ -140,35 +140,62 @@ class PetRegistrationServiceImplTest {
     }
 
     @Test
-    void should_returnRegistrationDetail_when_found() {
+    void should_returnRegistrationDetail_when_ownerRequestsIt() {
+        when(petMapper.findById("pet-1")).thenReturn(pet("member-1"));
+        // reg_tm은 초가 0(경계값), last_synced_at은 초가 0이 아닌 값을 섞어서, LocalDateTime#toString()의
+        // "초·나노초가 0이면 생략" 들쭉날쭉 포맷팅이 재발하지 않는지(DateTimeUtil.toIsoString이 항상
+        // 초까지 포함하는지)를 함께 검증한다.
         when(petRegistrationMapper.findByPetIdAndDocId("pet-1", "doc-1")).thenReturn(map(
                 "doc_id", "doc-1", "pet_id", "pet-1", "reg_number", "410000012345678",
                 "name", "몽이", "breed", "말티즈", "gender", "MALE", "neutered", "Y",
                 "birth_date", "20220101", "rfid_cd", "410000012345678", "rfid_gubun", "Y",
                 "org_nm", "제주시", "office_tel", "064-123-4567", "apr_gbn_nm", "승인완료",
-                "reg_tm", LocalDateTime.of(2023, 6, 2, 9, 15),
-                "apr_tm", LocalDateTime.of(2023, 6, 2, 10, 40),
-                "last_synced_at", LocalDateTime.of(2026, 8, 14, 10, 0)));
+                "reg_tm", LocalDateTime.of(2023, 6, 2, 9, 15, 0),
+                "apr_tm", LocalDateTime.of(2023, 6, 2, 10, 40, 0),
+                "last_synced_at", LocalDateTime.of(2026, 8, 14, 10, 0, 37)));
 
-        PetRegistrationResponse response = service.getDetail("pet-1", "doc-1");
+        PetRegistrationResponse response = service.getDetail("member-1", "pet-1", "doc-1");
 
         assertEquals("doc-1", response.getDocId());
         assertEquals("410000012345678", response.getRegNumber());
         assertEquals("몽이", response.getName());
-        assertEquals("2023-06-02T09:15", response.getRegTm());
-        assertEquals("2023-06-02T10:40", response.getAprTm());
-        assertEquals("2026-08-14T10:00", response.getLastSyncedAt());
+        assertEquals("2023-06-02T09:15:00", response.getRegTm());
+        assertEquals("2023-06-02T10:40:00", response.getAprTm());
+        assertEquals("2026-08-14T10:00:37", response.getLastSyncedAt());
         assertTrue(response.isVerified());
     }
 
     @Test
     void should_throwNotFound_when_registrationDetailMissing() {
+        when(petMapper.findById("pet-1")).thenReturn(pet("member-1"));
         when(petRegistrationMapper.findByPetIdAndDocId("pet-1", "doc-404")).thenReturn(null);
 
         BusinessException exception = assertThrows(BusinessException.class,
-                () -> service.getDetail("pet-1", "doc-404"));
+                () -> service.getDetail("member-1", "pet-1", "doc-404"));
 
         assertEquals(HttpStatus.NOT_FOUND, exception.getStatus());
+    }
+
+    @Test
+    void should_throwForbidden_when_nonOwnerRequestsRegistrationDetail() {
+        when(petMapper.findById("pet-1")).thenReturn(pet("owner-1"));
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.getDetail("member-2", "pet-1", "doc-1"));
+
+        assertEquals(HttpStatus.FORBIDDEN, exception.getStatus());
+        verifyNoInteractions(petRegistrationMapper);
+    }
+
+    @Test
+    void should_throwNotFound_when_petDoesNotExist_onGetDetail() {
+        when(petMapper.findById("pet-404")).thenReturn(null);
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.getDetail("member-1", "pet-404", "doc-1"));
+
+        assertEquals(HttpStatus.NOT_FOUND, exception.getStatus());
+        verifyNoInteractions(petRegistrationMapper);
     }
 
     private PetRegistrationVerifyRequest request(String regNumber, String userName, String birthDate) {

@@ -55,7 +55,7 @@ class PetDocumentQueryDeleteServiceTest {
         assertEquals("vaccination-certificate.pdf", result.get(0).getDocName());
         assertEquals("2026-08-07", result.get(0).getIssuedDate());
         assertEquals("signed:/uploads/pet-documents/new.pdf", result.get(0).getFileUrl());
-        assertEquals("2026-08-07T10:00", result.get(0).getCreatedAt());
+        assertEquals("2026-08-07T10:00:00", result.get(0).getCreatedAt());
         verify(petDocumentMapper).findByPetId("pet-1");
     }
 
@@ -194,12 +194,12 @@ class PetDocumentQueryDeleteServiceTest {
         registrationDocument.put("doc_type", "REGISTRATION");
         when(petDocumentMapper.findByIdAndPetId("doc-2", "pet-1")).thenReturn(registrationDocument);
         PetRegistrationResponse expected = PetRegistrationResponse.builder().docId("doc-2").build();
-        when(petRegistrationService.getDetail("pet-1", "doc-2")).thenReturn(expected);
+        when(petRegistrationService.getDetail("member-1", "pet-1", "doc-2")).thenReturn(expected);
 
         Object result = service.getPetDocument("member-1", "pet-1", "doc-2");
 
         assertSame(expected, result);
-        verify(petRegistrationService).getDetail("pet-1", "doc-2");
+        verify(petRegistrationService).getDetail("member-1", "pet-1", "doc-2");
         verifyNoInteractions(fileStorage);
     }
 
