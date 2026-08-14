@@ -43,7 +43,8 @@ public class InsuranceProductServiceImpl implements InsuranceProductService {
 
         Comparator<Map<String, Object>> finalComparator = (age == null)
                 ? premiumComparator
-                : Comparator.<Map<String, Object>, Integer>comparing(product -> ageInRange(product, age) ? 0 : 1)
+                : Comparator.<Map<String, Object>, Integer>comparing(
+                                product -> InsuranceProductPolicy.isEligibleByAge(product, age) ? 0 : 1)
                         .thenComparing(premiumComparator);
 
         return products.stream()
@@ -53,21 +54,19 @@ public class InsuranceProductServiceImpl implements InsuranceProductService {
                 .collect(Collectors.toList());
     }
 
-    /** CONFIRMED로 표기된 나이 기준 상품만 나이 범위 필터를 강하게 적용한다 (그 외는 정렬 순위만 낮춘다) */
+    /**
+     * CONFIRMED로 표기된 나이 기준 상품만 나이 범위 필터를 강하게 적용한다 (그 외는 정렬 순위만 낮춘다).
+     *
+     * <p>{@code age_basis='OWNER'}인 상품(메리츠, 현대해상 스탠다드 등)은
+     * {@link InsuranceProductPolicy#isEligibleByAge}가 항상 적격으로 판정하므로,
+     * {@code age_subject_confidence='CONFIRMED'}가 백필돼도 이 상품들이 카탈로그에서
+     * 하드 배제되지 않는다 (계획서 Critic C-1 회귀 방지).</p>
+     */
     private boolean isConfirmedAgeMismatch(Map<String, Object> product, int age) {
         if (!"CONFIRMED".equals(product.get("age_subject_confidence"))) {
             return false;
         }
-        return !ageInRange(product, age);
-    }
-
-    private boolean ageInRange(Map<String, Object> product, int age) {
-        Integer minAge = (Integer) product.get("join_age_min");
-        Integer maxAge = (Integer) product.get("join_age_max");
-        if (minAge == null || maxAge == null) {
-            return true;
-        }
-        return age >= minAge && age <= maxAge;
+        return !InsuranceProductPolicy.isEligibleByAge(product, age);
     }
 
     private ProductResponse toProductResponse(Map<String, Object> product,
@@ -83,7 +82,8 @@ public class InsuranceProductServiceImpl implements InsuranceProductService {
                         .build())
                 .collect(Collectors.toList());
 
-        List<ProductPlanTierResponse> planTiers = tiersByProduct.getOrDefault(productId, List.of()).stream()
+        List<Map<String, Object>> tiers = tiersByProduct.getOrDefault(productId, List.of());
+        List<ProductPlanTierResponse> planTiers = tiers.stream()
                 .map(tier -> ProductPlanTierResponse.builder()
                         .tierName((String) tier.get("tier_name"))
                         .reimbursementRatePct((Integer) tier.get("reimbursement_rate_pct"))
@@ -91,6 +91,14 @@ public class InsuranceProductServiceImpl implements InsuranceProductService {
                         .premiumKrw((BigDecimal) tier.get("premium_krw"))
                         .build())
                 .collect(Collectors.toList());
+
+        // 환급률/신뢰도/연간한도의 진실 원천은 insurance_product가 아니라 견적 기준
+        // 티어(is_reference_tier=1)다 (V28 재설계). 상품에 티어가 없으면(아직 리서치
+        // 미완료) 전부 null(=미확인)로 남긴다.
+        Map<String, Object> referenceTier = tiers.stream()
+                .filter(tier -> Boolean.TRUE.equals(toBool(tier.get("is_reference_tier"))))
+                .findFirst()
+                .orElse(null);
 
         return ProductResponse.builder()
                 .productId(String.valueOf(productId))
@@ -104,8 +112,11 @@ public class InsuranceProductServiceImpl implements InsuranceProductService {
                 .productUrl((String) product.get("product_url"))
                 .phone((String) product.get("phone"))
                 .reimbursementStructure((String) product.get("reimbursement_structure"))
-                .reimbursementConfidence((String) product.get("reimbursement_confidence"))
+                .reimbursementRatePct(referenceTier == null ? null : (Integer) referenceTier.get("reimbursement_rate_pct"))
+                .reimbursementConfidence(referenceTier == null ? null : (String) referenceTier.get("reimbursement_confidence"))
+                .reimbursementRateNote((String) product.get("reimbursement_rate_note"))
                 .regulatoryCapWarning((String) product.get("regulatory_cap_warning"))
+                .annualLimitKrw(referenceTier == null ? null : (BigDecimal) referenceTier.get("annual_limit_krw"))
                 .planTiers(planTiers)
                 .coverages(coverages)
                 .build();

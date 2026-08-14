@@ -15,9 +15,11 @@ import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.Period;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -27,7 +29,14 @@ import org.springframework.transaction.annotation.Transactional;
 @RequiredArgsConstructor
 public class InsuranceSimulationServiceImpl implements InsuranceSimulationService {
 
+    // TODO(S2): 출처 없는 상수. worker-2가 연 진료 횟수(n)의 출처를 확정하기 전까지는
+    // Decision 5 분기표의 "미확보" 행만 적용한다 (CLAIM_COUNT_SOURCE_CONFIRMED=false).
+    // 출처가 확정되면 이 값과 CLAIM_COUNT_SOURCE_CONFIRMED를 함께 갱신할 것.
     private static final int ANNUAL_CLAIM_COUNT = 6;
+    private static final boolean CLAIM_COUNT_SOURCE_CONFIRMED = false;
+
+    // TODO(S2): worker-2 리서치 결과의 마리당 통계치로 교체. 현재 값은 가구 평균
+    // 연환산 추정치라 마리당 수치로는 부적절함이 확인된 상태(계획서 S2 참조).
     private static final long ANNUAL_EXPECTED_VET_COST_KRW = 513_500L;
     private static final String ASSUMPTION_SOURCE =
             "KB금융경영연구소 2025 한국 반려동물 보고서(가구 평균 2년 102.7만원 기준 연환산 추정치)";
@@ -35,6 +44,7 @@ public class InsuranceSimulationServiceImpl implements InsuranceSimulationServic
             "기존 병력이 있는 경우 일부 보장이 제한되거나 면책될 수 있습니다. 가입 전 약관을 확인하세요.";
     private static final int[] BREAK_EVEN_YEARS = {1, 5, 10};
     private static final int RECOMMENDED_PRODUCT_LIMIT = 5;
+    private static final String MEDICAL_CATEGORY = "MEDICAL";
 
     private final InsuranceMapper insuranceMapper;
     private final PetMapper petMapper;
@@ -49,12 +59,42 @@ public class InsuranceSimulationServiceImpl implements InsuranceSimulationServic
         String species = (String) pet.get("species");
         Integer age = calculateAge(pet.get("birth_date"));
 
-        List<RecommendedProductResponse> recommendedProducts = insuranceMapper.findProductsBySpecies(species).stream()
-                .filter(product -> ageInRange(product, age))
-                .filter(product -> !"UNVERIFIED".equals(product.get("reimbursement_confidence")))
-                .sorted(Comparator.comparing(product -> (BigDecimal) product.get("premium_monthly_equiv")))
+        boolean isUserAdjusted = request.getAnnualMedicalCostKrw() != null;
+        long annualMedicalCostKrw = isUserAdjusted
+                ? request.getAnnualMedicalCostKrw()
+                : ANNUAL_EXPECTED_VET_COST_KRW;
+
+        // 환급률/자기부담금/연간한도/출처/신뢰도의 진실 원천은 insurance_product가
+        // 아니라 insurance_product_plan_tiers의 견적 기준 티어(is_reference_tier=1)다
+        // (V28 재설계 — 국내 펫보험의 보장비율은 상품 고정 속성이 아니라 가입 시
+        // 선택하는 플랜 옵션이라는 리서치 발견에 따른 것). 후보를 먼저 나이/카테고리로
+        // 거른 뒤, 그 상품들의 견적 기준 티어만 별도로 조회해 병합한다.
+        List<Map<String, Object>> candidateProducts = insuranceMapper.findProductsBySpecies(species).stream()
+                .filter(product -> InsuranceProductPolicy.isEligibleByAge(product, age))
+                .filter(product -> MEDICAL_CATEGORY.equals(product.get("product_category")))
+                .collect(Collectors.toList());
+
+        List<Long> candidateProductIds = candidateProducts.stream()
+                .map(product -> ((Number) product.get("product_id")).longValue())
+                .collect(Collectors.toList());
+        Map<Long, Map<String, Object>> referenceTierByProductId = candidateProductIds.isEmpty()
+                ? Collections.emptyMap()
+                : insuranceMapper.findReferenceTiersByProductIds(candidateProductIds).stream()
+                        .collect(Collectors.toMap(
+                                tier -> ((Number) tier.get("product_id")).longValue(),
+                                tier -> tier));
+
+        // Decision 4(A): UNVERIFIED 필터를 제거해 근거 미확인 상품(=견적 기준 티어가
+        // 없거나 rate가 NULL인 상품)도 후보에 남긴다. breakEvenAvailable=true
+        // (=견적 기준 티어의 reimbursement_rate_pct 확정)인 상품을 우선 정렬한다.
+        List<RecommendedProductResponse> recommendedProducts = candidateProducts.stream()
+                .sorted(Comparator
+                        .comparing((Map<String, Object> product) -> referenceTierRate(product, referenceTierByProductId) == null)
+                        .thenComparing(product -> (BigDecimal) product.get("premium_monthly_equiv")))
                 .limit(RECOMMENDED_PRODUCT_LIMIT)
-                .map(this::toRecommendedProduct)
+                .map(product -> toRecommendedProduct(product,
+                        referenceTierByProductId.get(((Number) product.get("product_id")).longValue()),
+                        annualMedicalCostKrw))
                 .collect(Collectors.toList());
 
         List<String> historyCodes = request.getMedicalHistoryCodes() == null
@@ -63,13 +103,21 @@ public class InsuranceSimulationServiceImpl implements InsuranceSimulationServic
 
         InsuranceAdvice advice = buildAdvice(recommendedProducts);
 
-        persistSimulation(request.getPetId(), historyCodes, advice);
+        // 대표 상품 = breakEvenAvailable=true인 추천 상품 중 보험료 최저가.
+        // 정렬 1위가 아니라 "계산 가능한 것 중 최저가"다 — Decision 4-A 이후
+        // 정렬 1위가 미확인 상품일 수 있기 때문이다 (계획서 M-8).
+        Optional<RecommendedProductResponse> representativeProduct = recommendedProducts.stream()
+                .filter(RecommendedProductResponse::isBreakEvenAvailable)
+                .min(Comparator.comparing(RecommendedProductResponse::getMonthlyPremiumKrw));
+
+        persistSimulation(request.getPetId(), historyCodes, advice, annualMedicalCostKrw,
+                isUserAdjusted, representativeProduct.orElse(null));
 
         return SimulationResponse.builder()
                 .assumptions(SimulationAssumptions.builder()
-                        .annualClaimCount(ANNUAL_CLAIM_COUNT)
-                        .annualExpectedVetCostKrw(ANNUAL_EXPECTED_VET_COST_KRW)
+                        .annualExpectedVetCostKrw(annualMedicalCostKrw)
                         .assumptionSource(ASSUMPTION_SOURCE)
+                        .isUserAdjusted(isUserAdjusted)
                         .build())
                 .preExistingConditionWarning(hasPreExistingCondition ? PRE_EXISTING_CONDITION_WARNING : null)
                 .insuranceAdvice(advice)
@@ -87,21 +135,16 @@ public class InsuranceSimulationServiceImpl implements InsuranceSimulationServic
         return Period.between(birthDate, LocalDate.now()).getYears();
     }
 
-    private boolean ageInRange(Map<String, Object> product, Integer age) {
-        if (age == null) {
-            return true;
-        }
-        Integer minAge = (Integer) product.get("join_age_min");
-        Integer maxAge = (Integer) product.get("join_age_max");
-        if (minAge == null || maxAge == null) {
-            return true;
-        }
-        return age >= minAge && age <= maxAge;
+    /** 후보 상품의 견적 기준 티어 환급률만 뽑아본다(정렬용). 티어가 없으면 null(=미확인). */
+    private Integer referenceTierRate(Map<String, Object> product, Map<Long, Map<String, Object>> referenceTierByProductId) {
+        Map<String, Object> tier = referenceTierByProductId.get(((Number) product.get("product_id")).longValue());
+        return tier == null ? null : (Integer) tier.get("reimbursement_rate_pct");
     }
 
-    private RecommendedProductResponse toRecommendedProduct(Map<String, Object> product) {
+    private RecommendedProductResponse toRecommendedProduct(Map<String, Object> product,
+            Map<String, Object> referenceTier, long annualMedicalCostKrw) {
         BigDecimal monthlyPremium = (BigDecimal) product.get("premium_monthly_equiv");
-        Integer reimbursementRatePct = (Integer) product.get("reimbursement_rate_pct");
+        Integer reimbursementRatePct = referenceTier == null ? null : (Integer) referenceTier.get("reimbursement_rate_pct");
         boolean breakEvenAvailable = reimbursementRatePct != null;
 
         return RecommendedProductResponse.builder()
@@ -111,22 +154,34 @@ public class InsuranceSimulationServiceImpl implements InsuranceSimulationServic
                 .monthlyPremiumKrw(monthlyPremium)
                 .reimbursementStructure((String) product.get("reimbursement_structure"))
                 .reimbursementRatePct(reimbursementRatePct)
-                .reimbursementConfidence((String) product.get("reimbursement_confidence"))
+                .reimbursementConfidence(referenceTier == null ? null : (String) referenceTier.get("reimbursement_confidence"))
+                .reimbursementRateNote((String) product.get("reimbursement_rate_note"))
                 .regulatoryCapWarning((String) product.get("regulatory_cap_warning"))
+                .deductibleKrw(referenceTier == null ? null : (BigDecimal) referenceTier.get("deductible_krw"))
+                .deductibleBasis(referenceTier == null ? null : (String) referenceTier.get("deductible_basis"))
+                .deductibleApplied(isDeductibleApplied(referenceTier))
+                .annualLimitKrw(referenceTier == null ? null : (BigDecimal) referenceTier.get("annual_limit_krw"))
+                .reimbursementSourceUrl(referenceTier == null ? null : (String) referenceTier.get("reimbursement_source_url"))
                 .breakEvenAvailable(breakEvenAvailable)
-                .breakEvenScenarios(breakEvenAvailable ? buildScenarios(monthlyPremium, reimbursementRatePct) : null)
+                .breakEvenScenarios(breakEvenAvailable
+                        ? buildScenarios(monthlyPremium, reimbursementRatePct, product, referenceTier, annualMedicalCostKrw)
+                        : null)
                 .build();
     }
 
-    private List<BreakEvenScenario> buildScenarios(BigDecimal monthlyPremium, int reimbursementRatePct) {
+    private List<BreakEvenScenario> buildScenarios(BigDecimal monthlyPremium, int reimbursementRatePct,
+            Map<String, Object> product, Map<String, Object> referenceTier, long annualMedicalCostKrw) {
         BigDecimal annualPremium = monthlyPremium.multiply(BigDecimal.valueOf(12));
-        BigDecimal annualReimbursement = BigDecimal.valueOf(ANNUAL_EXPECTED_VET_COST_KRW)
-                .multiply(BigDecimal.valueOf(reimbursementRatePct))
-                .divide(BigDecimal.valueOf(100));
+        BigDecimal annualReimbursement = calculateAnnualReimbursement(
+                BigDecimal.valueOf(annualMedicalCostKrw), reimbursementRatePct, product, referenceTier);
 
         List<BreakEvenScenario> scenarios = new ArrayList<>();
         for (int years : BREAK_EVEN_YEARS) {
             BigDecimal cumulativePremium = annualPremium.multiply(BigDecimal.valueOf(years));
+            // 연 단위로 계산한 값을 그대로 연차만큼 곱한다(집계 레벨 계산).
+            // 건별로 max(0, cᵢ-d)를 합산하는 방식(Σmax(0, cᵢ−d))보다 이 방식이
+            // 항상 작거나 같은 보수적 방향으로 틀린다 — 자기부담금을 매 방문마다
+            // 반영하지 않고 연 1회로 뭉뚱그려 계산하기 때문이다. 화면에도 이 한계를 고지한다.
             BigDecimal expectedReimbursement = annualReimbursement.multiply(BigDecimal.valueOf(years));
             BigDecimal difference = expectedReimbursement.subtract(cumulativePremium);
             scenarios.add(BreakEvenScenario.builder()
@@ -138,6 +193,87 @@ public class InsuranceSimulationServiceImpl implements InsuranceSimulationServic
                     .build());
         }
         return scenarios;
+    }
+
+    /**
+     * 자기부담금 분기표(계획서 Decision 5)를 구현한다.
+     *
+     * <p>{@code n}(연 진료 횟수) 출처가 아직 미확정({@link #CLAIM_COUNT_SOURCE_CONFIRMED}=false)이므로
+     * 현재는 아래 두 행만 실질적으로 동작한다:</p>
+     * <ul>
+     *   <li>{@code deductible_krw}가 NULL → 자기부담금 미반영, {@code C × rate/100} 그대로 적용
+     *       (자기부담금 컬럼이 아직 백필되지 않은 현재 시드에서는 항상 이 분기를 탄다 —
+     *       기존 골든 테스트 수치가 그대로 유지되는 이유)</li>
+     *   <li>{@code deductible_basis='PER_YEAR'} → n과 무관하게 {@code max(0, C−d) × rate/100} 적용</li>
+     *   <li>{@code deductible_basis='PER_VISIT'} & n 미확보 → 해당 상품만 자기부담금 미반영</li>
+     * </ul>
+     * <p>{@code n} 출처가 확정되면 {@link #CLAIM_COUNT_SOURCE_CONFIRMED}를 true로 바꿔
+     * PER_VISIT 확보 분기({@code max(0, C−d×n) × rate/100})가 활성화되도록 한다. TODO(S2).</p>
+     *
+     * <p>{@code min(annualLimit, ·)} 상한은 의도적으로 넣지 않는다 — 시드 담보 한도
+     * (1,000만~4,000만원) 대비 연 의료비가 낮아 도달 불가능한 죽은 분기이기 때문이다
+     * (계획서 Principle 4). {@code annualLimitKrw}는 표시 전용으로만 노출한다.</p>
+     *
+     * <p>자기부담금 금액({@code deductible_krw})·기준({@code deductible_basis})은
+     * 가입 시 선택하는 플랜 옵션이라 견적 기준 티어({@code referenceTier})에서 읽는다.
+     * 적용 순서({@code deductible_order})는 약관상 계산 규칙(플랜 무관)이라 상품
+     * 레벨({@code product})에 그대로 남아 있다 (V28 재설계).</p>
+     */
+    /**
+     * 자기부담금이 실제로 손익분기 계산에 반영됐는지 알려준다.
+     *
+     * <p>{@code deductibleKrw}가 채워져 있어도 기준(건당/연간)을 모르면 반영하지 않으므로
+     * (아래 {@link #calculateAnnualReimbursement}의 가드), 금액 유무만으로는 화면이
+     * "자기부담금 미반영" 고지를 정확히 낼 수 없다. 그 판정을 서버가 단일 원천으로
+     * 내려준다 — 프론트가 조건을 재구성하면 산식이 두 곳에 생긴다(Principle 2).</p>
+     */
+    private Boolean isDeductibleApplied(Map<String, Object> referenceTier) {
+        if (referenceTier == null || referenceTier.get("deductible_krw") == null) {
+            return false;
+        }
+        String basis = (String) referenceTier.get("deductible_basis");
+        if (basis == null) {
+            return false;
+        }
+        return !("PER_VISIT".equals(basis) && !CLAIM_COUNT_SOURCE_CONFIRMED);
+    }
+
+    private BigDecimal calculateAnnualReimbursement(BigDecimal annualCost, int reimbursementRatePct,
+            Map<String, Object> product, Map<String, Object> referenceTier) {
+        BigDecimal rate = BigDecimal.valueOf(reimbursementRatePct).divide(BigDecimal.valueOf(100));
+        BigDecimal deductible = referenceTier == null ? null : (BigDecimal) referenceTier.get("deductible_krw");
+        String basis = referenceTier == null ? null : (String) referenceTier.get("deductible_basis");
+        String order = (String) product.get("deductible_order");
+
+        if (deductible == null) {
+            // d IS NULL 행: 자기부담금 미반영
+            return annualCost.multiply(rate);
+        }
+        if (basis == null) {
+            // 기준(건당/연간) 미확인 행: 어느 쪽으로도 가정하지 않고 미반영한다.
+            // 이 가드가 없으면 아래 삼항 연산자의 else로 떨어져 PER_YEAR로 취급되는데,
+            // 실제 약관이 건당(PER_VISIT)이면 차감액이 n배 작아져 보장금이 과대 계산된다
+            // (메리츠 자부담 3만원 기준: 연 1회 차감 33,850원 과대). 모르는 값을 유리한
+            // 쪽으로 가정하지 않는다 — 계획서 Principle 1.
+            return annualCost.multiply(rate);
+        }
+        if ("PER_VISIT".equals(basis) && !CLAIM_COUNT_SOURCE_CONFIRMED) {
+            // n 미확보 + PER_VISIT 행: 해당 상품만 자기부담금 미반영
+            return annualCost.multiply(rate);
+        }
+
+        BigDecimal deductionAmount = ("PER_VISIT".equals(basis))
+                ? deductible.multiply(BigDecimal.valueOf(ANNUAL_CLAIM_COUNT))
+                : deductible;
+
+        if ("AFTER_RATE".equals(order)) {
+            // 보장률 선적용: C×rate/100에서 자기부담금을 그대로 차감
+            BigDecimal grossReimbursement = annualCost.multiply(rate);
+            return grossReimbursement.subtract(deductionAmount).max(BigDecimal.ZERO);
+        }
+        // 기본(BEFORE_RATE, 선차감): max(0, C-d[×n]) × rate/100
+        BigDecimal netCost = annualCost.subtract(deductionAmount).max(BigDecimal.ZERO);
+        return netCost.multiply(rate);
     }
 
     private InsuranceAdvice buildAdvice(List<RecommendedProductResponse> products) {
@@ -183,12 +319,22 @@ public class InsuranceSimulationServiceImpl implements InsuranceSimulationServic
 
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
-    private void persistSimulation(String petId, List<String> historyCodes, InsuranceAdvice advice) {
+    private void persistSimulation(String petId, List<String> historyCodes, InsuranceAdvice advice,
+            long annualMedicalCostKrw, boolean isUserAdjusted, RecommendedProductResponse representativeProduct) {
         Map<String, Object> simulation = new java.util.HashMap<>();
         simulation.put("petId", petId);
         simulation.put("medicalHistoryCodes", toJson(historyCodes));
         simulation.put("verdict", advice.getVerdict());
         simulation.put("message", advice.getMessage());
+        simulation.put("assumedAnnualMedicalCostKrw", annualMedicalCostKrw);
+        simulation.put("assumptionSource", ASSUMPTION_SOURCE);
+        simulation.put("representativeProductId",
+                representativeProduct == null ? null : Long.valueOf(representativeProduct.getProductId()));
+        simulation.put("representativeProductLabel",
+                representativeProduct == null
+                        ? null
+                        : representativeProduct.getCompanyName() + " " + representativeProduct.getProductName());
+        simulation.put("isUserAdjusted", isUserAdjusted);
         insuranceMapper.insertSimulation(simulation);
     }
 
