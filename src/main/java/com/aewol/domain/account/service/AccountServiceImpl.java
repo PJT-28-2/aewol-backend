@@ -305,8 +305,12 @@ public class AccountServiceImpl implements AccountService {
     // 딱 한 번 복호화한 뒤 뒤 4자리만 남기고 마스킹해서 내려준다 — 원본 계좌번호 전체를
     // 응답 바디에 실어 보내지 않는다(2026-08-13, 코드리뷰 지적으로 마스킹 필드
     // accountNumberMasked 신설 + 원본 accountNumber 필드 제거).
+    //
+    // AccountMapper의 SELECT는 la.account_number를 account_number_encrypted로 별칭한다
+    // (PR #162 리뷰 반영) — 그대로 "account_number" 키로 읽으면 컴파일은 되지만 값이
+    // 항상 null이라 여기서 바로 NPE/복호화 실패로 드러나게 하기 위함이다.
     private AccountResponse toAccountResponse(Map<String, Object> a) {
-        String plainAccountNumber = accountNumberCrypto.decrypt((String) a.get("account_number"));
+        String plainAccountNumber = accountNumberCrypto.decrypt((String) a.get("account_number_encrypted"));
         return AccountResponse.builder()
                 .accountId(String.valueOf(a.get("account_id")))
                 .bankCode((String) a.get("bank_code"))

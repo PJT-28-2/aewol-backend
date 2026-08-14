@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
 <mapper namespace="com.aewol.domain.account.mapper.AccountMapper">
-    <!-- linked_account에 bank_name 컴럼 없음(bank_master 조인). account_number_hash는 V4에서 NOT NULL -->
+    <!-- linked_account에 bank_name 컬럼 없음(bank_master 조인). account_number_hash는 V4에서 NOT NULL -->
 
     <insert id="insert" parameterType="map" useGeneratedKeys="true" keyProperty="accountId" keyColumn="account_id">
         INSERT INTO linked_account
@@ -10,15 +10,27 @@
             (#{memberId}, #{bankCode}, #{accountNumber}, #{accountNumberHash}, #{isPrimary})
     </insert>
 
+    <!-- account_number는 암호화된 값이라 la.*로 그대로 select하면 호출부가 "account_number"
+         키로 암호문을 평문처럼 읽어버리는 실수를 조용히 허용한다(WalletWithdrawalService에서
+         실제로 발생했던 버그, PR #162 리뷰 반영). account_number_encrypted로 별칭을 줘서
+         잘못 읽으면 바로 눈에 띄게 한다 — 나머지 컬럼은 la.*와 동일하게 전부 select한다. -->
     <select id="findByMemberId" resultType="map">
-        SELECT la.*, bm.bank_name
+        SELECT la.account_id, la.member_id, la.bank_code,
+               la.account_number AS account_number_encrypted,
+               la.account_number_hash, la.account_number_hash_active,
+               la.is_primary, la.status, la.created_at, la.updated_at,
+               bm.bank_name
         FROM linked_account la
         JOIN bank_master bm ON bm.bank_code = la.bank_code
         WHERE la.member_id = #{memberId} AND la.status = 'ACTIVE'
     </select>
 
     <select id="findByAccountId" resultType="map">
-        SELECT la.*, bm.bank_name
+        SELECT la.account_id, la.member_id, la.bank_code,
+               la.account_number AS account_number_encrypted,
+               la.account_number_hash, la.account_number_hash_active,
+               la.is_primary, la.status, la.created_at, la.updated_at,
+               bm.bank_name
         FROM linked_account la
         JOIN bank_master bm ON bm.bank_code = la.bank_code
         WHERE la.account_id = #{accountId}
@@ -28,7 +40,11 @@
          모두 이 쿼리로 행을 잠근 뒤 처리해서 동시성 문제를 막는다(CodeRabbit 지적,
          2026-08-08). -->
     <select id="findByAccountIdForUpdate" resultType="map">
-        SELECT la.*, bm.bank_name
+        SELECT la.account_id, la.member_id, la.bank_code,
+               la.account_number AS account_number_encrypted,
+               la.account_number_hash, la.account_number_hash_active,
+               la.is_primary, la.status, la.created_at, la.updated_at,
+               bm.bank_name
         FROM linked_account la
         JOIN bank_master bm ON bm.bank_code = la.bank_code
         WHERE la.account_id = #{accountId}

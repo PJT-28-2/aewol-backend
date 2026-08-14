@@ -338,7 +338,7 @@ private static final String ACCOUNT_ID = "1";
         row.put("member_id", memberId);
         row.put("bank_code", "004");
         row.put("bank_name", "KB국민은행");
-        row.put("account_number", "1234567890");
+        row.put("account_number_encrypted", "1234567890");
         row.put("status", status);
         row.put("is_primary", isPrimary);
         return row;

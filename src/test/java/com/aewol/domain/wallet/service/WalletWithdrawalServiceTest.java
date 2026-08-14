@@ -281,7 +281,7 @@ class WalletWithdrawalServiceTest {
 
     private Map<String, Object> activeAccount(String memberId) {
         return map("account_id", 12L, "member_id", memberId, "bank_code", "004",
-                "bank_name", "KB국민은행", "account_number", "222233334444", "status", "ACTIVE");
+                "bank_name", "KB국민은행", "account_number_encrypted", "222233334444", "status", "ACTIVE");
     }
 
     private Map<String, Object> wallet(String balance) {
