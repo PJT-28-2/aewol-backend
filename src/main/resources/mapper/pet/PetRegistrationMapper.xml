@@ -8,6 +8,12 @@
         LIMIT 1
     </select>
 
+    <!-- 등록증 상세 조회(순서: 증명서 상세) 전용 — last_synced_at 포함 전체 컬럼을 돌려준다. -->
+    <select id="findByPetIdAndDocId" resultType="map">
+        SELECT * FROM pet_registration
+        WHERE pet_id = #{petId} AND doc_id = #{docId}
+    </select>
+
     <insert id="insert" parameterType="map">
         INSERT INTO pet_registration
             (doc_id, pet_id, reg_number, name, breed, gender, neutered, birth_date,

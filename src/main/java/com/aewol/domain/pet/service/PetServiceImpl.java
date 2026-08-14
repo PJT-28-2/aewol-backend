@@ -29,6 +29,7 @@ public class PetServiceImpl implements PetService {
 
     private static final String VACCINATION = "VACCINATION";
     private static final String MEDICAL_CONFIRMATION = "MEDICAL_CONFIRMATION";
+    private static final String REGISTRATION = "REGISTRATION";
     private static final Set<String> UPLOADABLE_DOCUMENT_TYPES =
             Set.of(VACCINATION, MEDICAL_CONFIRMATION);
     private static final String DOCUMENT_SUB_DIR = "pet-documents";
@@ -45,6 +46,7 @@ public class PetServiceImpl implements PetService {
     private final PetDocumentMapper petDocumentMapper;
     private final FileUtil fileUtil;
     private final FileStorage fileStorage;
+    private final PetRegistrationService petRegistrationService;
 
     @Override
     @Transactional
@@ -169,6 +171,25 @@ public class PetServiceImpl implements PetService {
                 .collect(Collectors.toList());
     }
 
+    /**
+     * 문서 상세 조회(증명서 상세). docType에 따라 응답 형태가 다르다 — REGISTRATION은
+     * APMS 연동 상세(PetRegistrationResponse), 그 외(VACCINATION/MEDICAL_CONFIRMATION)는
+     * 목록과 동일한 얕은 형태(PetDocumentResponse)를 돌려준다.
+     */
+    @Override
+    @Transactional(readOnly = true)
+    public Object getPetDocument(String memberId, String petId, String docId) {
+        assertOwner(memberId, petId);
+        Map<String, Object> document = petDocumentMapper.findByIdAndPetId(docId, petId);
+        if (document == null) {
+            throw BusinessException.notFound("문서를 찾을 수 없습니다.");
+        }
+        if (REGISTRATION.equals(value(document, "doc_type", "docType"))) {
+            return petRegistrationService.getDetail(petId, docId);
+        }
+        return toDocumentResponse(document);
+    }
+
     @Override
     @Transactional
     public void deletePetDocument(String memberId, String petId, String docId) {
@@ -290,7 +311,16 @@ public class PetServiceImpl implements PetService {
                 .docType(String.valueOf(value(document, "doc_type", "docType")))
                 .fileUrl(fileStorage.signedUrl((String) value(document, "file_url", "fileUrl")))
                 .issuedDate(issuedDate == null ? null : issuedDate.toString())
+                .createdAt(isoString(value(document, "created_at", "createdAt")))
                 .build();
+    }
+
+    /** DB에서 읽은 DATETIME 값(LocalDateTime 또는 Timestamp)을 ISO-8601 문자열로 맞춘다. */
+    private static String isoString(Object value) {
+        if (value == null) return null;
+        if (value instanceof java.time.LocalDateTime) return value.toString();
+        if (value instanceof java.sql.Timestamp) return ((java.sql.Timestamp) value).toLocalDateTime().toString();
+        return value.toString();
     }
 
     private static Object value(Map<String, Object> map, String... keys) {

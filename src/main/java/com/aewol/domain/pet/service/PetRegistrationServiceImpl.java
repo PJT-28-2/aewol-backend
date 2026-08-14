@@ -96,6 +96,45 @@ public class PetRegistrationServiceImpl implements PetRegistrationService {
         return response(registration);
     }
 
+    /**
+     * 등록증 상세 조회(순서: 증명서 상세). verify()와 달리 APMS를 다시 호출하지 않고
+     * pet_registration에 저장된 값을 그대로 돌려준다 — lastSyncedAt이 "마지막 동기화 시각"이다.
+     */
+    @Override
+    public PetRegistrationResponse getDetail(String petId, String docId) {
+        Map<String, Object> registration = petRegistrationMapper.findByPetIdAndDocId(petId, docId);
+        if (registration == null) {
+            throw BusinessException.notFound("동물등록정보를 찾을 수 없습니다.");
+        }
+        return PetRegistrationResponse.builder()
+                .docId(string(registration.get("doc_id")))
+                .petId(string(registration.get("pet_id")))
+                .regNumber(string(registration.get("reg_number")))
+                .name(string(registration.get("name")))
+                .breed(string(registration.get("breed")))
+                .gender(string(registration.get("gender")))
+                .neutered(string(registration.get("neutered")))
+                .birthDate(string(registration.get("birth_date")))
+                .rfidCd(string(registration.get("rfid_cd")))
+                .rfidGubun(string(registration.get("rfid_gubun")))
+                .orgNm(string(registration.get("org_nm")))
+                .officeTel(string(registration.get("office_tel")))
+                .aprGbnNm(string(registration.get("apr_gbn_nm")))
+                .regTm(isoString(registration.get("reg_tm")))
+                .aprTm(isoString(registration.get("apr_tm")))
+                .lastSyncedAt(isoString(registration.get("last_synced_at")))
+                .verified(true)
+                .build();
+    }
+
+    /** DB에서 읽은 DATETIME 값(LocalDateTime 또는 Timestamp)을 ISO-8601 문자열로 맞춘다. */
+    private static String isoString(Object value) {
+        if (value == null) return null;
+        if (value instanceof LocalDateTime) return value.toString();
+        if (value instanceof java.sql.Timestamp) return ((java.sql.Timestamp) value).toLocalDateTime().toString();
+        return value.toString();
+    }
+
     private void validateDuplicate(String petId, String regNumber) {
         Map<String, Object> existing = petRegistrationMapper.findByRegNumber(regNumber);
         if (existing != null && !existing.isEmpty()

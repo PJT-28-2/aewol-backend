@@ -16,5 +16,6 @@ public interface PetService {
     PetDocumentResponse uploadPetDocument(String memberId, String petId, String docType,
                                           MultipartFile file, LocalDate issuedDate);
     List<PetDocumentResponse> getPetDocuments(String memberId, String petId);
+    Object getPetDocument(String memberId, String petId, String docId);
     void deletePetDocument(String memberId, String petId, String docId);
 }

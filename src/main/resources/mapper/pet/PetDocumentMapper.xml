@@ -28,6 +28,12 @@
         FOR UPDATE
     </select>
 
+    <!-- 상세 조회(읽기 전용) 전용 — 삭제 흐름의 findByIdAndPetIdForUpdate와 달리 행을 잠그지 않는다. -->
+    <select id="findByIdAndPetId" resultType="map">
+        SELECT * FROM pet_document
+        WHERE doc_id = #{docId} AND pet_id = #{petId}
+    </select>
+
     <update id="update" parameterType="map">
         UPDATE pet_document
         SET doc_name = #{docName}, file_url = #{fileUrl}, issued_date = #{issuedDate}
