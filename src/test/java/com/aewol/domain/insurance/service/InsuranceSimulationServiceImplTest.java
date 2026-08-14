@@ -1,6 +1,7 @@
 package com.aewol.domain.insurance.service;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -400,8 +401,9 @@ class InsuranceSimulationServiceImplTest {
     void should_applyDeductible_whenBasisIsPerYear_regardlessOfClaimCountSource() {
         service = new InsuranceSimulationServiceImpl(insuranceMapper, petMapper);
         when(petMapper.findByIdAndMemberId("3", MEMBER_ID)).thenReturn(pet("CAT", 3));
-        when(insuranceMapper.findProductsBySpecies("CAT")).thenReturn(List.of(
-                product(1L, new BigDecimal("10000"), 0, 80)));
+        Map<String, Object> product = product(1L, new BigDecimal("10000"), 0, 80);
+        product.put("deductible_order", "BEFORE_RATE");
+        when(insuranceMapper.findProductsBySpecies("CAT")).thenReturn(List.of(product));
         Map<String, Object> tier = referenceTier(1L, 50, "CONFIRMED_OWN_COVERAGE_NAME");
         tier.put("deductible_krw", new BigDecimal("100000"));
         tier.put("deductible_basis", "PER_YEAR");
@@ -466,8 +468,9 @@ class InsuranceSimulationServiceImplTest {
     void should_markDeductibleApplied_whenBasisIsKnown() {
         service = new InsuranceSimulationServiceImpl(insuranceMapper, petMapper);
         when(petMapper.findByIdAndMemberId("3", MEMBER_ID)).thenReturn(pet("CAT", 3));
-        when(insuranceMapper.findProductsBySpecies("CAT")).thenReturn(List.of(
-                product(1L, new BigDecimal("10000"), 0, 80)));
+        Map<String, Object> product = product(1L, new BigDecimal("10000"), 0, 80);
+        product.put("deductible_order", "BEFORE_RATE");
+        when(insuranceMapper.findProductsBySpecies("CAT")).thenReturn(List.of(product));
         Map<String, Object> tier = referenceTier(1L, 50, "CONFIRMED_OWN_COVERAGE_NAME");
         tier.put("deductible_krw", new BigDecimal("100000"));
         tier.put("deductible_basis", "PER_YEAR");
@@ -525,8 +528,9 @@ class InsuranceSimulationServiceImplTest {
     void should_notReturnNegativeExpectedReimbursement_whenDeductibleExceedsAnnualCost() {
         service = new InsuranceSimulationServiceImpl(insuranceMapper, petMapper);
         when(petMapper.findByIdAndMemberId("3", MEMBER_ID)).thenReturn(pet("CAT", 3));
-        when(insuranceMapper.findProductsBySpecies("CAT")).thenReturn(List.of(
-                product(1L, new BigDecimal("10000"), 0, 80)));
+        Map<String, Object> product = product(1L, new BigDecimal("10000"), 0, 80);
+        product.put("deductible_order", "BEFORE_RATE");
+        when(insuranceMapper.findProductsBySpecies("CAT")).thenReturn(List.of(product));
         Map<String, Object> tier = referenceTier(1L, 50, "CONFIRMED_OWN_COVERAGE_NAME");
         tier.put("deductible_krw", new BigDecimal("5000000"));
         tier.put("deductible_basis", "PER_YEAR");
@@ -606,6 +610,107 @@ class InsuranceSimulationServiceImplTest {
         assertEquals(Boolean.TRUE, saved.get("isUserAdjusted"));
         assertEquals(1L, saved.get("representativeProductId"));
         assertTrue(((String) saved.get("representativeProductLabel")).contains("삼성화재"));
+    }
+
+    @Test
+    @DisplayName("사용자가 의료비를 직접 입력하면 근거 문구에 통계 출처를 붙이지 않는다 (응답·이력 모두)")
+    void should_notAttributeUserInputToStatistics_whenCostIsUserAdjusted() {
+        service = new InsuranceSimulationServiceImpl(insuranceMapper, petMapper);
+        when(petMapper.findByIdAndMemberId("3", MEMBER_ID)).thenReturn(pet("CAT", 3));
+        when(insuranceMapper.findProductsBySpecies("CAT")).thenReturn(List.of(
+                product(1L, new BigDecimal("21541"), 0, 80)));
+        when(insuranceMapper.findReferenceTiersByProductIds(List.of(1L))).thenReturn(List.of(
+                referenceTier(1L, 50, "CONFIRMED_OWN_COVERAGE_NAME")));
+
+        SimulationRequest request = request("3", List.of("NONE"));
+        ReflectionTestUtils.setField(request, "annualMedicalCostKrw", 400_000L);
+        SimulationResponse response = service.simulate(MEMBER_ID, request);
+
+        // 계산에 쓰인 값이 사용자 입력값인데 KB 리포트를 근거로 표시하면 거짓 표시다.
+        String source = response.getAssumptions().getAssumptionSource();
+        assertFalse(source.contains("KB금융경영연구소"),
+                "사용자 입력값에 통계 출처가 붙었다: " + source);
+        assertTrue(source.contains("직접 입력"), source);
+
+        // 응답만이 아니라 insurance_simulation 이력에도 같은 문구가 남아야 한다.
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Map<String, Object>> captor = ArgumentCaptor.forClass(Map.class);
+        verify(insuranceMapper).insertSimulation(captor.capture());
+        assertEquals(source, captor.getValue().get("assumptionSource"));
+    }
+
+    @Test
+    @DisplayName("사용자 조정이 없으면 근거 문구는 통계 출처를 그대로 유지한다 (응답·이력 모두)")
+    void should_keepStatisticsSource_whenCostIsNotUserAdjusted() {
+        service = new InsuranceSimulationServiceImpl(insuranceMapper, petMapper);
+        when(petMapper.findByIdAndMemberId("3", MEMBER_ID)).thenReturn(pet("CAT", 3));
+        when(insuranceMapper.findProductsBySpecies("CAT")).thenReturn(List.of(
+                product(1L, new BigDecimal("21541"), 0, 80)));
+        when(insuranceMapper.findReferenceTiersByProductIds(List.of(1L))).thenReturn(List.of(
+                referenceTier(1L, 50, "CONFIRMED_OWN_COVERAGE_NAME")));
+
+        SimulationResponse response = service.simulate(MEMBER_ID, request("3", List.of("NONE")));
+
+        String source = response.getAssumptions().getAssumptionSource();
+        assertTrue(source.contains("KB금융경영연구소"), source);
+        assertEquals(Boolean.FALSE, response.getAssumptions().getIsUserAdjusted());
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Map<String, Object>> captor = ArgumentCaptor.forClass(Map.class);
+        verify(insuranceMapper).insertSimulation(captor.capture());
+        assertEquals(source, captor.getValue().get("assumptionSource"));
+    }
+
+    @Test
+    @DisplayName("Decision 5: deductible_order가 NULL이면 BEFORE_RATE로 가정하지 않고 자기부담금을 반영하지 않는다")
+    void should_notApplyDeductible_whenDeductibleOrderIsNull() {
+        service = new InsuranceSimulationServiceImpl(insuranceMapper, petMapper);
+        when(petMapper.findByIdAndMemberId("3", MEMBER_ID)).thenReturn(pet("CAT", 3));
+        // 현재 시드의 실제 상태: deductible_order는 24개 상품 전부 NULL이다.
+        // basis만 나중에 백필되면 이 조합이 그대로 프로덕션에서 실행된다.
+        Map<String, Object> product = product(1L, new BigDecimal("10000"), 0, 80);
+        product.put("deductible_order", null);
+        when(insuranceMapper.findProductsBySpecies("CAT")).thenReturn(List.of(product));
+        Map<String, Object> tier = referenceTier(1L, 50, "CONFIRMED_OWN_COVERAGE_NAME");
+        tier.put("deductible_krw", new BigDecimal("100000"));
+        tier.put("deductible_basis", "PER_YEAR");
+        when(insuranceMapper.findReferenceTiersByProductIds(List.of(1L))).thenReturn(List.of(tier));
+
+        SimulationRequest request = request("3", List.of("NONE"));
+        ReflectionTestUtils.setField(request, "annualMedicalCostKrw", 500_000L);
+        SimulationResponse response = service.simulate(MEMBER_ID, request);
+
+        // order 미확인 → 미반영: 500000 * 0.5 = 250000
+        // BEFORE_RATE로 가정했다면 (500000-100000)*0.5 = 200000,
+        // AFTER_RATE로 가정했다면 500000*0.5-100000 = 150000 이 된다.
+        // BEFORE_RATE ≥ AFTER_RATE가 항상 성립하므로, 모를 때 BEFORE_RATE를 고르는 것은
+        // 둘 중 보장금이 큰(=유리해 보이는) 쪽을 말없이 고르는 것이다.
+        var recommended = response.getRecommendedProducts().get(0);
+        assertEquals(250_000L, recommended.getBreakEvenScenarios().get(0).getExpectedReimbursementKrw());
+        // 계산에 반영하지 않았다는 사실이 화면 고지용 플래그와도 일치해야 한다.
+        assertEquals(Boolean.FALSE, recommended.getDeductibleApplied());
+    }
+
+    @Test
+    @DisplayName("견적 기준 티어가 중복된 상품이 있어도 시뮬레이션이 예외 없이 첫 행 기준으로 계산된다")
+    void should_notFail_whenDuplicateReferenceTiersExist() {
+        service = new InsuranceSimulationServiceImpl(insuranceMapper, petMapper);
+        when(petMapper.findByIdAndMemberId("3", MEMBER_ID)).thenReturn(pet("CAT", 3));
+        when(insuranceMapper.findProductsBySpecies("CAT")).thenReturn(List.of(
+                product(1L, new BigDecimal("10000"), 0, 80)));
+        // V32 유니크 제약이 없던 시점의 DB에 남아 있을 수 있는 상태.
+        // 병합 함수가 없으면 toMap이 IllegalStateException을 던져 이 종의
+        // 시뮬레이션 요청 전체가 500으로 죽는다.
+        when(insuranceMapper.findReferenceTiersByProductIds(List.of(1L))).thenReturn(List.of(
+                referenceTier(1L, 50, "CONFIRMED_OWN_COVERAGE_NAME"),
+                referenceTier(1L, 90, "ASSUMED_FROM_RESEARCH")));
+
+        SimulationResponse response = service.simulate(MEMBER_ID, request("3", List.of("NONE")));
+
+        // 조회 순서(ORDER BY tier_id)의 첫 행을 결정적으로 고른다 —
+        // InsuranceProductServiceImpl의 findFirst()와 같은 행이어야 한다.
+        assertEquals(1, response.getRecommendedProducts().size());
+        assertEquals(50, response.getRecommendedProducts().get(0).getReimbursementRatePct());
     }
 
     @Test
