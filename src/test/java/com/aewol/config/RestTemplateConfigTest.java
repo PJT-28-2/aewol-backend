@@ -82,4 +82,13 @@ class RestTemplateConfigTest {
 
         assertEquals(120000, readTimeout);
     }
+
+    @Test
+    void solapiRestTemplateUsesFiveSecondConnectAndReadTimeouts() {
+        RestTemplate restTemplate = (RestTemplate) context.getBean("solapiRestTemplate");
+        Object connectTimeout = ReflectionTestUtils.getField(restTemplate.getRequestFactory(), "connectTimeout");
+        Object readTimeout = ReflectionTestUtils.getField(restTemplate.getRequestFactory(), "readTimeout");
+        assertEquals(5000, connectTimeout);
+        assertEquals(5000, readTimeout);
+    }
 }
