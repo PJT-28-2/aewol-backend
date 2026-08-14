@@ -17,6 +17,7 @@ import com.aewol.domain.grouppurchase.dto.GroupPurchaseMyItemResponse;
 import com.aewol.domain.grouppurchase.dto.GroupPurchaseResponse;
 import com.aewol.domain.grouppurchase.dto.GroupPurchaseStatusResponse;
 import com.aewol.domain.grouppurchase.mapper.GroupPurchaseMapper;
+import com.aewol.domain.member.service.SimplePasswordVerificationService;
 import com.aewol.domain.transaction.mapper.TransactionMapper;
 import com.aewol.domain.wallet.mapper.WalletMapper;
 import java.io.IOException;
@@ -44,6 +45,9 @@ class GroupPurchaseServiceImplTest {
     @Mock FileUtil fileUtil;
     @Mock WalletMapper walletMapper;
     @Mock TransactionMapper transactionMapper;
+    @Mock SimplePasswordVerificationService simplePasswordVerificationService;
+
+    private static final String PASSWORD = "123456";
 
     @Test
     @DisplayName("허용된 확장자의 이미지를 업로드하면 저장된 이미지 URL을 반환한다")
@@ -1075,8 +1079,9 @@ class GroupPurchaseServiceImplTest {
         walletAfter.put("balance", new BigDecimal("150000"));
         when(walletMapper.findByMemberId("member-1")).thenReturn(walletBefore, walletAfter);
         when(walletMapper.addBalance("wallet-1", new BigDecimal("50000"))).thenReturn(1);
+        when(simplePasswordVerificationService.verify("member-1", PASSWORD)).thenReturn(true);
 
-        GroupPurchaseLeaveResponse result = service.leave("member-1", "1");
+        GroupPurchaseLeaveResponse result = service.leave("member-1", "1", PASSWORD);
 
         assertEquals("1", result.getGpId());
         assertEquals(10523L, result.getParticipantId());
@@ -1108,8 +1113,9 @@ class GroupPurchaseServiceImplTest {
         when(groupPurchaseMapper.findParticipant("1", "member-1")).thenReturn(participantRow);
         when(groupPurchaseMapper.cancelParticipant(eq("1"), eq("member-1"), any())).thenReturn(1);
         when(groupPurchaseMapper.decreaseQuantity("1", 1)).thenReturn(1);
+        when(simplePasswordVerificationService.verify("member-1", PASSWORD)).thenReturn(true);
 
-        GroupPurchaseLeaveResponse result = service.leave("member-1", "1");
+        GroupPurchaseLeaveResponse result = service.leave("member-1", "1", PASSWORD);
 
         assertNull(result.getRefundedWalletBalance());
         verifyNoInteractions(walletMapper);
@@ -1123,10 +1129,11 @@ class GroupPurchaseServiceImplTest {
         when(groupPurchaseMapper.findById("999")).thenReturn(null);
 
         BusinessException exception = assertThrows(BusinessException.class,
-                () -> service.leave("member-1", "999"));
+                () -> service.leave("member-1", "999", PASSWORD));
 
         assertEquals("공동구매를 찾을 수 없습니다.", exception.getMessage());
         verify(groupPurchaseMapper, never()).cancelParticipant(any(), any(), any());
+        verifyNoInteractions(simplePasswordVerificationService);
     }
 
     @Test
@@ -1137,10 +1144,28 @@ class GroupPurchaseServiceImplTest {
         when(groupPurchaseMapper.findParticipant("1", "member-1")).thenReturn(null);
 
         BusinessException exception = assertThrows(BusinessException.class,
-                () -> service.leave("member-1", "1"));
+                () -> service.leave("member-1", "1", PASSWORD));
 
         assertEquals("참여 내역을 찾을 수 없습니다.", exception.getMessage());
         verify(groupPurchaseMapper, never()).cancelParticipant(any(), any(), any());
+        verifyNoInteractions(simplePasswordVerificationService);
+    }
+
+    @Test
+    @DisplayName("간편 비밀번호가 일치하지 않으면 참여를 취소하지 않는다")
+    void should_throwException_when_passwordMismatch_onLeave() {
+        GroupPurchaseServiceImpl service = service();
+        when(groupPurchaseMapper.findById("1")).thenReturn(savedRow());
+        when(groupPurchaseMapper.findParticipant("1", "member-1"))
+                .thenReturn(participantRow(10523L, "1", "member-1", 2));
+        when(simplePasswordVerificationService.verify("member-1", "000000")).thenReturn(false);
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.leave("member-1", "1", "000000"));
+
+        assertEquals("간편 비밀번호가 일치하지 않습니다.", exception.getMessage());
+        verify(groupPurchaseMapper, never()).cancelParticipant(any(), any(), any());
+        verifyNoInteractions(walletMapper);
     }
 
     @Test
@@ -1151,9 +1176,10 @@ class GroupPurchaseServiceImplTest {
         when(groupPurchaseMapper.findParticipant("1", "member-1"))
                 .thenReturn(participantRow(10523L, "1", "member-1", 2));
         when(groupPurchaseMapper.cancelParticipant(eq("1"), eq("member-1"), any())).thenReturn(0);
+        when(simplePasswordVerificationService.verify("member-1", PASSWORD)).thenReturn(true);
 
         BusinessException exception = assertThrows(BusinessException.class,
-                () -> service.leave("member-1", "1"));
+                () -> service.leave("member-1", "1", PASSWORD));
 
         assertEquals(org.springframework.http.HttpStatus.CONFLICT, exception.getStatus());
         assertEquals("이미 취소된 참여입니다.", exception.getMessage());
@@ -1171,9 +1197,10 @@ class GroupPurchaseServiceImplTest {
         when(groupPurchaseMapper.cancelParticipant(eq("1"), eq("member-1"), any())).thenReturn(1);
         // 목표 수량 달성(confirmed) 또는 마감 후 상태라 decreaseQuantity의 조건부 WHERE를 만족하는 행이 없다.
         when(groupPurchaseMapper.decreaseQuantity("1", 2)).thenReturn(0);
+        when(simplePasswordVerificationService.verify("member-1", PASSWORD)).thenReturn(true);
 
         BusinessException exception = assertThrows(BusinessException.class,
-                () -> service.leave("member-1", "1"));
+                () -> service.leave("member-1", "1", PASSWORD));
 
         assertEquals(org.springframework.http.HttpStatus.CONFLICT, exception.getStatus());
         assertEquals("목표 수량 달성 또는 마감 후에는 참여를 취소할 수 없습니다. 관리자에게 문의해주세요.", exception.getMessage());
@@ -1208,8 +1235,9 @@ class GroupPurchaseServiceImplTest {
         when(walletMapper.findByMemberId("member-2")).thenReturn(wallet2);
         when(walletMapper.addBalance("wallet-1", new BigDecimal("50000"))).thenReturn(1);
         when(walletMapper.addBalance("wallet-2", new BigDecimal("25000"))).thenReturn(1);
+        when(simplePasswordVerificationService.verify("admin-1", PASSWORD)).thenReturn(true);
 
-        GroupPurchaseCancelResponse result = service.cancel("1");
+        GroupPurchaseCancelResponse result = service.cancel("admin-1", "1", PASSWORD);
 
         assertEquals("1", result.getGpId());
         assertEquals("CANCELLED", result.getStatus());
@@ -1242,8 +1270,9 @@ class GroupPurchaseServiceImplTest {
         when(groupPurchaseMapper.findPaidParticipants("1")).thenReturn(List.of(participant1));
         // member-1이 이 배치 조회 이후, 환불 처리 직전에 leave()로 먼저 취소를 완료한 상황을 재현한다.
         when(groupPurchaseMapper.cancelParticipant(eq("1"), eq("member-1"), any())).thenReturn(0);
+        when(simplePasswordVerificationService.verify("admin-1", PASSWORD)).thenReturn(true);
 
-        GroupPurchaseCancelResponse result = service.cancel("1");
+        GroupPurchaseCancelResponse result = service.cancel("admin-1", "1", PASSWORD);
 
         assertTrue(result.getRefundedParticipants().isEmpty());
         verifyNoInteractions(walletMapper);
@@ -1257,10 +1286,26 @@ class GroupPurchaseServiceImplTest {
         when(groupPurchaseMapper.findById("999")).thenReturn(null);
 
         BusinessException exception = assertThrows(BusinessException.class,
-                () -> service.cancel("999"));
+                () -> service.cancel("admin-1", "999", PASSWORD));
 
         assertEquals("공동구매를 찾을 수 없습니다.", exception.getMessage());
         verify(groupPurchaseMapper, never()).cancelGroupPurchase(any());
+        verifyNoInteractions(simplePasswordVerificationService);
+    }
+
+    @Test
+    @DisplayName("간편 비밀번호가 일치하지 않으면 공동구매를 취소하지 않는다")
+    void should_throwException_when_passwordMismatch_onCancel() {
+        GroupPurchaseServiceImpl service = service();
+        when(groupPurchaseMapper.findById("1")).thenReturn(savedRow());
+        when(simplePasswordVerificationService.verify("admin-1", "000000")).thenReturn(false);
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.cancel("admin-1", "1", "000000"));
+
+        assertEquals("간편 비밀번호가 일치하지 않습니다.", exception.getMessage());
+        verify(groupPurchaseMapper, never()).cancelGroupPurchase(any());
+        verifyNoInteractions(walletMapper);
     }
 
     @Test
@@ -1269,9 +1314,10 @@ class GroupPurchaseServiceImplTest {
         GroupPurchaseServiceImpl service = service();
         when(groupPurchaseMapper.findById("1")).thenReturn(savedRow());
         when(groupPurchaseMapper.cancelGroupPurchase("1")).thenReturn(0);
+        when(simplePasswordVerificationService.verify("admin-1", PASSWORD)).thenReturn(true);
 
         BusinessException exception = assertThrows(BusinessException.class,
-                () -> service.cancel("1"));
+                () -> service.cancel("admin-1", "1", PASSWORD));
 
         assertEquals(org.springframework.http.HttpStatus.CONFLICT, exception.getStatus());
         assertEquals("목표 수량 달성 또는 마감 후에는 취소할 수 없습니다.", exception.getMessage());
@@ -1286,8 +1332,9 @@ class GroupPurchaseServiceImplTest {
         when(groupPurchaseMapper.findById("1")).thenReturn(savedRow());
         when(groupPurchaseMapper.cancelGroupPurchase("1")).thenReturn(1);
         when(groupPurchaseMapper.findPaidParticipants("1")).thenReturn(List.of());
+        when(simplePasswordVerificationService.verify("admin-1", PASSWORD)).thenReturn(true);
 
-        GroupPurchaseCancelResponse result = service.cancel("1");
+        GroupPurchaseCancelResponse result = service.cancel("admin-1", "1", PASSWORD);
 
         assertTrue(result.getRefundedParticipants().isEmpty());
         verifyNoInteractions(walletMapper);
@@ -1384,6 +1431,7 @@ class GroupPurchaseServiceImplTest {
     }
 
     private GroupPurchaseServiceImpl service() {
-        return new GroupPurchaseServiceImpl(groupPurchaseMapper, fileUtil, walletMapper, transactionMapper);
+        return new GroupPurchaseServiceImpl(groupPurchaseMapper, fileUtil, walletMapper, transactionMapper,
+                simplePasswordVerificationService);
     }
 }

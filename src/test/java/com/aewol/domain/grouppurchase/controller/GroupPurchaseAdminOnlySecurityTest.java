@@ -136,15 +136,20 @@ class GroupPurchaseAdminOnlySecurityTest {
         verify(groupPurchaseService).uploadImage(org.mockito.ArgumentMatchers.any());
     }
 
+    private static final String VALID_CANCEL_REQUEST_BODY = "{\"password\":\"123456\"}";
+
     @Test
     void cancelIsBlockedForUserRole() throws Exception {
         stubAccessToken("USER");
 
         mockMvc.perform(post("/api/group-purchase/1/cancel")
-                        .header("Authorization", "Bearer access-token"))
+                        .header("Authorization", "Bearer access-token")
+                        .contentType("application/json")
+                        .content(VALID_CANCEL_REQUEST_BODY))
                 .andExpect(status().isForbidden());
 
-        verify(groupPurchaseService, never()).cancel(org.mockito.ArgumentMatchers.any());
+        verify(groupPurchaseService, never()).cancel(
+                org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any());
     }
 
     @Test
@@ -152,10 +157,12 @@ class GroupPurchaseAdminOnlySecurityTest {
         stubAccessToken("ADMIN");
 
         mockMvc.perform(post("/api/group-purchase/1/cancel")
-                        .header("Authorization", "Bearer access-token"))
+                        .header("Authorization", "Bearer access-token")
+                        .contentType("application/json")
+                        .content(VALID_CANCEL_REQUEST_BODY))
                 .andExpect(status().isOk());
 
-        verify(groupPurchaseService).cancel("1");
+        verify(groupPurchaseService).cancel("member-1", "1", "123456");
     }
 
     @Test
