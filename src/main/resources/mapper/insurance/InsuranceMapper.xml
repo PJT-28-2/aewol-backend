@@ -51,12 +51,19 @@
         </foreach>
     </select>
 
+    <!--
+        ORDER BY tier_id는 표시 순서를 위한 것만이 아니다. 상품당 견적 기준 티어는
+        1개여야 하지만(V32 유니크 제약), 제약이 없던 시점의 DB에 중복 행이 남아 있으면
+        정렬 없는 조회는 어느 행이 뽑힐지 보장하지 않는다. 두 서비스가 서로 다른 행을
+        골라 같은 상품의 환급률이 화면마다 달라지는 일이 없도록 순서를 고정한다.
+    -->
     <select id="findPlanTiersByProductIds" resultType="map">
         SELECT * FROM insurance_product_plan_tiers
         WHERE product_id IN
         <foreach item="productId" collection="productIds" open="(" separator="," close=")">
             #{productId}
         </foreach>
+        ORDER BY product_id, tier_id
     </select>
 
     <select id="findReferenceTiersByProductIds" resultType="map">
@@ -65,6 +72,7 @@
         <foreach item="productId" collection="productIds" open="(" separator="," close=")">
             #{productId}
         </foreach>
+        ORDER BY product_id, tier_id
     </select>
 
 </mapper>
