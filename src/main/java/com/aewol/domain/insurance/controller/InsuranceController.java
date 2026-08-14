@@ -46,7 +46,7 @@ public class InsuranceController {
     @GetMapping("/products")
     public ResponseEntity<ApiResponse<List<ProductResponse>>> getProducts(
             @RequestParam
-            @NotBlank
+            @NotBlank(message = "petType은 필수입니다.")
             @Pattern(regexp = "DOG|CAT", message = "petType은 DOG 또는 CAT만 가능합니다.")
             String petType,
             @RequestParam(required = false)
