@@ -27,6 +27,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
@@ -71,10 +72,26 @@ class MemberServiceImplProfilePasswordTest {
         assertEquals("12345", response.getZipCode());
         assertEquals("제주시 애월읍", response.getAddress());
         assertEquals("101호", response.getAddressDetail());
+        // simple_password 컬럼이 없는(=PIN 미설정) 회원은 hasSimplePassword가 false여야 한다.
+        assertFalse(response.getHasSimplePassword());
 
         local.put("provider", "KAKAO");
         when(memberMapper.findById("2")).thenReturn(local);
         assertEquals("KAKAO", service.getMember("2").getProvider());
+    }
+
+    @Test
+    void getMemberReflectsSimplePasswordStatus() {
+        // hasSimplePassword는 simple_password 컬럼에 값이 있는지(true/false)만 알려주고,
+        // 실제 해시값은 응답에 절대 포함되지 않는다 — 프론트가 이 필드로 로컬 캐시
+        // (localStorage hasSimplePassword)를 서버 기준으로 동기화한다(2026-08-13).
+        Map<String, Object> withPin = member("LOCAL", "encoded");
+        withPin.put("simple_password", "encoded-pin");
+        when(memberMapper.findById("1")).thenReturn(withPin);
+
+        MemberResponse response = service.getMember("1");
+
+        assertTrue(response.getHasSimplePassword());
     }
 
     @Test
