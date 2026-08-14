@@ -1,19 +1,19 @@
 #!/usr/bin/env node
 /**
- * gen-insurance-seed.mjs — 리서치 문서(markdown 표) → V28 백필 SQL 생성기
+ * gen-insurance-seed.mjs — 리서치 문서(markdown 표) → V30 백필 SQL 생성기
  *
  *   입력 : docs/insurance-reimbursement-research.md
- *   출력 : db/migration/V28__insurance_reimbursement_and_category.sql 의
+ *   출력 : db/migration/V30__insurance_reimbursement_and_category.sql 의
  *          `-- BEGIN GENERATED (S1 backfill)` ~ `-- END GENERATED (S1 backfill)` 구간
  *
  * 사용법 (aewol-backend 디렉터리에서):
  *   node scripts/gen-insurance-seed.mjs            # stdout 미리보기 (파일 미변경)
- *   node scripts/gen-insurance-seed.mjs --write    # V28의 GENERATED 구간 치환
+ *   node scripts/gen-insurance-seed.mjs --write    # V30의 GENERATED 구간 치환
  *
  * 의존성 없음(Node 표준 라이브러리만). package.json 불필요.
  * scripts/ 는 src/ 밖이므로 fatJar 에 포함되지 않는다 — 개발 시점 전용 도구다.
  *
- * ⚠️ Flyway 체크섬: V28이 이미 DB에 적용된 뒤에는 이 스크립트로 V28을 고치면 안 된다.
+ * ⚠️ Flyway 체크섬: V30이 이미 DB에 적용된 뒤에는 이 스크립트로 V30을 고치면 안 된다.
  *    적용 후 새 근거가 나오면 V30을 새로 만들 것. --write 는 그 상황을 감지하지 못한다.
  *
  * 설계 원칙 (계획서 Principle 1):
@@ -32,7 +32,7 @@ const DOC = join(ROOT, "docs", "insurance-reimbursement-research.md");
 const MIGRATION = join(
   ROOT,
   "src", "main", "resources", "db", "migration",
-  "V28__insurance_reimbursement_and_category.sql",
+  "V30__insurance_reimbursement_and_category.sql",
 );
 const BEGIN = "-- BEGIN GENERATED (S1 backfill)";
 const END = "-- END GENERATED (S1 backfill)";
@@ -282,14 +282,14 @@ if (write) {
   const b = migration.indexOf(BEGIN);
   const e = migration.indexOf(END);
   if (b === -1 || e === -1 || e < b) {
-    console.error(`V28 에서 센티넬 구간을 찾지 못했습니다:\n  ${BEGIN}\n  ${END}`);
+    console.error(`V30 에서 센티넬 구간을 찾지 못했습니다:\n  ${BEGIN}\n  ${END}`);
     process.exit(1);
   }
   const next =
     migration.slice(0, b + BEGIN.length) + "\n" + sql + "\n" + migration.slice(e);
   writeFileSync(MIGRATION, next, "utf8");
-  console.error(`V28 GENERATED 구간을 갱신했습니다 (티어 ${tierCount}건 / CONFIRMED ${confirmedCount}건).`);
-  console.error("⚠️ V28이 이미 DB에 적용된 상태라면 Flyway 체크섬 검증에 실패합니다. 적용 전인지 확인하세요.");
+  console.error(`V30 GENERATED 구간을 갱신했습니다 (티어 ${tierCount}건 / CONFIRMED ${confirmedCount}건).`);
+  console.error("⚠️ V30이 이미 DB에 적용된 상태라면 Flyway 체크섬 검증에 실패합니다. 적용 전인지 확인하세요.");
 } else {
   console.log(sql);
   console.error(`\n(미리보기 — 파일 미변경. 반영하려면 --write)`);

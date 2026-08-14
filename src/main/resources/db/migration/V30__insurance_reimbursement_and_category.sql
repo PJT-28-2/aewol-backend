@@ -1,5 +1,5 @@
 -- =====================================================================
--- V28: 보험 상품 카테고리/자기부담금-계산순서 컬럼 추가 + 환급률/자기부담금/
+-- V30: 보험 상품 카테고리/자기부담금-계산순서 컬럼 추가 + 환급률/자기부담금/
 --      연간한도/출처/신뢰도의 진실 원천을 insurance_product_plan_tiers로 이전
 --
 -- 계획 문서: .omc/plans/pet-insurance-simulator-fix-consensus.md (v3.1) S4
@@ -12,12 +12,17 @@
 -- "이 견적이 어떤 플랜을 전제로 뽑혔는가"가 진실이지 "이 상품의 환급률은 X%다"는
 -- 거짓 주장이므로, is_reference_tier=1 티어를 진실 원천으로 승격한다.
 --
--- ⚠️ 파일명 순연 안내: 계획서상 원래 파일명은 V27이었으나, 이 저장소에 이미
--- V27__create_wallet_withdrawal_request.sql(지갑 출금 기능, 본 작업과 무관)이
--- 존재한다. Flyway는 버전 번호 유일성을 강제하므로 같은 번호를 재사용할 수
--- 없어, 계획서의 V27을 V28로, V28을 V29로 순연했다. ALTER 문/컬럼/내용은
--- 계획서와 동일하고, 버전 숫자만 다르다 (자세한 사유는 최초 작성 당시 주석 참조,
--- 아래 재설계로 일부 컬럼 위치만 달라졌다).
+-- ⚠️ 파일명 순연 안내: 계획서상 원래 파일명은 V27이었다. Flyway는 버전 번호
+-- 유일성을 강제하는데, 이 작업이 진행되는 동안 develop에서 V27(지갑 출금)·
+-- V28(홈 인사이트)·V29(토스 충전 주문)이 차례로 추가되어 두 번 밀렸다.
+--   계획서 V27 → (작성 시점) V28 → (develop 머지 후) V30
+--   계획서 V28 → (작성 시점) V29 → (develop 머지 후) V31
+-- ALTER 문/컬럼/내용은 계획서와 동일하고 버전 숫자만 다르다.
+--
+-- 이 파일을 다시 밀어야 할 경우 함께 고쳐야 하는 곳:
+--   - 하단 GENERATED 구간을 생성하는 scripts/gen-insurance-seed.mjs의 MIGRATION 상수
+--   - docs/insurance-reimbursement-research.md의 사용법 안내
+--   - 아래 백업 테이블명(insurance_product_bak_v30)
 --
 -- 매칭 키 안내 (하단 TODO 블록의 백필 작성 시 반드시 준수):
 --   백필은 species + company_name + product_name 3개를 모두 WHERE 조건으로
@@ -41,7 +46,7 @@
 --     ADD COLUMN reimbursement_rate_pct INT NULL,
 --     ADD COLUMN reimbursement_confidence VARCHAR(30) NULL;
 --   -- 2) 백업에서 값 복원
---   UPDATE insurance_product p JOIN insurance_product_bak_v27 b ON p.product_id = b.product_id
+--   UPDATE insurance_product p JOIN insurance_product_bak_v30 b ON p.product_id = b.product_id
 --   SET p.reimbursement_rate_pct = b.reimbursement_rate_pct,
 --       p.reimbursement_confidence = b.reimbursement_confidence,
 --       p.age_subject_confidence = b.age_subject_confidence,
@@ -49,7 +54,7 @@
 --   -- 3) 이 마이그레이션이 plan_tiers에 새로 넣은 견적 기준 티어 제거
 --   DELETE FROM insurance_product_plan_tiers WHERE is_reference_tier = 1;
 -- S3'(수정 후 확정 기대값, Verification 9) 통과 후 이 백업 테이블은 DROP한다.
-CREATE TABLE insurance_product_bak_v27 AS SELECT * FROM insurance_product;
+CREATE TABLE insurance_product_bak_v30 AS SELECT * FROM insurance_product;
 
 -- ---------------------------------------------------------------------
 -- insurance_product: 상품 레벨에 남는 것 (플랜 선택과 무관한 상품 고유 속성)
@@ -195,7 +200,7 @@ ALTER TABLE insurance_product_plan_tiers
 -- 적용 후 새 근거가 나오면 이 구간을 고치지 말고 V30을 새로 만들 것.
 -- =====================================================================
 -- BEGIN GENERATED (S1 backfill)
--- 생성일: 2026-08-12 — 직접 편집하지 말 것 (scripts/gen-insurance-seed.mjs)
+-- 생성일: 2026-08-14 — 직접 편집하지 말 것 (scripts/gen-insurance-seed.mjs)
 -- 입력: docs/insurance-reimbursement-research.md (24행 파싱)
 
 -- ── #1 삼성화재 / 무배당 삼성화재 다이렉트 착한펫보험(강아지)(2601.6)(자동갱신형)

@@ -1,11 +1,11 @@
 -- =====================================================================
--- V29: insurance_simulation에 가정치·대표상품·조정여부 컬럼 추가
+-- V31: insurance_simulation에 가정치·대표상품·조정여부 컬럼 추가
 --
 -- 계획 문서: .omc/plans/pet-insurance-simulator-fix-consensus.md (v3.1) S5
 --
--- ⚠️ 파일명 순연 안내: 계획서상 원래 파일명은 V28이었으나, V27__insurance_reimbursement_
--- and_category.sql이 저장소의 기존 V27과 충돌해 V28로 순연되면서 이 파일도 V29로
--- 한 칸씩 밀렸다 (자세한 사유는 V28__insurance_reimbursement_and_category.sql 상단 참조).
+-- ⚠️ 파일명 순연 안내: 계획서상 원래 파일명은 V28이었으나, 짝인
+-- V30__insurance_reimbursement_and_category.sql이 develop의 V27~V29와 충돌해
+-- 두 번 밀리면서 이 파일도 함께 V31까지 밀렸다 (자세한 사유는 그 파일 상단 참조).
 -- ALTER 문/컬럼/내용은 계획서와 동일하고, 버전 숫자만 다르다.
 --
 -- representative_product_id에는 FK를 걸지 않는다 — insurance_product 시드를

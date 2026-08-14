@@ -29,7 +29,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
 
 /**
- * ⚠️ V28 재설계(worker-4): 환급률/자기부담금/연간한도/출처/신뢰도의 진실 원천이
+ * ⚠️ V30 재설계(worker-4): 환급률/자기부담금/연간한도/출처/신뢰도의 진실 원천이
  * insurance_product에서 insurance_product_plan_tiers의 "견적 기준 티어"
  * (is_reference_tier=1)로 이전됐다. 이 테스트의 {@code product(...)} 헬퍼는 더 이상
  * reimbursement_* 컬럼을 담지 않으며, 대신 {@code referenceTier(...)} 헬퍼로 만든

@@ -93,7 +93,7 @@ public class InsuranceProductServiceImpl implements InsuranceProductService {
                 .collect(Collectors.toList());
 
         // 환급률/신뢰도/연간한도의 진실 원천은 insurance_product가 아니라 견적 기준
-        // 티어(is_reference_tier=1)다 (V28 재설계). 상품에 티어가 없으면(아직 리서치
+        // 티어(is_reference_tier=1)다 (V30 재설계). 상품에 티어가 없으면(아직 리서치
         // 미완료) 전부 null(=미확인)로 남긴다.
         Map<String, Object> referenceTier = tiers.stream()
                 .filter(tier -> Boolean.TRUE.equals(toBool(tier.get("is_reference_tier"))))

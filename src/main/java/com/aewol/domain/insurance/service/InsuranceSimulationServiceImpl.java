@@ -66,7 +66,7 @@ public class InsuranceSimulationServiceImpl implements InsuranceSimulationServic
 
         // 환급률/자기부담금/연간한도/출처/신뢰도의 진실 원천은 insurance_product가
         // 아니라 insurance_product_plan_tiers의 견적 기준 티어(is_reference_tier=1)다
-        // (V28 재설계 — 국내 펫보험의 보장비율은 상품 고정 속성이 아니라 가입 시
+        // (V30 재설계 — 국내 펫보험의 보장비율은 상품 고정 속성이 아니라 가입 시
         // 선택하는 플랜 옵션이라는 리서치 발견에 따른 것). 후보를 먼저 나이/카테고리로
         // 거른 뒤, 그 상품들의 견적 기준 티어만 별도로 조회해 병합한다.
         List<Map<String, Object>> candidateProducts = insuranceMapper.findProductsBySpecies(species).stream()
@@ -217,7 +217,7 @@ public class InsuranceSimulationServiceImpl implements InsuranceSimulationServic
      * <p>자기부담금 금액({@code deductible_krw})·기준({@code deductible_basis})은
      * 가입 시 선택하는 플랜 옵션이라 견적 기준 티어({@code referenceTier})에서 읽는다.
      * 적용 순서({@code deductible_order})는 약관상 계산 규칙(플랜 무관)이라 상품
-     * 레벨({@code product})에 그대로 남아 있다 (V28 재설계).</p>
+     * 레벨({@code product})에 그대로 남아 있다 (V30 재설계).</p>
      */
     /**
      * 자기부담금이 실제로 손익분기 계산에 반영됐는지 알려준다.

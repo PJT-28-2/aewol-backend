@@ -8,12 +8,12 @@
 
 ## ⚙️ 이 표는 마이그레이션 SQL의 소스다 — 손으로 SQL을 쓰지 말 것
 
-아래 표를 고치면 `V28__insurance_reimbursement_and_category.sql`의 백필 SQL을 **재생성**한다.
+아래 표를 고치면 `V30__insurance_reimbursement_and_category.sql`의 백필 SQL을 **재생성**한다.
 
 ```bash
 cd aewol-backend
 node scripts/gen-insurance-seed.mjs           # 미리보기 (파일 미변경)
-node scripts/gen-insurance-seed.mjs --write   # V28의 BEGIN/END GENERATED 구간 치환
+node scripts/gen-insurance-seed.mjs --write   # V30의 BEGIN/END GENERATED 구간 치환
 ```
 
 의존성 없음(Node 표준 라이브러리만, `npm install` 불필요). 재실행해도 같은 결과가 나온다(멱등).
@@ -34,7 +34,7 @@ node scripts/gen-insurance-seed.mjs --write   # V28의 BEGIN/END GENERATED 구�
 
 **`age_subject_confidence`는 이 표에 열이 없어 전 행 `ASSUMED`로 나간다.** `age_basis` 근거를 약관에서 확인한 적이 없으므로 이것이 정직한 값이다. 약관으로 확인한 상품이 생기면 표에 열을 추가하고 생성기를 그에 맞게 고칠 것.
 
-> ⚠️ **Flyway 체크섬:** V28은 **DB에 적용되기 전까지만** 재생성할 수 있다. 한 번 `flywayMigrate`가 돌면 체크섬이 기록되어 이후 파일이 바뀌면 검증에 실패한다. 적용 후 새 근거가 나오면 V28을 고치지 말고 **V30을 새로 만든다.**
+> ⚠️ **Flyway 체크섬:** V30은 **DB에 적용되기 전까지만** 재생성할 수 있다. 한 번 `flywayMigrate`가 돌면 체크섬이 기록되어 이후 파일이 바뀌면 검증에 실패한다. 적용 후 새 근거가 나오면 V30을 고치지 말고 **V32를 새로 만든다.**
 
 ## 상태 (파일럿 단계 — 2026-08-12)
 
