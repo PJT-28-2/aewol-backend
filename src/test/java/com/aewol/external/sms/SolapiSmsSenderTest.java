@@ -3,6 +3,7 @@ package com.aewol.external.sms;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withBadRequest;
+import static org.springframework.test.web.client.response.MockRestResponseCreators.withServerError;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
 
 import java.nio.charset.StandardCharsets;
@@ -20,6 +21,7 @@ import org.springframework.http.HttpMethod;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.client.MockRestServiceServer;
 import org.springframework.web.client.RestTemplate;
+import org.springframework.web.client.ResourceAccessException;
 
 class SolapiSmsSenderTest {
 
@@ -46,7 +48,7 @@ class SolapiSmsSenderTest {
                     assertEquals("01000000000", message.get("to").asText());
                     assertEquals("test message", message.get("text").asText());
                 })
-                .andRespond(withSuccess("{}", MediaType.APPLICATION_JSON));
+                .andRespond(withSuccess(successResponse(), MediaType.APPLICATION_JSON));
 
         sender.send("01000000000", "test message");
         server.verify();
@@ -68,6 +70,46 @@ class SolapiSmsSenderTest {
     }
 
     @Test
+    void rejectsHttp200WhenSolapiReportsMessageRegistrationFailure() {
+        assertRegistrationFailure("{\"failedMessageList\":[{\"to\":\"must-not-be-logged\"}],"
+                + "\"groupInfo\":{\"count\":{\"registeredSuccess\":0,\"registeredFailed\":1}}}");
+    }
+
+    @Test
+    void rejectsIncompleteOrUnexpectedHttp200Responses() {
+        assertRegistrationFailure(null);
+        assertRegistrationFailure("{\"failedMessageList\":[],\"groupInfo\":null}");
+        assertRegistrationFailure("{\"failedMessageList\":[],\"groupInfo\":{\"count\":null}}");
+        assertRegistrationFailure("{\"failedMessageList\":[],\"groupInfo\":{\"count\":"
+                + "{\"registeredSuccess\":0,\"registeredFailed\":0}}}");
+        assertRegistrationFailure("{\"failedMessageList\":[],\"groupInfo\":{\"count\":"
+                + "{\"registeredSuccess\":1,\"registeredFailed\":1}}}");
+        assertRegistrationFailure("{\"failedMessageList\":[{}],\"groupInfo\":{\"count\":"
+                + "{\"registeredSuccess\":1,\"registeredFailed\":0}}}");
+    }
+
+    @Test
+    void mapsServerAndTransportErrorsToSmsSendException() {
+        RestTemplate serverErrorTemplate = new RestTemplate();
+        MockRestServiceServer serverError = MockRestServiceServer.bindTo(serverErrorTemplate).build();
+        serverError.expect(request -> { })
+                .andRespond(withServerError());
+        assertEquals("SOLAPI request failed", assertThrows(SmsSendException.class,
+                () -> sender(serverErrorTemplate).send("01000000000", "test message")).getMessage());
+        serverError.verify();
+
+        RestTemplate transportErrorTemplate = new RestTemplate();
+        MockRestServiceServer transportError = MockRestServiceServer.bindTo(transportErrorTemplate).build();
+        transportError.expect(request -> { })
+                .andRespond(request -> {
+                    throw new ResourceAccessException("simulated timeout");
+                });
+        assertEquals("SOLAPI request failed", assertThrows(SmsSendException.class,
+                () -> sender(transportErrorTemplate).send("01000000000", "test message")).getMessage());
+        transportError.verify();
+    }
+
+    @Test
     void missingCredentialsFailBeforeNetworkCall() {
         SolapiSmsSender sender = new SolapiSmsSender(new RestTemplate(), "", "", "",
                 Clock.fixed(NOW, ZoneOffset.UTC), () -> SALT);
@@ -79,6 +121,28 @@ class SolapiSmsSenderTest {
     private SolapiSmsSender sender(RestTemplate restTemplate) {
         return new SolapiSmsSender(restTemplate, "dummy-key", "dummy-secret", "00000000",
                 Clock.fixed(NOW, ZoneOffset.UTC), () -> SALT);
+    }
+
+    private void assertRegistrationFailure(String responseBody) {
+        RestTemplate restTemplate = new RestTemplate();
+        MockRestServiceServer server = MockRestServiceServer.bindTo(restTemplate).build();
+        if (responseBody == null) {
+            server.expect(request -> { }).andRespond(withSuccess());
+        } else {
+            server.expect(request -> { })
+                    .andRespond(withSuccess(responseBody, MediaType.APPLICATION_JSON));
+        }
+
+        assertEquals("SOLAPI message registration failed", assertThrows(SmsSendException.class,
+                () -> sender(restTemplate).send("01000000000", "test message")).getMessage());
+        server.verify();
+    }
+
+    private String successResponse() {
+        return "{\"failedMessageList\":[],\"messageList\":[{\"messageId\":\"dummy\"}],"
+                + "\"groupInfo\":{\"groupId\":\"dummy\",\"count\":"
+                + "{\"total\":1,\"sentSuccess\":0,\"registeredSuccess\":1,"
+                + "\"registeredFailed\":0}}}";
     }
 
     private String hmac(String secret, String value) throws Exception {
