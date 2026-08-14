@@ -2,6 +2,7 @@ package com.aewol.domain.member.mapper;
 
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
+import java.util.List;
 import java.util.Map;
 
 @Mapper
@@ -17,6 +18,9 @@ public interface MemberMapper {
     boolean existsActiveByPhone(@Param("phone") String phone);
     boolean existsActiveByPhoneExcludingMember(
             @Param("phone") String phone, @Param("memberId") String memberId);
+    List<Map<String, Object>> findActiveForAccountFind(
+            @Param("name") String name, @Param("phone") String phone);
+    Map<String, Object> findActiveAccountFindResultById(@Param("memberId") String memberId);
     boolean existsInactiveByKakaoIdentity(
             @Param("email") String email, @Param("providerId") String providerId);
     Map<String, Object> findLatestInactiveByEmailForUpdate(@Param("email") String email);

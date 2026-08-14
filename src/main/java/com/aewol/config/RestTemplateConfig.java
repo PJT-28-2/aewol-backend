@@ -113,4 +113,12 @@ public class RestTemplateConfig {
         factory.setReadTimeout(15_000);
         return new RestTemplate(factory);
     }
+
+    @Bean(name = "solapiRestTemplate")
+    public RestTemplate solapiRestTemplate() {
+        SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
+        factory.setConnectTimeout(5_000);
+        factory.setReadTimeout(5_000);
+        return new RestTemplate(factory);
+    }
 }

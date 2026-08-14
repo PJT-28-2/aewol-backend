@@ -67,6 +67,22 @@
           AND REGEXP_REPLACE(COALESCE(phone, ''), '[^0-9]', '') = #{phone}
     </select>
 
+    <select id="findActiveForAccountFind" resultType="map">
+        SELECT member_id, provider, email
+        FROM member
+        WHERE name = #{name}
+          AND is_active = 1
+          AND REGEXP_REPLACE(COALESCE(phone, ''), '[^0-9]', '') = #{phone}
+        ORDER BY member_id
+    </select>
+
+    <select id="findActiveAccountFindResultById" resultType="map">
+        SELECT member_id, provider, email
+        FROM member
+        WHERE member_id = #{memberId}
+          AND is_active = 1
+    </select>
+
     <select id="existsInactiveByKakaoIdentity" resultType="boolean">
         SELECT COUNT(*) > 0
         FROM member
