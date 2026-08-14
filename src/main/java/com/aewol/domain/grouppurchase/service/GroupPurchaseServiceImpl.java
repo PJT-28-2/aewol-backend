@@ -330,6 +330,9 @@ public class GroupPurchaseServiceImpl implements GroupPurchaseService {
      * cancelGroupPurchase의 원자적 WHERE절이 join()의 updateQuantity와 동일한 패턴으로 목표 수량 달성
      * (COMPLETED) 또는 마감(FAILED) 이후에는 취소를 거절한다.
      * leave()와 동일하게, 호출한 관리자 본인의 간편 비밀번호를 처리 직전에 다시 검증한다.
+     * findActiveParticipants는 FOR UPDATE로 조회한다(GroupPurchaseMapper.xml 참고) — 일반 SELECT였다면
+     * REPEATABLE READ 스냅샷이 findById 시점에 고정돼, cancelGroupPurchase 실행 후 그 사이 동시에 커밋된
+     * join() 참여가 이 목록에서 누락되어 결제는 됐는데 환불은 안 되는 경우가 생길 수 있었다.
      */
     @Override
     @Transactional
