@@ -103,7 +103,9 @@ public class TossChargeService {
             if (order == null) {
                 throw BusinessException.notFound("존재하지 않는 주문입니다.");
             }
-            if (!memberId.equals(order.get("member_id"))) {
+            // memberId는 인증 Principal의 String이고, BIGINT 컬럼은 MyBatis Map에서 Long으로
+            // 반환되므로 문자열로 정규화한 뒤 비교한다.
+            if (!memberId.equals(String.valueOf(order.get("member_id")))) {
                 throw new BusinessException(HttpStatus.FORBIDDEN, "본인의 주문만 처리할 수 있습니다.");
             }
             if (!"PENDING".equals(order.get("status"))) {
