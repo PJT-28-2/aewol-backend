@@ -21,5 +21,6 @@ public class PetRegistrationResponse {
     private String aprGbnNm;
     private String regTm;
     private String aprTm;
+    private String lastSyncedAt;
     private boolean verified;
 }

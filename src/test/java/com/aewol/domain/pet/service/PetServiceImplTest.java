@@ -26,9 +26,10 @@ class PetServiceImplTest {
     @Mock PetDocumentMapper petDocumentMapper;
     @Mock FileUtil fileUtil;
     @Mock FileStorage fileStorage;
+    @Mock PetRegistrationService petRegistrationService;
 
     private PetServiceImpl service() {
-        return new PetServiceImpl(petMapper, petDocumentMapper, fileUtil, fileStorage);
+        return new PetServiceImpl(petMapper, petDocumentMapper, fileUtil, fileStorage, petRegistrationService);
     }
 
     @Test

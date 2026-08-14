@@ -30,12 +30,13 @@ class PetDocumentUploadServiceTest {
     @Mock PetDocumentMapper petDocumentMapper;
     @Mock FileUtil fileUtil;
     @Mock FileStorage fileStorage;
+    @Mock PetRegistrationService petRegistrationService;
 
     private PetServiceImpl service;
 
     @BeforeEach
     void setUp() {
-        service = new PetServiceImpl(petMapper, petDocumentMapper, fileUtil, fileStorage);
+        service = new PetServiceImpl(petMapper, petDocumentMapper, fileUtil, fileStorage, petRegistrationService);
         lenient().when(fileStorage.signedUrl(anyString()))
                 .thenAnswer(invocation -> "signed:" + invocation.getArgument(0));
     }
