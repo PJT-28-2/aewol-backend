@@ -364,6 +364,13 @@ public class GroupPurchaseServiceImpl implements GroupPurchaseService {
      * 행이 0이면(동시에 leave()로 이미 처리된 참여자) null을 반환해 결과 목록에서 자연히 제외한다 —
      * leave()/자동환불 배치와 동일한 가드. PENDING 참여는 취소만 하고(환불할 금액이 없으므로) 응답의
      * refundedParticipants 목록에는 포함하지 않는다 — 이 필드는 이름 그대로 "환불된" 참여자만 담는다.
+     *
+     * 환불 여부는 findActiveParticipants가 읽어온 스냅샷의 payment_status로 판단한다(재조회하지 않음).
+     * join()이 payment_status를 insertParticipant 시점에 단 한 번 확정하고, 그 후로는 cancelParticipant를
+     * 통한 CANCELLED 전환 외에는 이 값을 바꾸는 코드 경로가 없으므로(PENDING→PAID로 전환하는 "나중에
+     * 결제" 흐름이 아직 없음) 스냅샷과 실제 값이 어긋날 수 없다. 이후 그런 흐름이 추가된다면, 스냅샷의
+     * PENDING이 이 시점엔 이미 PAID로 바뀌었는데 환불 없이 취소만 되는 레이스가 생길 수 있으므로 이
+     * 메서드도 함께 재검토해야 한다.
      */
     private GroupPurchaseCancelParticipantResponse cancelAndMaybeRefundParticipant(String gpId, Map<String, Object> gp,
             Map<String, Object> participant, LocalDateTime canceledAt) {
