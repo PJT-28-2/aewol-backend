@@ -20,7 +20,7 @@ public interface GroupPurchaseService {
     GroupPurchaseStatusResponse getStatus(String memberId, String gpId);
     List<GroupPurchaseMyItemResponse> getMyList(String memberId, String status);
     GroupPurchaseJoinResponse join(String memberId, String gpId, int quantity, GroupPurchaseJoinRequest request);
-    GroupPurchaseLeaveResponse leave(String memberId, String gpId);
-    GroupPurchaseCancelResponse cancel(String gpId);
+    GroupPurchaseLeaveResponse leave(String memberId, String gpId, String password);
+    GroupPurchaseCancelResponse cancel(String memberId, String gpId, String password);
     GroupPurchaseImageUploadResponse uploadImage(MultipartFile image);
 }

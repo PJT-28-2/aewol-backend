@@ -16,6 +16,7 @@ import com.aewol.domain.grouppurchase.dto.GroupPurchaseResponse;
 import com.aewol.domain.grouppurchase.dto.GroupPurchaseStatusParticipantResponse;
 import com.aewol.domain.grouppurchase.dto.GroupPurchaseStatusResponse;
 import com.aewol.domain.grouppurchase.mapper.GroupPurchaseMapper;
+import com.aewol.domain.member.service.SimplePasswordVerificationService;
 import com.aewol.domain.transaction.mapper.TransactionMapper;
 import com.aewol.domain.wallet.mapper.WalletMapper;
 import lombok.RequiredArgsConstructor;
@@ -48,6 +49,7 @@ public class GroupPurchaseServiceImpl implements GroupPurchaseService {
     private final FileUtil fileUtil;
     private final WalletMapper walletMapper;
     private final TransactionMapper transactionMapper;
+    private final SimplePasswordVerificationService simplePasswordVerificationService;
 
     /**
      * 목록 API의 status 쿼리 파라미터를 검증한다. 다른 3개 조회 API(getDetail/getStatus/getMyList)와
@@ -267,10 +269,12 @@ public class GroupPurchaseServiceImpl implements GroupPurchaseService {
      * 처리(Notion 순서19, GroupPurchaseRefundExecutor) 대상이라 이 API의 범위가 아니다.
      * 취소 이력은 row를 삭제하지 않고 payment_status='CANCELLED'로 남긴다(V18 마이그레이션).
      * 동시 중복 취소 요청은 cancelParticipant의 영향받은 행 수로 감지해 거절한다.
+     * 지갑 출금(WalletWithdrawalService.withdraw)과 동일하게, 화면의 간편 비밀번호 사전 확인 결과를
+     * 신뢰하지 않고 실제 취소 처리 직전에 SimplePasswordVerificationService로 다시 검증한다.
      */
     @Override
     @Transactional
-    public GroupPurchaseLeaveResponse leave(String memberId, String gpId) {
+    public GroupPurchaseLeaveResponse leave(String memberId, String gpId, String password) {
         Map<String, Object> gp = groupPurchaseMapper.findById(gpId);
         if (gp == null) {
             throw BusinessException.notFound("공동구매를 찾을 수 없습니다.");
@@ -278,6 +282,9 @@ public class GroupPurchaseServiceImpl implements GroupPurchaseService {
         Map<String, Object> participant = groupPurchaseMapper.findParticipant(gpId, memberId);
         if (participant == null) {
             throw BusinessException.notFound("참여 내역을 찾을 수 없습니다.");
+        }
+        if (!simplePasswordVerificationService.verify(memberId, password)) {
+            throw new BusinessException("간편 비밀번호가 일치하지 않습니다.");
         }
 
         LocalDateTime canceledAt = LocalDateTime.now();
@@ -319,13 +326,17 @@ public class GroupPurchaseServiceImpl implements GroupPurchaseService {
      * 단일 액션이라 전체를 하나의 트랜잭션으로 묶는다 — 일부만 환불된 상태로 남는 것을 막기 위해서다.
      * cancelGroupPurchase의 원자적 WHERE절이 join()의 updateQuantity와 동일한 패턴으로 목표 수량 달성
      * (COMPLETED) 또는 마감(FAILED) 이후에는 취소를 거절한다.
+     * leave()와 동일하게, 호출한 관리자 본인의 간편 비밀번호를 처리 직전에 다시 검증한다.
      */
     @Override
     @Transactional
-    public GroupPurchaseCancelResponse cancel(String gpId) {
+    public GroupPurchaseCancelResponse cancel(String memberId, String gpId, String password) {
         Map<String, Object> gp = groupPurchaseMapper.findById(gpId);
         if (gp == null) {
             throw BusinessException.notFound("공동구매를 찾을 수 없습니다.");
+        }
+        if (!simplePasswordVerificationService.verify(memberId, password)) {
+            throw new BusinessException("간편 비밀번호가 일치하지 않습니다.");
         }
         if (groupPurchaseMapper.cancelGroupPurchase(gpId) == 0) {
             throw BusinessException.conflict("목표 수량 달성 또는 마감 후에는 취소할 수 없습니다.");
