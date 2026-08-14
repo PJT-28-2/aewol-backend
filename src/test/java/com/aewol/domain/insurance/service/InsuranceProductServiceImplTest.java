@@ -36,6 +36,19 @@ class InsuranceProductServiceImplTest {
         return product;
     }
 
+    /**
+     * ⚠️ 계획서 v3.1 Critic m-1: 기존 5-arg 시그니처는 그대로 두고 {@code age_basis}를
+     * 받는 오버로드로 확장한다. 기존 7개 호출부에 필수 파라미터로 {@code age_basis}를
+     * 추가하면(특히 :69-70) 두 상품 모두 적격이 되어 정렬 순서가 바뀌어
+     * {@code should_rankLower_notExclude_whenNonConfirmedAgeMismatch}가 깨진다.
+     */
+    private Map<String, Object> product(long productId, BigDecimal monthlyPremium, Integer joinAgeMin,
+            Integer joinAgeMax, String ageSubjectConfidence, String ageBasis) {
+        Map<String, Object> product = product(productId, monthlyPremium, joinAgeMin, joinAgeMax, ageSubjectConfidence);
+        product.put("age_basis", ageBasis);
+        return product;
+    }
+
     @Test
     @DisplayName("petType에 해당하는 상품이 없으면 빈 목록을 반환한다")
     void should_returnEmptyList_whenNoProductsMatchSpecies() {
@@ -168,5 +181,24 @@ class InsuranceProductServiceImplTest {
 
         assertEquals(Boolean.TRUE, result.get(0).getPlanTiers().get(0).getIsReferenceTier());
         assertEquals(null, result.get(0).getPlanTiers().get(1).getIsReferenceTier());
+    }
+
+    @Test
+    @DisplayName("C-1 회귀 방어: age_basis=OWNER + age_subject_confidence=CONFIRMED + join_age_min=18 상품은 3세 펫 카탈로그에 남는다")
+    void should_keepProductInCatalog_whenOwnerBasisConfirmedAndJoinAgeMinAboveThreePetAge() {
+        // 계획서 Critic C-1: age_subject_confidence를 CONFIRMED로 백필해도, age_basis=OWNER인
+        // 상품(메리츠·현대해상 스탠다드 형태)은 isConfirmedAgeMismatch가 InsuranceProductPolicy.
+        // isEligibleByAge를 거치므로 반려동물 나이와 무관하게 항상 적격 판정을 받아
+        // 카탈로그에서 하드 배제되지 않아야 한다.
+        service = new InsuranceProductServiceImpl(insuranceMapper);
+        when(insuranceMapper.findProductsBySpecies("DOG")).thenReturn(List.of(
+                product(1L, new BigDecimal("33971"), 18, 80, "CONFIRMED", "OWNER")));
+        when(insuranceMapper.findCoveragesByProductIds(List.of(1L))).thenReturn(List.of());
+        when(insuranceMapper.findPlanTiersByProductIds(List.of(1L))).thenReturn(List.of());
+
+        List<ProductResponse> result = service.getProducts("DOG", 3, "premium_asc");
+
+        assertEquals(1, result.size());
+        assertEquals("1", result.get(0).getProductId());
     }
 }

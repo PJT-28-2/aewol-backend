@@ -5,8 +5,14 @@
          breed/age/premium 등 단일값 컴럼 제거, medical_history_codes/verdict/message로 전환 -->
 
     <insert id="insertSimulation" parameterType="map" useGeneratedKeys="true" keyProperty="simId" keyColumn="sim_id">
-        INSERT INTO insurance_simulation (pet_id, medical_history_codes, verdict, message)
-        VALUES (#{petId}, #{medicalHistoryCodes}, #{verdict}, #{message})
+        INSERT INTO insurance_simulation (pet_id, medical_history_codes, verdict, message,
+                                           assumed_annual_medical_cost_krw, assumption_source,
+                                           representative_product_id, representative_product_label,
+                                           is_user_adjusted)
+        VALUES (#{petId}, #{medicalHistoryCodes}, #{verdict}, #{message},
+                #{assumedAnnualMedicalCostKrw}, #{assumptionSource},
+                #{representativeProductId}, #{representativeProductLabel},
+                #{isUserAdjusted})
     </insert>
 
     <insert id="insertClaim" parameterType="map" useGeneratedKeys="true" keyProperty="claimId" keyColumn="claim_id">
@@ -45,12 +51,28 @@
         </foreach>
     </select>
 
+    <!--
+        ORDER BY tier_id는 표시 순서를 위한 것만이 아니다. 상품당 견적 기준 티어는
+        1개여야 하지만(V33 유니크 제약), 제약이 없던 시점의 DB에 중복 행이 남아 있으면
+        정렬 없는 조회는 어느 행이 뽑힐지 보장하지 않는다. 두 서비스가 서로 다른 행을
+        골라 같은 상품의 환급률이 화면마다 달라지는 일이 없도록 순서를 고정한다.
+    -->
     <select id="findPlanTiersByProductIds" resultType="map">
         SELECT * FROM insurance_product_plan_tiers
         WHERE product_id IN
         <foreach item="productId" collection="productIds" open="(" separator="," close=")">
             #{productId}
         </foreach>
+        ORDER BY product_id, tier_id
+    </select>
+
+    <select id="findReferenceTiersByProductIds" resultType="map">
+        SELECT * FROM insurance_product_plan_tiers
+        WHERE is_reference_tier = 1 AND product_id IN
+        <foreach item="productId" collection="productIds" open="(" separator="," close=")">
+            #{productId}
+        </foreach>
+        ORDER BY product_id, tier_id
     </select>
 
 </mapper>
