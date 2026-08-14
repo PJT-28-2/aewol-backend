@@ -82,10 +82,19 @@ public class TossChargeService {
         String paymentKey = request.getPaymentKey();
         String orderId = request.getOrderId();
 
-        // 1. 클레임 획득 — 경합 시 409, Redis 장애 시 503(fail-closed).
-        // 새로고침/뒤로가기로 같은 orderId가 두 번 들어와도 잔액이 두 번 늘지 않게 한다.
-        // orderId는 서버가 발급한 UUID이므로 memberId를 키에 포함할 필요가 없다.
-        tossPaymentClaim.acquire(orderId);
+        // 1. 클레임 획득 — 경합 시에는 DB 주문 상태를 한 번 확인한다. 이전 요청이 이미
+        // 승인·적립까지 끝났지만 브라우저가 응답을 받지 못한 경우라면 APPROVED 주문이므로,
+        // Toss를 다시 호출하거나 잔액을 다시 적립하지 않고 현재 지갑을 멱등 응답한다.
+        // 아직 PENDING이면 실제 처리 중인 요청이므로 기존 409를 그대로 반환한다.
+        try {
+            tossPaymentClaim.acquire(orderId);
+        } catch (BusinessException e) {
+            if (e.getStatus() == HttpStatus.CONFLICT
+                    && isMatchingApprovedOrder(memberId, request)) {
+                return walletService.getWallet(memberId);
+            }
+            throw e;
+        }
 
         // 2. 사전 점검 — Toss 호출 이전에 실패하는 경우 클레임을 해제한다.
         //
@@ -108,12 +117,18 @@ public class TossChargeService {
             if (!memberId.equals(String.valueOf(order.get("member_id")))) {
                 throw new BusinessException(HttpStatus.FORBIDDEN, "본인의 주문만 처리할 수 있습니다.");
             }
-            if (!"PENDING".equals(order.get("status"))) {
-                throw new BusinessException(HttpStatus.CONFLICT, "이미 처리된 주문입니다.");
-            }
             BigDecimal orderedAmount = (BigDecimal) order.get("amount");
             if (orderedAmount.compareTo(request.getAmount()) != 0) {
                 throw new BusinessException(HttpStatus.BAD_REQUEST, "주문 금액이 일치하지 않습니다.");
+            }
+            if ("APPROVED".equals(order.get("status"))) {
+                // TTL이 만료된 뒤 같은 요청이 다시 들어와 새 클레임을 얻은 경우에도
+                // 이미 완료된 주문은 현재 지갑만 반환한다. 외부 호출 전이므로 클레임은 해제한다.
+                tossPaymentClaim.release(orderId);
+                return walletService.getWallet(memberId);
+            }
+            if (!"PENDING".equals(order.get("status"))) {
+                throw new BusinessException(HttpStatus.CONFLICT, "이미 처리된 주문입니다.");
             }
 
             // 2b. 지갑 존재 확인 — 충전은 잔액 요건이 없으므로 존재만 확인한다.
@@ -212,6 +227,23 @@ public class TossChargeService {
      * 않는 감사 로그에만 남긴다.
      */
     private static final String CANCEL_REASON = "지갑 충전 기록 실패로 인한 자동 취소";
+
+    /**
+     * 클레임 충돌 시 기존 요청이 완료된 재시도인지 확인한다. 주문 존재 여부나 소유권을
+     * 외부에 새로 노출하지 않도록, 모든 조건이 맞는 APPROVED 주문일 때만 true를 반환하고
+     * 나머지는 원래 클레임의 409 응답을 유지한다.
+     */
+    private boolean isMatchingApprovedOrder(String memberId, TossChargeRequest request) {
+        Map<String, Object> order = tossChargeOrderMapper.findByOrderId(request.getOrderId());
+        if (order == null
+                || !memberId.equals(String.valueOf(order.get("member_id")))
+                || !"APPROVED".equals(order.get("status"))) {
+            return false;
+        }
+        Object amount = order.get("amount");
+        return amount instanceof BigDecimal
+                && ((BigDecimal) amount).compareTo(request.getAmount()) == 0;
+    }
 
     private void compensate(String paymentKey, String orderId, String memberId, Exception cause) {
         TossCancelResult cancelResult = tossPaymentsClient.cancelPayment(paymentKey, CANCEL_REASON);
