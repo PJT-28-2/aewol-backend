@@ -698,7 +698,7 @@ class InsuranceSimulationServiceImplTest {
         when(petMapper.findByIdAndMemberId("3", MEMBER_ID)).thenReturn(pet("CAT", 3));
         when(insuranceMapper.findProductsBySpecies("CAT")).thenReturn(List.of(
                 product(1L, new BigDecimal("10000"), 0, 80)));
-        // V32 유니크 제약이 없던 시점의 DB에 남아 있을 수 있는 상태.
+        // V33 유니크 제약이 없던 시점의 DB에 남아 있을 수 있는 상태.
         // 병합 함수가 없으면 toMap이 IllegalStateException을 던져 이 종의
         // 시뮬레이션 요청 전체가 500으로 죽는다.
         when(insuranceMapper.findReferenceTiersByProductIds(List.of(1L))).thenReturn(List.of(

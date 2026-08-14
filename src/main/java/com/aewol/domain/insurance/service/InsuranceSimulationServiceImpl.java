@@ -87,7 +87,7 @@ public class InsuranceSimulationServiceImpl implements InsuranceSimulationServic
                 .map(product -> ((Number) product.get("product_id")).longValue())
                 .collect(Collectors.toList());
         // 병합 함수 (existing, duplicate) -> existing은 방어 코드다. "상품당 견적 기준
-        // 티어는 1개"는 V32의 유니크 제약으로 강제되지만, 제약이 없던 시점에 만들어진
+        // 티어는 1개"는 V33의 유니크 제약으로 강제되지만, 제약이 없던 시점에 만들어진
         // DB나 제약을 우회하는 경로가 있으면 병합 함수 없는 toMap은 IllegalStateException을
         // 던져 해당 종(species)의 시뮬레이션 요청 전체가 500으로 죽는다. 데이터 무결성
         // 문제 하나가 API 전체를 내리지 않도록, 조회 순서(tier_id 오름차순)의 첫 행을
