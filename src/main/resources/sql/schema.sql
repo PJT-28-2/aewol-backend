@@ -575,7 +575,7 @@ CREATE TABLE IF NOT EXISTS `emergency_hospital` (
 -- 탈취해 먼저 요청하더라도 소유권 불일치로 거부할 수 있다.
 CREATE TABLE IF NOT EXISTS `toss_charge_order` (
     `order_id`   VARCHAR(64)    NOT NULL,
-    `member_id`  VARCHAR(36)    NOT NULL,
+    `member_id`  BIGINT         NOT NULL,
     `amount`     DECIMAL(15,2)  NOT NULL,
     `status`     VARCHAR(10)    NOT NULL DEFAULT 'PENDING' COMMENT 'PENDING / APPROVED',
     `created_at` DATETIME       NOT NULL DEFAULT CURRENT_TIMESTAMP,
