@@ -300,7 +300,28 @@ class TossChargeServiceTest {
     }
 
     @Test
-    void should_throwConflictAndReleaseClaim_when_orderAlreadyApproved() {
+    void should_returnCurrentWalletAndReleaseClaim_when_orderAlreadyApproved() {
+        init();
+        Map<String, Object> order = new HashMap<>();
+        order.put("order_id", ORDER_ID);
+        order.put("member_id", MEMBER_ID_VALUE);
+        order.put("amount", new BigDecimal("10000"));
+        order.put("status", "APPROVED");
+        when(tossChargeOrderMapper.findByOrderId(ORDER_ID)).thenReturn(order);
+        WalletResponse expected = WalletResponse.builder()
+                .walletId("1").memberId(MEMBER_ID).totalBalance(new BigDecimal("30000")).build();
+        when(walletService.getWallet(MEMBER_ID)).thenReturn(expected);
+
+        WalletResponse actual = service.charge(MEMBER_ID, request(new BigDecimal("10000")));
+
+        assertSame(expected, actual);
+        verify(tossPaymentsClient, never()).confirmPayment(anyString(), anyString(), anyLong());
+        verify(walletService, never()).depositExternal(any());
+        verify(tossPaymentClaim).release(ORDER_ID);
+    }
+
+    @Test
+    void should_rejectDifferentAmountAndReleaseClaim_when_orderAlreadyApproved() {
         init();
         Map<String, Object> order = new HashMap<>();
         order.put("order_id", ORDER_ID);
@@ -310,11 +331,36 @@ class TossChargeServiceTest {
         when(tossChargeOrderMapper.findByOrderId(ORDER_ID)).thenReturn(order);
 
         BusinessException ex = assertThrows(BusinessException.class,
-                () -> service.charge(MEMBER_ID, request(new BigDecimal("10000"))));
+                () -> service.charge(MEMBER_ID, request(new BigDecimal("20000"))));
 
-        assertEquals(HttpStatus.CONFLICT, ex.getStatus());
+        assertEquals(HttpStatus.BAD_REQUEST, ex.getStatus());
         verify(tossPaymentsClient, never()).confirmPayment(anyString(), anyString(), anyLong());
+        verify(walletService, never()).getWallet(anyString());
         verify(tossPaymentClaim).release(ORDER_ID);
+    }
+
+    @Test
+    void should_returnCurrentWallet_when_claimIsContendedButOrderAlreadyApproved() {
+        init();
+        doThrow(new BusinessException(HttpStatus.CONFLICT,
+                "이미 처리 중이거나 최근에 처리된 결제 요청입니다."))
+                .when(tossPaymentClaim).acquire(ORDER_ID);
+        Map<String, Object> order = new HashMap<>();
+        order.put("order_id", ORDER_ID);
+        order.put("member_id", MEMBER_ID_VALUE);
+        order.put("amount", new BigDecimal("10000"));
+        order.put("status", "APPROVED");
+        when(tossChargeOrderMapper.findByOrderId(ORDER_ID)).thenReturn(order);
+        WalletResponse expected = WalletResponse.builder()
+                .walletId("1").memberId(MEMBER_ID).totalBalance(new BigDecimal("30000")).build();
+        when(walletService.getWallet(MEMBER_ID)).thenReturn(expected);
+
+        WalletResponse actual = service.charge(MEMBER_ID, request(new BigDecimal("10000")));
+
+        assertSame(expected, actual);
+        verify(tossPaymentsClient, never()).confirmPayment(anyString(), anyString(), anyLong());
+        verify(walletService, never()).depositExternal(any());
+        verify(tossPaymentClaim, never()).release(anyString());
     }
 
     @Test
