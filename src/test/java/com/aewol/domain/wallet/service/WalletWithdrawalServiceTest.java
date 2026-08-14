@@ -13,6 +13,7 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.aewol.common.exception.BusinessException;
+import com.aewol.common.util.AccountNumberCrypto;
 import com.aewol.domain.account.mapper.AccountMapper;
 import com.aewol.domain.member.service.SimplePasswordVerificationService;
 import com.aewol.domain.transaction.mapper.TransactionMapper;
@@ -43,14 +44,19 @@ class WalletWithdrawalServiceTest {
     @Mock WalletWithdrawalRequestMapper withdrawalRequestMapper;
     @Mock SimplePasswordVerificationService simplePasswordVerificationService;
     @Mock BankWithdrawalGateway bankWithdrawalGateway;
+    @Mock AccountNumberCrypto accountNumberCrypto;
     private WalletWithdrawalService service;
 
     @BeforeEach
     void setUp() {
         service = new WalletWithdrawalService(accountMapper, walletMapper, transactionMapper, withdrawalRequestMapper,
-                simplePasswordVerificationService, bankWithdrawalGateway);
+                simplePasswordVerificationService, bankWithdrawalGateway, accountNumberCrypto);
         lenient().when(withdrawalRequestMapper.findByMemberIdAndKey(anyString(), anyString()))
                 .thenReturn(null);
+        // account_number는 이제 암호화된 값을 복호화해서 써야 한다(PR #162 리뷰 반영).
+        // 테스트에서는 실제 암호화를 거치지 않으니, decrypt()가 입력을 그대로 돌려주게
+        // 해서 저장된 테스트 값("222233334444")이 그대로 쓰이도록 한다.
+        lenient().when(accountNumberCrypto.decrypt(anyString())).thenAnswer(inv -> inv.getArgument(0));
     }
 
     @Test
@@ -76,6 +82,7 @@ class WalletWithdrawalServiceTest {
         assertEquals("12", response.getAccountId());
         assertEquals("KB국민은행", response.getBankName());
         assertEquals("********4444", response.getAccountNumberMasked());
+        verify(accountNumberCrypto).decrypt("222233334444");
         verify(bankWithdrawalGateway).withdraw("004", "222233334444", new BigDecimal("50000"));
 
         ArgumentCaptor<Map<String, Object>> captor = ArgumentCaptor.forClass(Map.class);

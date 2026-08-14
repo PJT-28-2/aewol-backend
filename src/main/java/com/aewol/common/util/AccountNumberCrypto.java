@@ -26,6 +26,11 @@ import java.util.Base64;
  *   sha256(accountNumber)를 썼는데, 계좌번호는 숫자 10~16자리라 경우의 수가
  *   제한적이라 레인보우테이블/무차별 대입으로 원문을 역산할 수 있었다. HMAC은
  *   비밀 키가 있어야 같은 해시를 만들 수 있어서 이 공격이 막힌다.
+ *
+ * 2026-08-14 PR #162 리뷰 반영: decrypt()가 너무 짧은 값을 만나면 의도치 않은
+ * ArrayIndexOutOfBoundsException이 새던 문제, AES 키 길이가 32바이트를 초과해도
+ * 시작 시점 검증을 통과하던 문제, encrypt/decrypt에 null이 들어오면 NPE가 그대로
+ * 새던 문제를 고쳤다.
  */
 @Component
 public class AccountNumberCrypto {
@@ -35,6 +40,7 @@ public class AccountNumberCrypto {
     private static final int GCM_TAG_LENGTH_BITS = 128;
     private static final String HMAC_ALGORITHM = "HmacSHA256";
     private static final int MIN_KEY_BYTES = 32;
+    private static final int AES_KEY_BYTES = 32;
 
     private final SecretKeySpec aesKey;
     private final SecretKeySpec hmacKey;
@@ -43,8 +49,15 @@ public class AccountNumberCrypto {
     public AccountNumberCrypto(
             @Value("${security.account.encryption-key}") String encryptionKeyBase64,
             @Value("${security.account.hash-key}") String hashKeyBase64) {
-        this.aesKey = new SecretKeySpec(
-                decodeKey(encryptionKeyBase64, "security.account.encryption-key"), "AES");
+        byte[] aesKeyBytes = decodeKey(encryptionKeyBase64, "security.account.encryption-key");
+        if (aesKeyBytes.length != AES_KEY_BYTES) {
+            // MIN_KEY_BYTES(이상)만 체크하면 33바이트 이상인 키도 여기를 통과해버리고,
+            // 실제로는 첫 encrypt() 호출 시점에야 Cipher.init()에서 실패한다. AES-256은
+            // 정확히 32바이트여야 하므로 기동 시점에 바로 걸러낸다(PR #162 리뷰 반영).
+            throw new IllegalStateException("security.account.encryption-key는 AES-256 기준으로 정확히 "
+                    + AES_KEY_BYTES + "바이트(base64 인코딩 전)여야 해요. 현재 " + aesKeyBytes.length + "바이트예요.");
+        }
+        this.aesKey = new SecretKeySpec(aesKeyBytes, "AES");
         this.hmacKey = new SecretKeySpec(
                 decodeKey(hashKeyBase64, "security.account.hash-key"), HMAC_ALGORITHM);
     }
@@ -69,6 +82,9 @@ public class AccountNumberCrypto {
 
     /** AES-256-GCM으로 암호화한 뒤 base64(iv + ciphertext+tag) 문자열로 반환한다. */
     public String encrypt(String plainText) {
+        if (plainText == null) {
+            throw new IllegalArgumentException("plainText는 null일 수 없어요.");
+        }
         try {
             byte[] iv = new byte[GCM_IV_LENGTH_BYTES];
             secureRandom.nextBytes(iv);
@@ -88,8 +104,19 @@ public class AccountNumberCrypto {
 
     /** encrypt()로 만든 값을 복호화해서 원문을 돌려준다. */
     public String decrypt(String encoded) {
+        if (encoded == null) {
+            throw new IllegalArgumentException("encoded는 null일 수 없어요.");
+        }
         try {
             byte[] combined = Base64.getDecoder().decode(encoded);
+            if (combined.length < GCM_IV_LENGTH_BYTES) {
+                // combined 길이가 IV(12바이트)보다 짧으면 아래 Arrays.copyOfRange(cipherText
+                // 슬라이싱)가 ArrayIndexOutOfBoundsException을 던지는데, 이 예외는
+                // GeneralSecurityException/IllegalArgumentException이 아니라서 catch에
+                // 안 잡히고 그대로 새어나갔다. 슬라이싱 전에 길이부터 확인해서 다른 손상
+                // 케이스와 동일하게 IllegalStateException으로 통일한다(PR #162 리뷰 반영).
+                throw new IllegalStateException("계좌번호 복호화에 실패했어요: 저장된 값의 길이가 올바르지 않아요.");
+            }
             byte[] iv = Arrays.copyOfRange(combined, 0, GCM_IV_LENGTH_BYTES);
             byte[] cipherText = Arrays.copyOfRange(combined, GCM_IV_LENGTH_BYTES, combined.length);
 

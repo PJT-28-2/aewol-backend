@@ -63,13 +63,45 @@ class AccountNumberCryptoTest {
     }
 
     @Test
+    void decryptingTooShortValue_throwsIllegalState_notArrayIndexOutOfBounds() {
+        // PR #162 리뷰 반영: combined.length가 IV 길이(12바이트)보다 짧으면 예전엔
+        // Arrays.copyOfRange에서 ArrayIndexOutOfBoundsException이 그대로 새어나갔다.
+        // 손상되거나 잘린 값도 다른 케이스와 동일하게 IllegalStateException으로 통일돼야 한다.
+        String tooShort = Base64.getEncoder().encodeToString(new byte[]{1, 2, 3});
+        assertThrows(IllegalStateException.class, () -> crypto.decrypt(tooShort));
+    }
+
+    @Test
+    void encryptNull_throwsIllegalArgument() {
+        assertThrows(IllegalArgumentException.class, () -> crypto.encrypt(null));
+    }
+
+    @Test
+    void decryptNull_throwsIllegalArgument() {
+        assertThrows(IllegalArgumentException.class, () -> crypto.decrypt(null));
+    }
+
+    @Test
     void blankKey_failsFastAtConstruction() {
         assertThrows(IllegalStateException.class, () -> new AccountNumberCrypto("", randomKey()));
         assertThrows(IllegalStateException.class, () -> new AccountNumberCrypto(randomKey(), ""));
     }
 
+    @Test
+    void encryptionKeyLongerThan32Bytes_failsFastAtConstruction() {
+        // PR #162 리뷰 반영: 예전엔 MIN_KEY_BYTES(32 이상)만 체크해서 33바이트 이상인
+        // 키도 기동 시점 검증을 통과하고, 첫 encrypt() 호출 때 Cipher.init()에서야
+        // 실패했다. AES-256은 정확히 32바이트여야 하므로 기동 시점에 바로 걸러야 한다.
+        String oversizedKey = randomKey(40);
+        assertThrows(IllegalStateException.class, () -> new AccountNumberCrypto(oversizedKey, randomKey()));
+    }
+
     private static String randomKey() {
-        byte[] key = new byte[32];
+        return randomKey(32);
+    }
+
+    private static String randomKey(int byteLength) {
+        byte[] key = new byte[byteLength];
         new SecureRandom().nextBytes(key);
         return Base64.getEncoder().encodeToString(key);
     }
