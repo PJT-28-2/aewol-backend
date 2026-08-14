@@ -3,6 +3,10 @@ package com.aewol.domain.auth.controller;
 import com.aewol.common.exception.BusinessException;
 import com.aewol.common.response.ApiResponse;
 import com.aewol.domain.auth.dto.LoginRequest;
+import com.aewol.domain.auth.dto.AccountFindResultResponse;
+import com.aewol.domain.auth.dto.AccountFindSendCodeRequest;
+import com.aewol.domain.auth.dto.AccountFindSendCodeResponse;
+import com.aewol.domain.auth.dto.AccountFindVerifyRequest;
 import com.aewol.domain.auth.dto.PasswordResetEmailRequest;
 import com.aewol.domain.auth.dto.PasswordResetRequest;
 import com.aewol.domain.auth.dto.PasswordResetVerifyRequest;
@@ -14,6 +18,7 @@ import com.aewol.domain.auth.dto.SignupEmailCodeResponse;
 import com.aewol.domain.auth.dto.SignupEmailVerificationRequest;
 import com.aewol.domain.auth.dto.TokenResponse;
 import com.aewol.domain.auth.service.AuthService;
+import com.aewol.domain.auth.service.AccountFindService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import javax.validation.Valid;
@@ -34,6 +39,24 @@ public class AuthController {
     private static final String INVALID_REFRESH_TOKEN_MESSAGE = "유효하지 않은 리프레시 토큰입니다.";
 
     private final AuthService authService;
+    private final AccountFindService accountFindService;
+
+    @Operation(summary = "계정 찾기 SMS 인증번호 발송")
+    @PostMapping("/account/find/send-code")
+    public ResponseEntity<ApiResponse<AccountFindSendCodeResponse>> sendAccountFindCode(
+            @Valid @RequestBody AccountFindSendCodeRequest request) {
+        AccountFindSendCodeResponse result = accountFindService.sendVerificationCode(request);
+        return ResponseEntity.ok(ApiResponse.success(
+                "입력하신 정보가 등록된 계정과 일치하면 인증번호가 발송됩니다.", result));
+    }
+
+    @Operation(summary = "계정 찾기 SMS 인증번호 검증")
+    @PostMapping("/account/find/verify-code")
+    public ResponseEntity<ApiResponse<AccountFindResultResponse>> verifyAccountFindCode(
+            @Valid @RequestBody AccountFindVerifyRequest request) {
+        AccountFindResultResponse result = accountFindService.verifyCode(request);
+        return ResponseEntity.ok(ApiResponse.success("인증번호가 확인되었습니다.", result));
+    }
 
     @Operation(summary = "회원가입 이메일 인증번호 발송")
     @PostMapping("/signup/send-code")
