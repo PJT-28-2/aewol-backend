@@ -9,6 +9,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.aewol.common.exception.BusinessException;
+import com.aewol.domain.transaction.mapper.TransactionMapper;
 import com.aewol.domain.wallet.dto.TossChargeOrderRequest;
 import com.aewol.domain.wallet.dto.TossChargeOrderResponse;
 import com.aewol.domain.wallet.mapper.TossChargeOrderMapper;
@@ -40,13 +41,14 @@ class TossChargeServicePrepareTest {
     @Mock WalletService walletService;
     @Mock WalletMapper walletMapper;
     @Mock TossChargeOrderMapper tossChargeOrderMapper;
+    @Mock TransactionMapper transactionMapper;
 
     private TossChargeService service;
 
     @BeforeEach
     void setUp() {
         service = new TossChargeService(tossPaymentClaim, tossPaymentsClient, auditLogger,
-                walletService, walletMapper, tossChargeOrderMapper);
+                walletService, walletMapper, tossChargeOrderMapper, transactionMapper);
     }
 
     @Test

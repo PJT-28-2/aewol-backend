@@ -42,6 +42,16 @@
         LIMIT #{limit}
     </select>
 
+    <!-- 승인 응답 유실 재시도 시 주문 상태가 아니라 실제 원장을 기준으로 완료 여부를 복구한다. -->
+    <select id="findTossPaymentByOrderId" resultType="map">
+        SELECT t.order_id, t.payment_key, t.price, w.member_id
+        FROM `transaction` t
+        JOIN wallet w ON w.wallet_id = t.wallet_id
+        WHERE t.order_id = #{orderId}
+          AND t.txn_type = 'DEPOSIT'
+        LIMIT 1
+    </select>
+
     <update id="updateTag">
         UPDATE `transaction`
         SET category = #{category}, pet_id = #{petId}, auto_tagged = 'N'

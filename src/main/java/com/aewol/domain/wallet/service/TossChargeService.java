@@ -1,6 +1,7 @@
 package com.aewol.domain.wallet.service;
 
 import com.aewol.common.exception.BusinessException;
+import com.aewol.domain.transaction.mapper.TransactionMapper;
 import com.aewol.domain.wallet.dto.ExternalChargeCommand;
 import com.aewol.domain.wallet.dto.TossChargeOrderRequest;
 import com.aewol.domain.wallet.dto.TossChargeOrderResponse;
@@ -50,6 +51,7 @@ public class TossChargeService {
     private final WalletService walletService;
     private final WalletMapper walletMapper;
     private final TossChargeOrderMapper tossChargeOrderMapper;
+    private final TransactionMapper transactionMapper;
 
     /**
      * Toss 결제창을 열기 전에 서버에서 충전 주문을 생성한다.
@@ -82,10 +84,20 @@ public class TossChargeService {
         String paymentKey = request.getPaymentKey();
         String orderId = request.getOrderId();
 
-        // 1. 클레임 획득 — 경합 시 409, Redis 장애 시 503(fail-closed).
-        // 새로고침/뒤로가기로 같은 orderId가 두 번 들어와도 잔액이 두 번 늘지 않게 한다.
-        // orderId는 서버가 발급한 UUID이므로 memberId를 키에 포함할 필요가 없다.
-        tossPaymentClaim.acquire(orderId);
+        // 1. 클레임 획득 — 경합 시에는 실제 원장을 확인한다. 이전 요청이 승인·적립까지
+        // 끝났지만 브라우저가 응답을 받지 못한 경우라면, 주문 상태 갱신 성공 여부와 무관하게
+        // Toss를 다시 호출하거나 잔액을 다시 적립하지 않고 현재 지갑을 멱등 응답한다.
+        // 일치하는 원장이 없으면 실제 처리 중인 요청일 수 있으므로 기존 409를 그대로 반환한다.
+        try {
+            tossPaymentClaim.acquire(orderId);
+        } catch (BusinessException e) {
+            if (e.getStatus() == HttpStatus.CONFLICT
+                    && hasMatchingCompletedCharge(memberId, request)) {
+                markOrderApprovedBestEffort(orderId);
+                return walletService.getWallet(memberId);
+            }
+            throw e;
+        }
 
         // 2. 사전 점검 — Toss 호출 이전에 실패하는 경우 클레임을 해제한다.
         //
@@ -103,15 +115,33 @@ public class TossChargeService {
             if (order == null) {
                 throw BusinessException.notFound("존재하지 않는 주문입니다.");
             }
-            if (!memberId.equals(order.get("member_id"))) {
+            // memberId는 인증 Principal의 String이고, BIGINT 컬럼은 MyBatis Map에서 Long으로
+            // 반환되므로 문자열로 정규화한 뒤 비교한다.
+            if (!memberId.equals(String.valueOf(order.get("member_id")))) {
                 throw new BusinessException(HttpStatus.FORBIDDEN, "본인의 주문만 처리할 수 있습니다.");
-            }
-            if (!"PENDING".equals(order.get("status"))) {
-                throw new BusinessException(HttpStatus.CONFLICT, "이미 처리된 주문입니다.");
             }
             BigDecimal orderedAmount = (BigDecimal) order.get("amount");
             if (orderedAmount.compareTo(request.getAmount()) != 0) {
                 throw new BusinessException(HttpStatus.BAD_REQUEST, "주문 금액이 일치하지 않습니다.");
+            }
+            Map<String, Object> completedCharge = transactionMapper.findTossPaymentByOrderId(orderId);
+            if (completedCharge != null && !completedCharge.isEmpty()) {
+                if (!matchesCompletedCharge(completedCharge, memberId, request)) {
+                    throw new BusinessException(HttpStatus.CONFLICT,
+                            "주문과 일치하지 않는 충전 기록이 존재합니다.");
+                }
+                // 상태 갱신 실패로 PENDING이 남았더라도 실제 원장이 일치하면 완료된 요청이다.
+                markOrderApprovedBestEffort(orderId);
+                tossPaymentClaim.release(orderId);
+                return walletService.getWallet(memberId);
+            }
+            if ("APPROVED".equals(order.get("status"))) {
+                // 상태만 APPROVED이고 실제 원장이 없다면 성공으로 위장하지 않는다.
+                throw new BusinessException(HttpStatus.CONFLICT,
+                        "충전 완료 기록을 확인할 수 없습니다.");
+            }
+            if (!"PENDING".equals(order.get("status"))) {
+                throw new BusinessException(HttpStatus.CONFLICT, "이미 처리된 주문입니다.");
             }
 
             // 2b. 지갑 존재 확인 — 충전은 잔액 요건이 없으므로 존재만 확인한다.
@@ -181,17 +211,17 @@ public class TossChargeService {
             // 5. 주문 상태 업데이트 — 성공 클레임은 해제하지 않고 TTL(10분) 만료까지 유지한다.
             // updateStatus 실패는 이미 완료된 충전을 취소하지 않는다. payment_key UNIQUE 제약이
             // 재충전을 막으므로 APPROVED 마킹은 감사 목적이며, 실패 시 경고 로그만 남긴다.
-            try {
-                tossChargeOrderMapper.updateStatus(orderId, "APPROVED");
-            } catch (Exception updateEx) {
-                log.warn("충전 주문 상태 업데이트 실패 - orderId: {}", orderId, updateEx);
-            }
+            markOrderApprovedBestEffort(orderId);
             return response;
         } catch (DuplicateKeyException e) {
-            // 해당 paymentKey가 이미 원장에 기록되어 있음 — 대사가 이미 완료된 상태이므로
+            // 해당 paymentKey 또는 orderId가 이미 원장에 기록되어 있음 — 대사가 이미 완료된 상태라면
             // 감사 마커는 필요 없다. 반드시 이 좁은 타입만 잡는다: 부모 타입인
             // DataIntegrityViolationException을 잡으면 외래키 위반(MySQL 1452, 보상 경로를
             // 검증하는 시나리오)까지 함께 삼켜져 아래 보상 분기가 실행되지 않게 된다.
+            if (hasMatchingCompletedCharge(memberId, request)) {
+                markOrderApprovedBestEffort(orderId);
+                return walletService.getWallet(memberId);
+            }
             throw new BusinessException(HttpStatus.CONFLICT, "이미 처리된 충전입니다.");
         } catch (Exception e) {
             // 그 외 모든 실패 — Toss는 이미 승인했으므로 cancel 보상을 시도한다. 원래 실패(e)를
@@ -210,6 +240,35 @@ public class TossChargeService {
      * 않는 감사 로그에만 남긴다.
      */
     private static final String CANCEL_REASON = "지갑 충전 기록 실패로 인한 자동 취소";
+
+    /** 실제 원장에 기록된 회원·주문·결제키·금액이 모두 같을 때만 완료 재요청으로 인정한다. */
+    private boolean hasMatchingCompletedCharge(String memberId, TossChargeRequest request) {
+        Map<String, Object> completedCharge =
+                transactionMapper.findTossPaymentByOrderId(request.getOrderId());
+        return completedCharge != null
+                && !completedCharge.isEmpty()
+                && matchesCompletedCharge(completedCharge, memberId, request);
+    }
+
+    private boolean matchesCompletedCharge(Map<String, Object> completedCharge,
+                                            String memberId,
+                                            TossChargeRequest request) {
+        Object amount = completedCharge.get("price");
+        return memberId.equals(String.valueOf(completedCharge.get("member_id")))
+                && request.getOrderId().equals(completedCharge.get("order_id"))
+                && request.getPaymentKey().equals(completedCharge.get("payment_key"))
+                && amount instanceof BigDecimal
+                && ((BigDecimal) amount).compareTo(request.getAmount()) == 0;
+    }
+
+    private void markOrderApprovedBestEffort(String orderId) {
+        try {
+            tossChargeOrderMapper.updateStatus(orderId, "APPROVED");
+        } catch (Exception updateEx) {
+            // 원장이 진실의 원천이므로 상태 갱신 실패가 완료 재시도를 막아서는 안 된다.
+            log.warn("충전 주문 상태 업데이트 실패 - orderId: {}", orderId, updateEx);
+        }
+    }
 
     private void compensate(String paymentKey, String orderId, String memberId, Exception cause) {
         TossCancelResult cancelResult = tossPaymentsClient.cancelPayment(paymentKey, CANCEL_REASON);
