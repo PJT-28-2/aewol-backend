@@ -16,6 +16,7 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.aewol.common.exception.BusinessException;
+import com.aewol.domain.transaction.mapper.TransactionMapper;
 import com.aewol.domain.wallet.dto.ExternalChargeCommand;
 import com.aewol.domain.wallet.dto.TossChargeRequest;
 import com.aewol.domain.wallet.dto.WalletResponse;
@@ -53,12 +54,13 @@ class TossChargeServiceTest {
     @Mock WalletService walletService;
     @Mock WalletMapper walletMapper;
     @Mock TossChargeOrderMapper tossChargeOrderMapper;
+    @Mock TransactionMapper transactionMapper;
 
     private TossChargeService service;
 
     private void init() {
         service = new TossChargeService(tossPaymentClaim, tossPaymentsClient, auditLogger,
-                walletService, walletMapper, tossChargeOrderMapper);
+                walletService, walletMapper, tossChargeOrderMapper, transactionMapper);
     }
 
     // ── 기존 charge() 시나리오 ─────────────────────────────────────────────────
@@ -308,6 +310,7 @@ class TossChargeServiceTest {
         order.put("amount", new BigDecimal("10000"));
         order.put("status", "APPROVED");
         when(tossChargeOrderMapper.findByOrderId(ORDER_ID)).thenReturn(order);
+        stubCompletedCharge(PAYMENT_KEY, new BigDecimal("10000"));
         WalletResponse expected = WalletResponse.builder()
                 .walletId("1").memberId(MEMBER_ID).totalBalance(new BigDecimal("30000")).build();
         when(walletService.getWallet(MEMBER_ID)).thenReturn(expected);
@@ -345,12 +348,7 @@ class TossChargeServiceTest {
         doThrow(new BusinessException(HttpStatus.CONFLICT,
                 "이미 처리 중이거나 최근에 처리된 결제 요청입니다."))
                 .when(tossPaymentClaim).acquire(ORDER_ID);
-        Map<String, Object> order = new HashMap<>();
-        order.put("order_id", ORDER_ID);
-        order.put("member_id", MEMBER_ID_VALUE);
-        order.put("amount", new BigDecimal("10000"));
-        order.put("status", "APPROVED");
-        when(tossChargeOrderMapper.findByOrderId(ORDER_ID)).thenReturn(order);
+        stubCompletedCharge(PAYMENT_KEY, new BigDecimal("10000"));
         WalletResponse expected = WalletResponse.builder()
                 .walletId("1").memberId(MEMBER_ID).totalBalance(new BigDecimal("30000")).build();
         when(walletService.getWallet(MEMBER_ID)).thenReturn(expected);
@@ -361,6 +359,61 @@ class TossChargeServiceTest {
         verify(tossPaymentsClient, never()).confirmPayment(anyString(), anyString(), anyLong());
         verify(walletService, never()).depositExternal(any());
         verify(tossPaymentClaim, never()).release(anyString());
+    }
+
+    @Test
+    void should_recoverFromLedger_when_orderStatusUpdatePreviouslyFailed() {
+        init();
+        stubOrderFound();
+        stubCompletedCharge(PAYMENT_KEY, new BigDecimal("10000"));
+        WalletResponse expected = WalletResponse.builder()
+                .walletId("1").memberId(MEMBER_ID).totalBalance(new BigDecimal("30000")).build();
+        when(walletService.getWallet(MEMBER_ID)).thenReturn(expected);
+
+        WalletResponse actual = service.charge(MEMBER_ID, request(new BigDecimal("10000")));
+
+        assertSame(expected, actual);
+        verify(tossPaymentsClient, never()).confirmPayment(anyString(), anyString(), anyLong());
+        verify(walletService, never()).depositExternal(any());
+        verify(tossChargeOrderMapper).updateStatus(ORDER_ID, "APPROVED");
+        verify(tossPaymentClaim).release(ORDER_ID);
+    }
+
+    @Test
+    void should_rejectRetry_when_paymentKeyDiffersFromCompletedLedger() {
+        init();
+        Map<String, Object> order = new HashMap<>();
+        order.put("order_id", ORDER_ID);
+        order.put("member_id", MEMBER_ID_VALUE);
+        order.put("amount", new BigDecimal("10000"));
+        order.put("status", "APPROVED");
+        when(tossChargeOrderMapper.findByOrderId(ORDER_ID)).thenReturn(order);
+        stubCompletedCharge("different-payment-key", new BigDecimal("10000"));
+
+        BusinessException ex = assertThrows(BusinessException.class,
+                () -> service.charge(MEMBER_ID, request(new BigDecimal("10000"))));
+
+        assertEquals(HttpStatus.CONFLICT, ex.getStatus());
+        verify(tossPaymentsClient, never()).confirmPayment(anyString(), anyString(), anyLong());
+        verify(walletService, never()).getWallet(anyString());
+        verify(tossPaymentClaim).release(ORDER_ID);
+    }
+
+    @Test
+    void should_keepConflict_when_claimIsContendedAndPaymentKeyDiffersFromLedger() {
+        init();
+        doThrow(new BusinessException(HttpStatus.CONFLICT,
+                "이미 처리 중이거나 최근에 처리된 결제 요청입니다."))
+                .when(tossPaymentClaim).acquire(ORDER_ID);
+        stubCompletedCharge("different-payment-key", new BigDecimal("10000"));
+
+        BusinessException ex = assertThrows(BusinessException.class,
+                () -> service.charge(MEMBER_ID, request(new BigDecimal("10000"))));
+
+        assertEquals(HttpStatus.CONFLICT, ex.getStatus());
+        verify(tossPaymentsClient, never()).confirmPayment(anyString(), anyString(), anyLong());
+        verify(walletService, never()).getWallet(anyString());
+        verify(tossChargeOrderMapper, never()).updateStatus(anyString(), anyString());
     }
 
     @Test
@@ -396,6 +449,15 @@ class TossChargeServiceTest {
         wallet.put("member_id", MEMBER_ID);
         wallet.put("balance", new BigDecimal("0"));
         when(walletMapper.findByMemberId(MEMBER_ID)).thenReturn(wallet);
+    }
+
+    private void stubCompletedCharge(String paymentKey, BigDecimal amount) {
+        Map<String, Object> completedCharge = new HashMap<>();
+        completedCharge.put("order_id", ORDER_ID);
+        completedCharge.put("payment_key", paymentKey);
+        completedCharge.put("price", amount);
+        completedCharge.put("member_id", MEMBER_ID_VALUE);
+        when(transactionMapper.findTossPaymentByOrderId(ORDER_ID)).thenReturn(completedCharge);
     }
 
     private TossChargeRequest request(BigDecimal amount) {
