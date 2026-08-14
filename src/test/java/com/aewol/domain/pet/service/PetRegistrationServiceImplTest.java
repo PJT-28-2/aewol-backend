@@ -49,6 +49,13 @@ class PetRegistrationServiceImplTest {
             return null;
         }).when(petDocumentMapper).insert(any());
         when(petMapper.updateRegistrationNumber("pet-1", "member-1", "410000012345678")).thenReturn(1);
+        // verify()는 저장 직후 이 값을 다시 조회해서 응답을 만든다(메모리 맵엔 last_synced_at이 없어서).
+        when(petRegistrationMapper.findByPetIdAndDocId("pet-1", "31")).thenReturn(map(
+                "doc_id", 31L, "pet_id", "pet-1", "reg_number", "410000012345678",
+                "name", "몽이", "breed", "말티즈", "gender", "MALE", "neutered", "Y",
+                "birth_date", "20220101",
+                "reg_tm", LocalDateTime.of(2022, 8, 1, 12, 0, 0),
+                "last_synced_at", LocalDateTime.of(2026, 8, 14, 11, 0, 0)));
 
         PetRegistrationResponse response = service.verify("member-1", "pet-1", request);
 
@@ -56,6 +63,9 @@ class PetRegistrationServiceImplTest {
         assertEquals("31", response.getDocId());
         assertEquals("몽이", response.getName());
         assertEquals("MALE", response.getGender());
+        // 재동기화 직후에도 "마지막 동기화" 시각이 빠지지 않아야 한다(회귀 방지).
+        assertEquals("2026-08-14T11:00:00", response.getLastSyncedAt());
+        assertEquals("2022-08-01T12:00:00", response.getRegTm());
         verify(petRegistrationMapper).insert(argThat(row ->
                 "410000012345678".equals(row.get("regNumber")) && Long.valueOf(31L).equals(row.get("docId"))));
     }
@@ -71,11 +81,15 @@ class PetRegistrationServiceImplTest {
                 .thenReturn(map("pet_id", "pet-1"));
         when(petRegistrationMapper.update(any())).thenReturn(1);
         when(petMapper.updateRegistrationNumber("pet-1", "member-1", "410000012345678")).thenReturn(1);
+        when(petRegistrationMapper.findByPetIdAndDocId("pet-1", "31")).thenReturn(map(
+                "doc_id", 31L, "pet_id", "pet-1", "reg_number", "410000012345678", "name", "몽이",
+                "last_synced_at", LocalDateTime.of(2026, 8, 14, 11, 0, 0)));
 
-        service.verify("member-1", "pet-1", request);
+        PetRegistrationResponse response = service.verify("member-1", "pet-1", request);
 
         verify(petRegistrationMapper).update(argThat(row -> Long.valueOf(31L).equals(row.get("docId"))));
         verify(petRegistrationMapper, never()).insert(any());
+        assertEquals("2026-08-14T11:00:00", response.getLastSyncedAt());
     }
 
     @Test
