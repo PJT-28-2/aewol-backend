@@ -384,6 +384,67 @@ class GroupPurchaseMapperTest {
     }
 
     @Test
+    @DisplayName("마감 전이고 목표 미달이면 cancelGroupPurchase가 성공해 status가 CANCELLED로 바뀐다")
+    void should_cancelGroupPurchase_when_openAndTargetNotReached() {
+        long gpId = insertGroupPurchase(99L, "OPEN", 3, 10, LocalDateTime.now().plusDays(5));
+
+        assertEquals(1, cancelGroupPurchase(gpId));
+        assertEquals("CANCELLED", findStatus(gpId));
+    }
+
+    @Test
+    @DisplayName("목표 수량을 이미 채웠으면 cancelGroupPurchase는 취소하지 않는다")
+    void should_notCancelGroupPurchase_when_targetReached() {
+        long gpId = insertGroupPurchase(99L, "OPEN", 10, 10, LocalDateTime.now().plusDays(5));
+
+        assertEquals(0, cancelGroupPurchase(gpId));
+        assertEquals("OPEN", findStatus(gpId));
+    }
+
+    @Test
+    @DisplayName("마감이 지났으면 cancelGroupPurchase는 취소하지 않는다 — 자동환불 배치의 대상이다")
+    void should_notCancelGroupPurchase_when_deadlinePassed() {
+        long gpId = insertGroupPurchase(99L, "OPEN", 3, 10, LocalDateTime.now().minusDays(1));
+
+        assertEquals(0, cancelGroupPurchase(gpId));
+        assertEquals("OPEN", findStatus(gpId));
+    }
+
+    @Test
+    @DisplayName("이미 취소된 공동구매는 cancelGroupPurchase를 다시 호출해도 영향 행이 0이다")
+    void should_notCancelGroupPurchase_when_alreadyCancelled() {
+        long gpId = insertGroupPurchase(99L, "CANCELLED", 3, 10, LocalDateTime.now().plusDays(5));
+
+        assertEquals(0, cancelGroupPurchase(gpId));
+    }
+
+    @Test
+    @DisplayName("target_quantity가 0 이하인 비정상 데이터도 마감 전이면 cancelGroupPurchase가 취소한다")
+    void should_cancelGroupPurchase_when_targetQuantityIsAbnormal() {
+        // findExpiredUnfulfilledPaidParticipants/findMyGroupPurchases와 동일하게 target_quantity<=0을
+        // "목표 미달" 취급해야 한다 — 그렇지 않으면 이 행은 마감 전까지 영구히 취소 불가 상태로 남는다.
+        long gpId = insertGroupPurchase(99L, "OPEN", 0, 0, LocalDateTime.now().plusDays(5));
+
+        assertEquals(1, cancelGroupPurchase(gpId));
+        assertEquals("CANCELLED", findStatus(gpId));
+    }
+
+    @Test
+    @DisplayName("findActiveParticipants는 PAID/PENDING을 반환하고 CANCELLED는 제외한다")
+    void should_returnActiveParticipants_excludingCancelled() {
+        long gpId = insertGroupPurchase(99L, "OPEN", 3, 10, LocalDateTime.now().plusDays(5));
+        insertParticipant(gpId, 1L, "PAID");
+        insertParticipant(gpId, 2L, "PENDING");
+        insertParticipant(gpId, 3L, "CANCELLED");
+
+        List<Map<String, Object>> result = findActiveParticipants(gpId);
+
+        assertEquals(2, result.size());
+        assertTrue(result.stream().anyMatch(row -> 1L == ((Number) row.get("member_id")).longValue()));
+        assertTrue(result.stream().anyMatch(row -> 2L == ((Number) row.get("member_id")).longValue()));
+    }
+
+    @Test
     @DisplayName("목표 수량을 달성했으면 마감이 지났어도 decreaseQuantityForExpired는 수량을 감소시키지 않는다")
     void should_notDecreaseQuantityForExpired_when_targetReached() {
         long gpId = insertGroupPurchase(99L, "OPEN", 10, 10, LocalDateTime.now().minusDays(1));
@@ -402,6 +463,23 @@ class GroupPurchaseMapperTest {
         try (SqlSession session = sqlSessionFactory.openSession(true)) {
             return session.getMapper(GroupPurchaseMapper.class).decreaseQuantityForExpired(String.valueOf(gpId), quantity);
         }
+    }
+
+    private int cancelGroupPurchase(long gpId) {
+        try (SqlSession session = sqlSessionFactory.openSession(true)) {
+            return session.getMapper(GroupPurchaseMapper.class).cancelGroupPurchase(String.valueOf(gpId));
+        }
+    }
+
+    private List<Map<String, Object>> findActiveParticipants(long gpId) {
+        try (SqlSession session = sqlSessionFactory.openSession(true)) {
+            return session.getMapper(GroupPurchaseMapper.class).findActiveParticipants(String.valueOf(gpId));
+        }
+    }
+
+    private String findStatus(long gpId) {
+        return jdbcTemplate.queryForObject(
+                "SELECT status FROM group_purchase WHERE gp_id = ?", String.class, gpId);
     }
 
     private Map<String, Object> findParticipant(long gpId, long memberId) {

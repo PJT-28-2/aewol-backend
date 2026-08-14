@@ -2,6 +2,8 @@ package com.aewol.domain.grouppurchase.service;
 
 import com.aewol.common.exception.BusinessException;
 import com.aewol.common.util.FileUtil;
+import com.aewol.domain.grouppurchase.dto.GroupPurchaseCancelParticipantResponse;
+import com.aewol.domain.grouppurchase.dto.GroupPurchaseCancelResponse;
 import com.aewol.domain.grouppurchase.dto.GroupPurchaseCreateRequest;
 import com.aewol.domain.grouppurchase.dto.GroupPurchaseImageUploadResponse;
 import com.aewol.domain.grouppurchase.dto.GroupPurchaseJoinRequest;
@@ -14,6 +16,7 @@ import com.aewol.domain.grouppurchase.dto.GroupPurchaseResponse;
 import com.aewol.domain.grouppurchase.dto.GroupPurchaseStatusParticipantResponse;
 import com.aewol.domain.grouppurchase.dto.GroupPurchaseStatusResponse;
 import com.aewol.domain.grouppurchase.mapper.GroupPurchaseMapper;
+import com.aewol.domain.member.service.SimplePasswordVerificationService;
 import com.aewol.domain.transaction.mapper.TransactionMapper;
 import com.aewol.domain.wallet.mapper.WalletMapper;
 import lombok.RequiredArgsConstructor;
@@ -46,6 +49,7 @@ public class GroupPurchaseServiceImpl implements GroupPurchaseService {
     private final FileUtil fileUtil;
     private final WalletMapper walletMapper;
     private final TransactionMapper transactionMapper;
+    private final SimplePasswordVerificationService simplePasswordVerificationService;
 
     /**
      * 목록 API의 status 쿼리 파라미터를 검증한다. 다른 3개 조회 API(getDetail/getStatus/getMyList)와
@@ -265,10 +269,12 @@ public class GroupPurchaseServiceImpl implements GroupPurchaseService {
      * 처리(Notion 순서19, GroupPurchaseRefundExecutor) 대상이라 이 API의 범위가 아니다.
      * 취소 이력은 row를 삭제하지 않고 payment_status='CANCELLED'로 남긴다(V18 마이그레이션).
      * 동시 중복 취소 요청은 cancelParticipant의 영향받은 행 수로 감지해 거절한다.
+     * 지갑 출금(WalletWithdrawalService.withdraw)과 동일하게, 화면의 간편 비밀번호 사전 확인 결과를
+     * 신뢰하지 않고 실제 취소 처리 직전에 SimplePasswordVerificationService로 다시 검증한다.
      */
     @Override
     @Transactional
-    public GroupPurchaseLeaveResponse leave(String memberId, String gpId) {
+    public GroupPurchaseLeaveResponse leave(String memberId, String gpId, String password) {
         Map<String, Object> gp = groupPurchaseMapper.findById(gpId);
         if (gp == null) {
             throw BusinessException.notFound("공동구매를 찾을 수 없습니다.");
@@ -276,6 +282,9 @@ public class GroupPurchaseServiceImpl implements GroupPurchaseService {
         Map<String, Object> participant = groupPurchaseMapper.findParticipant(gpId, memberId);
         if (participant == null) {
             throw BusinessException.notFound("참여 내역을 찾을 수 없습니다.");
+        }
+        if (!simplePasswordVerificationService.verify(memberId, password)) {
+            throw new BusinessException("간편 비밀번호가 일치하지 않습니다.");
         }
 
         LocalDateTime canceledAt = LocalDateTime.now();
@@ -291,7 +300,8 @@ public class GroupPurchaseServiceImpl implements GroupPurchaseService {
         BigDecimal refundedAmount = toDecimal(participant.get("paid_amount"));
         BigDecimal refundedWalletBalance = null;
         if ("PAID".equals(participant.get("payment_status")) && refundedAmount != null) {
-            refundedWalletBalance = refundWallet(memberId, gpId, gp, refundedAmount);
+            refundedWalletBalance = refundWallet(memberId, gpId, gp, refundedAmount,
+                    "공동구매 참여 취소 환불: " + gp.get("product_name") + " (gpId=" + gpId + ")");
         }
 
         Map<String, Object> updatedGp = groupPurchaseMapper.findById(gpId);
@@ -309,10 +319,85 @@ public class GroupPurchaseServiceImpl implements GroupPurchaseService {
     }
 
     /**
-     * 지갑 잔액을 환급하고 REFUND 타입 환불 거래내역을 생성한 뒤 갱신된 지갑 잔액을 반환한다.
-     * (마감 후 목표 미달 자동 환불은 GroupPurchaseRefundExecutor가 건별 독립 트랜잭션으로 별도 처리한다 — 이 메서드는 leave() 전용.)
+     * 작성자(관리자) 전체 취소(순서18). leave()는 참여자 개인 1명의 참여만 취소하지만, 이 API는
+     * 게시글 전체를 취소하면서 모든 참여자(PENDING 포함)의 참여를 CANCELLED로 남기고, 그중 이미
+     * 결제한 참여자만 함께 환불한다 — leave()가 PAID/PENDING을 가리지 않고 항상 cancelParticipant를
+     * 호출한 뒤 PAID일 때만 환불하는 것과 동일한 원칙이다. PENDING 참여를 그대로 두면 게시글은
+     * CANCELLED인데 참여 이력만 살아남아 마이페이지 등에서 계속 "참여 중"으로 보이게 된다.
+     * 마감 후 목표 미달 자동 환불(GroupPurchaseRefundExecutor)은 서로 다른 게시글의 후보를 순회하므로
+     * 건별 독립 트랜잭션이 맞지만, 이 메서드는 같은 게시글에 속한 참여자들을 관리자가 한 번에 취소하는
+     * 단일 액션이라 전체를 하나의 트랜잭션으로 묶는다 — 일부만 환불된 상태로 남는 것을 막기 위해서다.
+     * cancelGroupPurchase의 원자적 WHERE절이 join()의 updateQuantity와 동일한 패턴으로 목표 수량 달성
+     * (COMPLETED) 또는 마감(FAILED) 이후에는 취소를 거절한다.
+     * leave()와 동일하게, 호출한 관리자 본인의 간편 비밀번호를 처리 직전에 다시 검증한다.
+     * findActiveParticipants는 FOR UPDATE로 조회한다(GroupPurchaseMapper.xml 참고) — 일반 SELECT였다면
+     * REPEATABLE READ 스냅샷이 findById 시점에 고정돼, cancelGroupPurchase 실행 후 그 사이 동시에 커밋된
+     * join() 참여가 이 목록에서 누락되어 결제는 됐는데 환불은 안 되는 경우가 생길 수 있었다.
      */
-    private BigDecimal refundWallet(String memberId, String gpId, Map<String, Object> gp, BigDecimal amount) {
+    @Override
+    @Transactional
+    public GroupPurchaseCancelResponse cancel(String memberId, String gpId, String password) {
+        Map<String, Object> gp = groupPurchaseMapper.findById(gpId);
+        if (gp == null) {
+            throw BusinessException.notFound("공동구매를 찾을 수 없습니다.");
+        }
+        if (!simplePasswordVerificationService.verify(memberId, password)) {
+            throw new BusinessException("간편 비밀번호가 일치하지 않습니다.");
+        }
+        if (groupPurchaseMapper.cancelGroupPurchase(gpId) == 0) {
+            throw BusinessException.conflict("목표 수량 달성 또는 마감 후에는 취소할 수 없습니다.");
+        }
+
+        LocalDateTime canceledAt = LocalDateTime.now();
+        List<GroupPurchaseCancelParticipantResponse> refunded = groupPurchaseMapper.findActiveParticipants(gpId).stream()
+                .map(participant -> cancelAndMaybeRefundParticipant(gpId, gp, participant, canceledAt))
+                .filter(Objects::nonNull)
+                .collect(Collectors.toList());
+
+        return GroupPurchaseCancelResponse.builder()
+                .gpId(gpId)
+                .status("CANCELLED")
+                .canceledAt(canceledAt)
+                .refundedParticipants(refunded)
+                .build();
+    }
+
+    /**
+     * 참여자 1명을 취소하고, 결제 완료(PAID) 상태였다면 환불까지 처리한다. cancelParticipant의 영향
+     * 행이 0이면(동시에 leave()로 이미 처리된 참여자) null을 반환해 결과 목록에서 자연히 제외한다 —
+     * leave()/자동환불 배치와 동일한 가드. PENDING 참여는 취소만 하고(환불할 금액이 없으므로) 응답의
+     * refundedParticipants 목록에는 포함하지 않는다 — 이 필드는 이름 그대로 "환불된" 참여자만 담는다.
+     *
+     * 환불 여부는 findActiveParticipants가 읽어온 스냅샷의 payment_status로 판단한다(재조회하지 않음).
+     * join()이 payment_status를 insertParticipant 시점에 단 한 번 확정하고, 그 후로는 cancelParticipant를
+     * 통한 CANCELLED 전환 외에는 이 값을 바꾸는 코드 경로가 없으므로(PENDING→PAID로 전환하는 "나중에
+     * 결제" 흐름이 아직 없음) 스냅샷과 실제 값이 어긋날 수 없다. 이후 그런 흐름이 추가된다면, 스냅샷의
+     * PENDING이 이 시점엔 이미 PAID로 바뀌었는데 환불 없이 취소만 되는 레이스가 생길 수 있으므로 이
+     * 메서드도 함께 재검토해야 한다.
+     */
+    private GroupPurchaseCancelParticipantResponse cancelAndMaybeRefundParticipant(String gpId, Map<String, Object> gp,
+            Map<String, Object> participant, LocalDateTime canceledAt) {
+        String participantMemberId = String.valueOf(participant.get("member_id"));
+        if (groupPurchaseMapper.cancelParticipant(gpId, participantMemberId, canceledAt) == 0) {
+            return null;
+        }
+        if (!"PAID".equals(participant.get("payment_status"))) {
+            return null;
+        }
+        BigDecimal paidAmount = toDecimal(participant.get("paid_amount"));
+        BigDecimal refundedWalletBalance = refundWallet(participantMemberId, gpId, gp, paidAmount,
+                "공동구매 작성자 취소로 인한 환불: " + gp.get("product_name") + " (gpId=" + gpId + ")");
+        return GroupPurchaseCancelParticipantResponse.builder()
+                .participantId(toLong(participant.get("participant_id")))
+                .memberId(participantMemberId)
+                .refundedAmount(paidAmount)
+                .refundedWalletBalance(refundedWalletBalance)
+                .paymentStatus("CANCELLED")
+                .build();
+    }
+
+    /** 지갑 잔액을 환급하고 REFUND 타입 환불 거래내역을 생성한 뒤 갱신된 지갑 잔액을 반환한다. memo는 환불 트리거(참여 취소/작성자 취소)별로 구분해서 넘긴다. */
+    private BigDecimal refundWallet(String memberId, String gpId, Map<String, Object> gp, BigDecimal amount, String memo) {
         Map<String, Object> wallet = walletMapper.findByMemberId(memberId);
         if (wallet == null) {
             throw BusinessException.notFound("지갑을 찾을 수 없습니다.");
@@ -330,7 +415,7 @@ public class GroupPurchaseServiceImpl implements GroupPurchaseService {
         txn.put("category", toTxnCategory((String) gp.get("category")));
         txn.put("merchantName", gp.get("product_name"));
         txn.put("merchantCategoryCode", null);
-        txn.put("memo", "공동구매 참여 취소 환불: " + gp.get("product_name") + " (gpId=" + gpId + ")");
+        txn.put("memo", memo);
         txn.put("autoTagged", "N");
         txn.put("txnDate", LocalDateTime.now());
         transactionMapper.insert(txn);

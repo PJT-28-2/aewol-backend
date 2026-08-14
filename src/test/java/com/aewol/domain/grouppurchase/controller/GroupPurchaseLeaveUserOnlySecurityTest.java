@@ -71,16 +71,20 @@ class GroupPurchaseLeaveUserOnlySecurityTest {
         context.close();
     }
 
+    private static final String VALID_LEAVE_REQUEST_BODY = "{\"password\":\"123456\"}";
+
     @Test
     void leaveIsBlockedForAdminRole() throws Exception {
         stubAccessToken("ADMIN");
 
         mockMvc.perform(post("/api/group-purchase/1/leave")
-                        .header("Authorization", "Bearer access-token"))
+                        .header("Authorization", "Bearer access-token")
+                        .contentType("application/json")
+                        .content(VALID_LEAVE_REQUEST_BODY))
                 .andExpect(status().isForbidden());
 
         verify(groupPurchaseService, never()).leave(
-                org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any());
+                org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any());
     }
 
     @Test
@@ -88,11 +92,14 @@ class GroupPurchaseLeaveUserOnlySecurityTest {
         stubAccessToken("USER");
 
         mockMvc.perform(post("/api/group-purchase/1/leave")
-                        .header("Authorization", "Bearer access-token"))
+                        .header("Authorization", "Bearer access-token")
+                        .contentType("application/json")
+                        .content(VALID_LEAVE_REQUEST_BODY))
                 .andExpect(status().isOk());
 
         verify(groupPurchaseService).leave(
-                org.mockito.ArgumentMatchers.eq("member-1"), org.mockito.ArgumentMatchers.eq("1"));
+                org.mockito.ArgumentMatchers.eq("member-1"), org.mockito.ArgumentMatchers.eq("1"),
+                org.mockito.ArgumentMatchers.eq("123456"));
     }
 
     private void stubAccessToken(String role) {
