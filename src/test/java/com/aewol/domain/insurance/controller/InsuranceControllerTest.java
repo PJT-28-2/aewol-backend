@@ -168,6 +168,25 @@ class InsuranceControllerTest {
     }
 
     @Test
+    @DisplayName("annualMedicalCostKrw 상한은 10,000,000원이다 (시드 최저 담보한도 기준)")
+    void should_return400_whenAnnualMedicalCostExceedsCeiling() throws Exception {
+        // 상한 재산정(이슈 #178): 50,000,000 → 10,000,000.
+        // 시드 상품의 의료비 담보 연간한도가 1,000만~4,000만원이라, 최저 담보한도를
+        // 넘는 연 의료비는 어떤 상품으로도 전액 보장이 불가능하다.
+        mockMvc.perform(post("/api/insurance/simulations")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"petId\":\"1\",\"medicalHistoryCodes\":[\"NONE\"],\"annualMedicalCostKrw\":10000001}"))
+                .andExpect(status().isBadRequest());
+
+        // 경계값은 통과해야 한다 (@Max는 이하 포함)
+        when(simulationService.simulate(eq("100"), any())).thenReturn(null);
+        mockMvc.perform(post("/api/insurance/simulations")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"petId\":\"1\",\"medicalHistoryCodes\":[\"NONE\"],\"annualMedicalCostKrw\":10000000}"))
+                .andExpect(status().isOk());
+    }
+
+    @Test
     @DisplayName("검증 실패 메시지는 Accept-Language와 무관하게 한글로 나간다")
     void should_returnKoreanValidationMessage_regardlessOfAcceptLanguage() throws Exception {
         // message를 생략하면 Hibernate Validator 기본 번역이 Accept-Language를 따라가
