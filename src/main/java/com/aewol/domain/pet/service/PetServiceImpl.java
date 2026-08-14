@@ -2,6 +2,7 @@ package com.aewol.domain.pet.service;
 
 import com.aewol.common.exception.BusinessException;
 import com.aewol.common.storage.FileStorage;
+import com.aewol.common.util.DateTimeUtil;
 import com.aewol.common.util.FileUtil;
 import com.aewol.domain.pet.dto.PetCreateRequest;
 import com.aewol.domain.pet.dto.PetDocumentResponse;
@@ -185,7 +186,7 @@ public class PetServiceImpl implements PetService {
             throw BusinessException.notFound("문서를 찾을 수 없습니다.");
         }
         if (REGISTRATION.equals(value(document, "doc_type", "docType"))) {
-            return petRegistrationService.getDetail(petId, docId);
+            return petRegistrationService.getDetail(memberId, petId, docId);
         }
         return toDocumentResponse(document);
     }
@@ -311,16 +312,8 @@ public class PetServiceImpl implements PetService {
                 .docType(String.valueOf(value(document, "doc_type", "docType")))
                 .fileUrl(fileStorage.signedUrl((String) value(document, "file_url", "fileUrl")))
                 .issuedDate(issuedDate == null ? null : issuedDate.toString())
-                .createdAt(isoString(value(document, "created_at", "createdAt")))
+                .createdAt(DateTimeUtil.toIsoString(value(document, "created_at", "createdAt")))
                 .build();
-    }
-
-    /** DB에서 읽은 DATETIME 값(LocalDateTime 또는 Timestamp)을 ISO-8601 문자열로 맞춘다. */
-    private static String isoString(Object value) {
-        if (value == null) return null;
-        if (value instanceof java.time.LocalDateTime) return value.toString();
-        if (value instanceof java.sql.Timestamp) return ((java.sql.Timestamp) value).toLocalDateTime().toString();
-        return value.toString();
     }
 
     private static Object value(Map<String, Object> map, String... keys) {

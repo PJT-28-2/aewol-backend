@@ -1,6 +1,7 @@
 package com.aewol.domain.pet.service;
 
 import com.aewol.common.exception.BusinessException;
+import com.aewol.common.util.DateTimeUtil;
 import com.aewol.domain.pet.dto.PetRegistrationResponse;
 import com.aewol.domain.pet.dto.PetRegistrationVerifyRequest;
 import com.aewol.domain.pet.mapper.PetDocumentMapper;
@@ -99,9 +100,22 @@ public class PetRegistrationServiceImpl implements PetRegistrationService {
     /**
      * 등록증 상세 조회(순서: 증명서 상세). verify()와 달리 APMS를 다시 호출하지 않고
      * pet_registration에 저장된 값을 그대로 돌려준다 — lastSyncedAt이 "마지막 동기화 시각"이다.
+     *
+     * pet_registration.doc_id는 항상 그 등록증의 pet_document.doc_id와 같은 값이다: verify()가
+     * insert/update 직전에 registration.put("docId", value(document, "doc_id", "docId"))로 방금
+     * 만들어지거나 조회된 pet_document 행의 doc_id를 그대로 실어 보내고(위 83번째 줄), 두 insert가
+     * 같은 @Transactional 안에서 함께 커밋되며, fk_petreg_doc FK가 DB 레벨에서도 이를 보장한다.
+     * 따라서 pet_document에 REGISTRATION 타입 행이 있는데 여기서 404가 나는 경우는 정상 흐름상
+     * 발생하지 않는다 — 그런 상황이 실제로 발생한다면 이 메서드가 아니라 데이터 정합성 자체를 봐야 한다.
      */
     @Override
-    public PetRegistrationResponse getDetail(String petId, String docId) {
+    public PetRegistrationResponse getDetail(String memberId, String petId, String docId) {
+        Map<String, Object> pet = petMapper.findById(petId);
+        if (pet == null) throw BusinessException.notFound("반려동물을 찾을 수 없습니다.");
+        if (!Objects.equals(memberId, String.valueOf(pet.get("member_id")))) {
+            throw BusinessException.forbidden("대표 보호자만 이 작업을 할 수 있습니다.");
+        }
+
         Map<String, Object> registration = petRegistrationMapper.findByPetIdAndDocId(petId, docId);
         if (registration == null) {
             throw BusinessException.notFound("동물등록정보를 찾을 수 없습니다.");
@@ -120,19 +134,11 @@ public class PetRegistrationServiceImpl implements PetRegistrationService {
                 .orgNm(string(registration.get("org_nm")))
                 .officeTel(string(registration.get("office_tel")))
                 .aprGbnNm(string(registration.get("apr_gbn_nm")))
-                .regTm(isoString(registration.get("reg_tm")))
-                .aprTm(isoString(registration.get("apr_tm")))
-                .lastSyncedAt(isoString(registration.get("last_synced_at")))
+                .regTm(DateTimeUtil.toIsoString(registration.get("reg_tm")))
+                .aprTm(DateTimeUtil.toIsoString(registration.get("apr_tm")))
+                .lastSyncedAt(DateTimeUtil.toIsoString(registration.get("last_synced_at")))
                 .verified(true)
                 .build();
-    }
-
-    /** DB에서 읽은 DATETIME 값(LocalDateTime 또는 Timestamp)을 ISO-8601 문자열로 맞춘다. */
-    private static String isoString(Object value) {
-        if (value == null) return null;
-        if (value instanceof LocalDateTime) return value.toString();
-        if (value instanceof java.sql.Timestamp) return ((java.sql.Timestamp) value).toLocalDateTime().toString();
-        return value.toString();
     }
 
     private void validateDuplicate(String petId, String regNumber) {
