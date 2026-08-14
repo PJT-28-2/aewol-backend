@@ -75,15 +75,28 @@ public class SolapiSmsSender implements SmsSender {
         )));
 
         try {
-            ResponseEntity<String> response = restTemplate.exchange(
-                    SEND_URL, HttpMethod.POST, new HttpEntity<>(body, headers), String.class);
-            if (!response.getStatusCode().is2xxSuccessful()) {
-                throw new SmsSendException("SOLAPI returned a non-success status");
+            ResponseEntity<SolapiSendResponse> response = restTemplate.exchange(
+                    SEND_URL, HttpMethod.POST, new HttpEntity<>(body, headers), SolapiSendResponse.class);
+            if (!isSingleMessageRegistered(response.getBody())) {
+                log.warn("SOLAPI SMS 발송 등록 결과를 신뢰할 수 없습니다.");
+                throw new SmsSendException("SOLAPI message registration failed");
             }
         } catch (RestClientException e) {
             log.warn("SOLAPI SMS 발송 호출에 실패했습니다. statusCategory=transport-or-http");
             throw new SmsSendException("SOLAPI request failed", e);
         }
+    }
+
+    private boolean isSingleMessageRegistered(SolapiSendResponse response) {
+        if (response == null || response.getGroupInfo() == null
+                || response.getGroupInfo().getCount() == null
+                || response.getFailedMessageList() == null) {
+            return false;
+        }
+        SolapiSendResponse.Count count = response.getGroupInfo().getCount();
+        return Integer.valueOf(1).equals(count.getRegisteredSuccess())
+                && Integer.valueOf(0).equals(count.getRegisteredFailed())
+                && response.getFailedMessageList().isEmpty();
     }
 
     String authorization(String date, String salt) {
