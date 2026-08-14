@@ -282,6 +282,10 @@ private static final String ACCOUNT_ID = "1";
         verify(accountMapper).insert(captor.capture());
         assertEquals("ciphertext-abc", captor.getValue().get("accountNumber"));
         assertEquals("hash-of-plain", captor.getValue().get("accountNumberHash"));
+        // account_verification에 이미 암호화돼 있는 값을 그대로 재사용해야 한다는
+        // 불변조건을 고정한다 — 나중에 누가 실수로 재암호화 로직을 넣으면 이 테스트가
+        // 바로 잡아낸다(PR #162 리뷰 반영, 2026-08-14).
+        verify(accountNumberCrypto, never()).encrypt(any());
     }
 
     @Test
