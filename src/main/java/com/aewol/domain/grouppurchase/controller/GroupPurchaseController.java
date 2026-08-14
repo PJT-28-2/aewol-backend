@@ -1,14 +1,13 @@
 package com.aewol.domain.grouppurchase.controller;
 
 import com.aewol.common.response.ApiResponse;
-import com.aewol.domain.grouppurchase.dto.GroupPurchaseCancelRequest;
 import com.aewol.domain.grouppurchase.dto.GroupPurchaseCancelResponse;
 import com.aewol.domain.grouppurchase.dto.GroupPurchaseCreateRequest;
 import com.aewol.domain.grouppurchase.dto.GroupPurchaseImageUploadResponse;
 import com.aewol.domain.grouppurchase.dto.GroupPurchaseJoinRequest;
 import com.aewol.domain.grouppurchase.dto.GroupPurchaseJoinResponse;
-import com.aewol.domain.grouppurchase.dto.GroupPurchaseLeaveRequest;
 import com.aewol.domain.grouppurchase.dto.GroupPurchaseLeaveResponse;
+import com.aewol.domain.grouppurchase.dto.GroupPurchasePasswordRequest;
 import com.aewol.domain.grouppurchase.dto.GroupPurchaseListResponse;
 import com.aewol.domain.grouppurchase.dto.GroupPurchaseMyItemResponse;
 import com.aewol.domain.grouppurchase.dto.GroupPurchaseResponse;
@@ -104,7 +103,7 @@ public class GroupPurchaseController {
     @PostMapping("/{gpId}/leave")
     public ResponseEntity<ApiResponse<GroupPurchaseLeaveResponse>> leave(@AuthenticationPrincipal String memberId,
                                                                             @PathVariable String gpId,
-                                                                            @Valid @RequestBody GroupPurchaseLeaveRequest request) {
+                                                                            @Valid @RequestBody GroupPurchasePasswordRequest request) {
         return ResponseEntity.ok(ApiResponse.success("공동구매 참여가 취소되었습니다.",
                 groupPurchaseService.leave(memberId, gpId, request.getPassword())));
     }
@@ -118,7 +117,7 @@ public class GroupPurchaseController {
     @PostMapping("/{gpId}/cancel")
     public ResponseEntity<ApiResponse<GroupPurchaseCancelResponse>> cancel(@AuthenticationPrincipal String memberId,
                                                                               @PathVariable String gpId,
-                                                                              @Valid @RequestBody GroupPurchaseCancelRequest request) {
+                                                                              @Valid @RequestBody GroupPurchasePasswordRequest request) {
         return ResponseEntity.ok(ApiResponse.success("공동구매가 취소되었습니다.",
                 groupPurchaseService.cancel(memberId, gpId, request.getPassword())));
     }
