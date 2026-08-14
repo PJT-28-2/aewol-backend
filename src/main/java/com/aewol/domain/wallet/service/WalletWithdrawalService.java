@@ -1,6 +1,7 @@
 package com.aewol.domain.wallet.service;
 
 import com.aewol.common.exception.BusinessException;
+import com.aewol.common.util.AccountNumberCrypto;
 import com.aewol.domain.account.mapper.AccountMapper;
 import com.aewol.domain.member.service.SimplePasswordVerificationService;
 import com.aewol.domain.transaction.mapper.TransactionMapper;
@@ -33,6 +34,7 @@ public class WalletWithdrawalService {
     private final WalletWithdrawalRequestMapper withdrawalRequestMapper;
     private final SimplePasswordVerificationService simplePasswordVerificationService;
     private final BankWithdrawalGateway bankWithdrawalGateway;
+    private final AccountNumberCrypto accountNumberCrypto;
 
     @Transactional
     public WalletWithdrawResponse withdraw(String memberId, String idempotencyKey, WalletWithdrawRequest request) {
@@ -86,7 +88,12 @@ public class WalletWithdrawalService {
         }
 
         String bankCode = String.valueOf(account.get("bank_code"));
-        String accountNumber = String.valueOf(account.get("account_number"));
+        // account_number는 계좌 연동 시점부터 AES-256-GCM으로 암호화해서 저장한다
+        // (AccountServiceImpl 참고). 여기서 복호화하지 않으면 은행 게이트웨이와
+        // 마스킹 응답에 암호문이 그대로 나간다 — 실제 출금이 깨진다(PR #162 리뷰 반영).
+        // AccountMapper의 SELECT는 la.account_number를 account_number_encrypted로
+        // 별칭한다 — "account_number" 키로 읽으면 항상 null이라 여기서 바로 드러난다.
+        String accountNumber = accountNumberCrypto.decrypt(String.valueOf(account.get("account_number_encrypted")));
         LocalDateTime withdrawnAt = LocalDateTime.now();
 
         // 현재 외부 연동은 DemoBankWithdrawalGateway라 실제 은행 입금은 발생하지 않는다.
