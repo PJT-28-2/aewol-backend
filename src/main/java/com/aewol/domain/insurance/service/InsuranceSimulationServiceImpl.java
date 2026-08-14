@@ -272,8 +272,11 @@ public class InsuranceSimulationServiceImpl implements InsuranceSimulationServic
      *   <li>{@code deductible_basis='PER_VISIT'} &amp; n 미확보 → 해당 상품만 미반영</li>
      *   <li>세 값이 모두 확정 → {@code PER_VISIT}이면 {@code d×n}, {@code PER_YEAR}면 {@code d}</li>
      * </ul>
-     * <p>{@code n} 출처가 확정되면 {@link #CLAIM_COUNT_SOURCE_CONFIRMED}를 true로 바꿔
-     * PER_VISIT 확보 분기가 활성화되도록 한다. TODO(S2).</p>
+     * <p>{@code n} 출처는 이슈 #178에서 <b>확보 불가로 종결</b>됐다(공개 지급건수 집계
+     * 없음). 따라서 PER_VISIT 확보 분기는 당분간 죽은 코드로 남는다 — 지우지 않는
+     * 이유는 {@link #CLAIM_COUNT_SOURCE_CONFIRMED} 하나만 바꾸면 되살아나도록
+     * 분기 구조를 보존하는 것이 나중에 다시 짜는 것보다 안전하기 때문이다.
+     * 자세한 사유는 {@link #ANNUAL_CLAIM_COUNT} 주석 참조.</p>
      *
      * <p>{@code min(annualLimit, ·)} 상한은 의도적으로 넣지 않는다 — 시드 담보 한도
      * (1,000만~4,000만원) 대비 연 의료비가 낮아 도달 불가능한 죽은 분기이기 때문이다
