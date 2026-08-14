@@ -1223,7 +1223,7 @@ class GroupPurchaseServiceImplTest {
         Map<String, Object> participant2 = participantRow(10524L, "1", "member-2", 1);
         participant2.put("paid_amount", new BigDecimal("25000"));
         participant2.put("payment_status", "PAID");
-        when(groupPurchaseMapper.findPaidParticipants("1")).thenReturn(List.of(participant1, participant2));
+        when(groupPurchaseMapper.findActiveParticipants("1")).thenReturn(List.of(participant1, participant2));
         when(groupPurchaseMapper.cancelParticipant(eq("1"), eq("member-1"), any())).thenReturn(1);
         when(groupPurchaseMapper.cancelParticipant(eq("1"), eq("member-2"), any())).thenReturn(1);
 
@@ -1256,6 +1256,40 @@ class GroupPurchaseServiceImplTest {
     }
 
     @Test
+    @DisplayName("결제 전(PENDING) 참여는 환불 없이 취소만 하고 환불 목록에는 포함하지 않는다")
+    void should_cancelPendingParticipantWithoutRefund_onCancel() {
+        GroupPurchaseServiceImpl service = service();
+        Map<String, Object> gpRow = savedRow();
+        gpRow.put("deadline", LocalDateTime.now().plusDays(5));
+        when(groupPurchaseMapper.findById("1")).thenReturn(gpRow);
+        when(groupPurchaseMapper.cancelGroupPurchase("1")).thenReturn(1);
+
+        Map<String, Object> paidParticipant = participantRow(10523L, "1", "member-1", 2);
+        paidParticipant.put("paid_amount", new BigDecimal("50000"));
+        paidParticipant.put("payment_status", "PAID");
+        Map<String, Object> pendingParticipant = participantRow(10524L, "1", "member-2", 1);
+        pendingParticipant.put("payment_status", "PENDING");
+        when(groupPurchaseMapper.findActiveParticipants("1")).thenReturn(List.of(paidParticipant, pendingParticipant));
+        when(groupPurchaseMapper.cancelParticipant(eq("1"), eq("member-1"), any())).thenReturn(1);
+        when(groupPurchaseMapper.cancelParticipant(eq("1"), eq("member-2"), any())).thenReturn(1);
+
+        Map<String, Object> wallet1 = new HashMap<>();
+        wallet1.put("wallet_id", "wallet-1");
+        when(walletMapper.findByMemberId("member-1")).thenReturn(wallet1);
+        when(walletMapper.addBalance("wallet-1", new BigDecimal("50000"))).thenReturn(1);
+        when(simplePasswordVerificationService.verify("admin-1", PASSWORD)).thenReturn(true);
+
+        GroupPurchaseCancelResponse result = service.cancel("admin-1", "1", PASSWORD);
+
+        assertEquals(1, result.getRefundedParticipants().size());
+        assertEquals("member-1", result.getRefundedParticipants().get(0).getMemberId());
+        // PENDING 참여(member-2)도 cancelParticipant로 이력은 CANCELLED가 되지만 환불 대상이 아니므로 응답 목록엔 없다.
+        verify(groupPurchaseMapper).cancelParticipant(eq("1"), eq("member-2"), any());
+        verify(walletMapper, never()).findByMemberId("member-2");
+        verify(transactionMapper, times(1)).insert(any());
+    }
+
+    @Test
     @DisplayName("동시에 leave()로 이미 취소된 참여자는 환불 대상에서 자연히 제외된다")
     void should_skipParticipant_when_alreadyCancelledConcurrently_onCancel() {
         GroupPurchaseServiceImpl service = service();
@@ -1267,7 +1301,7 @@ class GroupPurchaseServiceImplTest {
         Map<String, Object> participant1 = participantRow(10523L, "1", "member-1", 2);
         participant1.put("paid_amount", new BigDecimal("50000"));
         participant1.put("payment_status", "PAID");
-        when(groupPurchaseMapper.findPaidParticipants("1")).thenReturn(List.of(participant1));
+        when(groupPurchaseMapper.findActiveParticipants("1")).thenReturn(List.of(participant1));
         // member-1이 이 배치 조회 이후, 환불 처리 직전에 leave()로 먼저 취소를 완료한 상황을 재현한다.
         when(groupPurchaseMapper.cancelParticipant(eq("1"), eq("member-1"), any())).thenReturn(0);
         when(simplePasswordVerificationService.verify("admin-1", PASSWORD)).thenReturn(true);
@@ -1321,7 +1355,7 @@ class GroupPurchaseServiceImplTest {
 
         assertEquals(org.springframework.http.HttpStatus.CONFLICT, exception.getStatus());
         assertEquals("목표 수량 달성 또는 마감 후에는 취소할 수 없습니다.", exception.getMessage());
-        verify(groupPurchaseMapper, never()).findPaidParticipants(any());
+        verify(groupPurchaseMapper, never()).findActiveParticipants(any());
         verifyNoInteractions(walletMapper);
     }
 
@@ -1331,7 +1365,7 @@ class GroupPurchaseServiceImplTest {
         GroupPurchaseServiceImpl service = service();
         when(groupPurchaseMapper.findById("1")).thenReturn(savedRow());
         when(groupPurchaseMapper.cancelGroupPurchase("1")).thenReturn(1);
-        when(groupPurchaseMapper.findPaidParticipants("1")).thenReturn(List.of());
+        when(groupPurchaseMapper.findActiveParticipants("1")).thenReturn(List.of());
         when(simplePasswordVerificationService.verify("admin-1", PASSWORD)).thenReturn(true);
 
         GroupPurchaseCancelResponse result = service.cancel("admin-1", "1", PASSWORD);

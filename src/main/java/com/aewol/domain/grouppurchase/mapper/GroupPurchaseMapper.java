@@ -24,5 +24,5 @@ public interface GroupPurchaseMapper {
     List<Map<String, Object>> findMyGroupPurchases(@Param("memberId") String memberId, @Param("status") String status);
     List<Map<String, Object>> findExpiredUnfulfilledPaidParticipants();
     int cancelGroupPurchase(@Param("gpId") String gpId);
-    List<Map<String, Object>> findPaidParticipants(@Param("gpId") String gpId);
+    List<Map<String, Object>> findActiveParticipants(@Param("gpId") String gpId);
 }

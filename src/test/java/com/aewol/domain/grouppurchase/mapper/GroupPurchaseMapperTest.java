@@ -419,17 +419,29 @@ class GroupPurchaseMapperTest {
     }
 
     @Test
-    @DisplayName("findPaidParticipants는 PAID 참여자만 반환하고 PENDING/CANCELLED는 제외한다")
-    void should_returnOnlyPaidParticipants() {
+    @DisplayName("target_quantity가 0 이하인 비정상 데이터도 마감 전이면 cancelGroupPurchase가 취소한다")
+    void should_cancelGroupPurchase_when_targetQuantityIsAbnormal() {
+        // findExpiredUnfulfilledPaidParticipants/findMyGroupPurchases와 동일하게 target_quantity<=0을
+        // "목표 미달" 취급해야 한다 — 그렇지 않으면 이 행은 마감 전까지 영구히 취소 불가 상태로 남는다.
+        long gpId = insertGroupPurchase(99L, "OPEN", 0, 0, LocalDateTime.now().plusDays(5));
+
+        assertEquals(1, cancelGroupPurchase(gpId));
+        assertEquals("CANCELLED", findStatus(gpId));
+    }
+
+    @Test
+    @DisplayName("findActiveParticipants는 PAID/PENDING을 반환하고 CANCELLED는 제외한다")
+    void should_returnActiveParticipants_excludingCancelled() {
         long gpId = insertGroupPurchase(99L, "OPEN", 3, 10, LocalDateTime.now().plusDays(5));
         insertParticipant(gpId, 1L, "PAID");
         insertParticipant(gpId, 2L, "PENDING");
         insertParticipant(gpId, 3L, "CANCELLED");
 
-        List<Map<String, Object>> result = findPaidParticipants(gpId);
+        List<Map<String, Object>> result = findActiveParticipants(gpId);
 
-        assertEquals(1, result.size());
-        assertEquals(1L, ((Number) result.get(0).get("member_id")).longValue());
+        assertEquals(2, result.size());
+        assertTrue(result.stream().anyMatch(row -> 1L == ((Number) row.get("member_id")).longValue()));
+        assertTrue(result.stream().anyMatch(row -> 2L == ((Number) row.get("member_id")).longValue()));
     }
 
     @Test
@@ -459,9 +471,9 @@ class GroupPurchaseMapperTest {
         }
     }
 
-    private List<Map<String, Object>> findPaidParticipants(long gpId) {
+    private List<Map<String, Object>> findActiveParticipants(long gpId) {
         try (SqlSession session = sqlSessionFactory.openSession(true)) {
-            return session.getMapper(GroupPurchaseMapper.class).findPaidParticipants(String.valueOf(gpId));
+            return session.getMapper(GroupPurchaseMapper.class).findActiveParticipants(String.valueOf(gpId));
         }
     }
 

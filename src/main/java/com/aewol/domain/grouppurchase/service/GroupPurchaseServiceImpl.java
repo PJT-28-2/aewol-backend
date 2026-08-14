@@ -320,7 +320,10 @@ public class GroupPurchaseServiceImpl implements GroupPurchaseService {
 
     /**
      * 작성자(관리자) 전체 취소(순서18). leave()는 참여자 개인 1명의 참여만 취소하지만, 이 API는
-     * 게시글 전체를 취소하면서 이미 결제한 참여자 전원을 함께 환불한다.
+     * 게시글 전체를 취소하면서 모든 참여자(PENDING 포함)의 참여를 CANCELLED로 남기고, 그중 이미
+     * 결제한 참여자만 함께 환불한다 — leave()가 PAID/PENDING을 가리지 않고 항상 cancelParticipant를
+     * 호출한 뒤 PAID일 때만 환불하는 것과 동일한 원칙이다. PENDING 참여를 그대로 두면 게시글은
+     * CANCELLED인데 참여 이력만 살아남아 마이페이지 등에서 계속 "참여 중"으로 보이게 된다.
      * 마감 후 목표 미달 자동 환불(GroupPurchaseRefundExecutor)은 서로 다른 게시글의 후보를 순회하므로
      * 건별 독립 트랜잭션이 맞지만, 이 메서드는 같은 게시글에 속한 참여자들을 관리자가 한 번에 취소하는
      * 단일 액션이라 전체를 하나의 트랜잭션으로 묶는다 — 일부만 환불된 상태로 남는 것을 막기 위해서다.
@@ -343,8 +346,8 @@ public class GroupPurchaseServiceImpl implements GroupPurchaseService {
         }
 
         LocalDateTime canceledAt = LocalDateTime.now();
-        List<GroupPurchaseCancelParticipantResponse> refunded = groupPurchaseMapper.findPaidParticipants(gpId).stream()
-                .map(participant -> refundParticipant(gpId, gp, participant, canceledAt))
+        List<GroupPurchaseCancelParticipantResponse> refunded = groupPurchaseMapper.findActiveParticipants(gpId).stream()
+                .map(participant -> cancelAndMaybeRefundParticipant(gpId, gp, participant, canceledAt))
                 .filter(Objects::nonNull)
                 .collect(Collectors.toList());
 
@@ -357,13 +360,18 @@ public class GroupPurchaseServiceImpl implements GroupPurchaseService {
     }
 
     /**
-     * PAID 참여자 1명을 취소·환불한다. cancelParticipant의 영향 행이 0이면(동시에 leave()로 이미
-     * 처리된 참여자) null을 반환해 결과 목록에서 자연히 제외한다 — leave()/자동환불 배치와 동일한 가드.
+     * 참여자 1명을 취소하고, 결제 완료(PAID) 상태였다면 환불까지 처리한다. cancelParticipant의 영향
+     * 행이 0이면(동시에 leave()로 이미 처리된 참여자) null을 반환해 결과 목록에서 자연히 제외한다 —
+     * leave()/자동환불 배치와 동일한 가드. PENDING 참여는 취소만 하고(환불할 금액이 없으므로) 응답의
+     * refundedParticipants 목록에는 포함하지 않는다 — 이 필드는 이름 그대로 "환불된" 참여자만 담는다.
      */
-    private GroupPurchaseCancelParticipantResponse refundParticipant(String gpId, Map<String, Object> gp,
+    private GroupPurchaseCancelParticipantResponse cancelAndMaybeRefundParticipant(String gpId, Map<String, Object> gp,
             Map<String, Object> participant, LocalDateTime canceledAt) {
         String participantMemberId = String.valueOf(participant.get("member_id"));
         if (groupPurchaseMapper.cancelParticipant(gpId, participantMemberId, canceledAt) == 0) {
+            return null;
+        }
+        if (!"PAID".equals(participant.get("payment_status"))) {
             return null;
         }
         BigDecimal paidAmount = toDecimal(participant.get("paid_amount"));

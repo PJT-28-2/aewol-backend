@@ -166,20 +166,27 @@
 
     <!-- 작성자(관리자) 전체 취소(순서18). join()의 updateQuantity와 동일한 원자적 조건부 UPDATE 패턴 —
          이미 취소됐거나(status='CANCELLED'), 목표 수량을 채웠거나(현재수량 >= 목표수량), 마감이 지난
-         공동구매는 취소할 수 없다. 영향받은 행이 0이면 호출부에서 취소를 거절해야 한다. -->
+         공동구매는 취소할 수 없다. 영향받은 행이 0이면 호출부에서 취소를 거절해야 한다.
+         target_quantity &lt;= 0(정상 생성 경로로는 나올 수 없는 레거시/비정상 데이터)인 행은 findList와
+         달리 여기서는 제외하지 않는다 — findExpiredUnfulfilledPaidParticipants/findMyGroupPurchases와
+         동일하게 "목표 미달" 취급해 관리자가 계속 취소할 수 있게 한다(그렇지 않으면 이 행은 자동 환불
+         배치의 deadline 통과 전까지 영구히 취소 불가 상태로 남는다). -->
     <update id="cancelGroupPurchase">
         UPDATE group_purchase
         SET status = 'CANCELLED'
         WHERE gp_id = #{gpId}
           AND status != 'CANCELLED'
-          AND current_quantity &lt; target_quantity
+          AND (target_quantity &lt;= 0 OR current_quantity &lt; target_quantity)
           AND deadline &gt;= NOW()
     </update>
 
-    <!-- 작성자 전체 취소 시 환불 대상인 결제 완료 참여자를 조회한다(순서18 전용). -->
-    <select id="findPaidParticipants" resultType="map">
+    <!-- 작성자 전체 취소 대상 참여자를 조회한다(순서18 전용). CANCELLED는 이미 처리된 이력이라 제외하지만,
+         PENDING도 함께 돌려준다 — 결제 전 참여라도 게시글이 취소되면 참여 이력 자체를 CANCELLED로
+         남겨야 하기 때문이다(leave()가 PAID/PENDING을 가리지 않고 항상 cancelParticipant를 호출하는
+         것과 동일한 원칙). 환불은 호출부에서 payment_status='PAID'인 경우에만 수행한다. -->
+    <select id="findActiveParticipants" resultType="map">
         SELECT * FROM group_purchase_participant
-        WHERE gp_id = #{gpId} AND payment_status = 'PAID'
+        WHERE gp_id = #{gpId} AND payment_status != 'CANCELLED'
     </select>
 
 </mapper>
