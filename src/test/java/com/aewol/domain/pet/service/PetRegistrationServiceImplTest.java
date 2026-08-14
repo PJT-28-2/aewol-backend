@@ -14,6 +14,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.HttpStatus;
 
+import java.time.LocalDateTime;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -136,6 +137,38 @@ class PetRegistrationServiceImplTest {
 
         assertEquals(HttpStatus.CONFLICT, exception.getStatus());
         verifyNoInteractions(petDocumentMapper);
+    }
+
+    @Test
+    void should_returnRegistrationDetail_when_found() {
+        when(petRegistrationMapper.findByPetIdAndDocId("pet-1", "doc-1")).thenReturn(map(
+                "doc_id", "doc-1", "pet_id", "pet-1", "reg_number", "410000012345678",
+                "name", "몽이", "breed", "말티즈", "gender", "MALE", "neutered", "Y",
+                "birth_date", "20220101", "rfid_cd", "410000012345678", "rfid_gubun", "Y",
+                "org_nm", "제주시", "office_tel", "064-123-4567", "apr_gbn_nm", "승인완료",
+                "reg_tm", LocalDateTime.of(2023, 6, 2, 9, 15),
+                "apr_tm", LocalDateTime.of(2023, 6, 2, 10, 40),
+                "last_synced_at", LocalDateTime.of(2026, 8, 14, 10, 0)));
+
+        PetRegistrationResponse response = service.getDetail("pet-1", "doc-1");
+
+        assertEquals("doc-1", response.getDocId());
+        assertEquals("410000012345678", response.getRegNumber());
+        assertEquals("몽이", response.getName());
+        assertEquals("2023-06-02T09:15", response.getRegTm());
+        assertEquals("2023-06-02T10:40", response.getAprTm());
+        assertEquals("2026-08-14T10:00", response.getLastSyncedAt());
+        assertTrue(response.isVerified());
+    }
+
+    @Test
+    void should_throwNotFound_when_registrationDetailMissing() {
+        when(petRegistrationMapper.findByPetIdAndDocId("pet-1", "doc-404")).thenReturn(null);
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.getDetail("pet-1", "doc-404"));
+
+        assertEquals(HttpStatus.NOT_FOUND, exception.getStatus());
     }
 
     private PetRegistrationVerifyRequest request(String regNumber, String userName, String birthDate) {
