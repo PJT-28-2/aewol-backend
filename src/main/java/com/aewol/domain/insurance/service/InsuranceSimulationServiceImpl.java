@@ -29,17 +29,39 @@ import org.springframework.transaction.annotation.Transactional;
 @RequiredArgsConstructor
 public class InsuranceSimulationServiceImpl implements InsuranceSimulationService {
 
-    // TODO(S2): 출처 없는 상수. worker-2가 연 진료 횟수(n)의 출처를 확정하기 전까지는
-    // Decision 5 분기표의 "미확보" 행만 적용한다 (CLAIM_COUNT_SOURCE_CONFIRMED=false).
-    // 출처가 확정되면 이 값과 CLAIM_COUNT_SOURCE_CONFIRMED를 함께 갱신할 것.
+    /**
+     * 연 진료 횟수(n). <b>출처 확보 불가로 종결됐다</b> (이슈 #178).
+     *
+     * <p>펫보험의 지급건수·건당 지급보험금은 공개 집계가 없다 — 공개되는 것은
+     * 보유계약건수와 원수보험료까지다. 동물병원 진료비 현황조사도 항목별 <b>단가</b>만
+     * 제공하고 연간 방문 횟수는 없다.</p>
+     *
+     * <p>따라서 {@code CLAIM_COUNT_SOURCE_CONFIRMED}는 false로 유지한다. 이 값을
+     * 추정으로 채우지 않는다 — 아래 6은 분기 구조를 유지하기 위한 자리표시자이며
+     * 플래그가 false인 동안 계산에 쓰이지 않는다. 출처가 생기면 둘을 함께 갱신할 것.</p>
+     */
     private static final int ANNUAL_CLAIM_COUNT = 6;
     private static final boolean CLAIM_COUNT_SOURCE_CONFIRMED = false;
 
-    // TODO(S2): worker-2 리서치 결과의 마리당 통계치로 교체. 현재 값은 가구 평균
-    // 연환산 추정치라 마리당 수치로는 부적절함이 확인된 상태(계획서 S2 참조).
-    private static final long ANNUAL_EXPECTED_VET_COST_KRW = 513_500L;
+    /**
+     * 마리당 연 예상 의료비. 농림축산식품부 「2025년 반려동물 양육현황 및 2025년
+     * 동물복지에 대한 국민의식」의 <b>마리당 월평균 병원비 37,000원</b> × 12.
+     *
+     * <p>인구주택총조사 표본 기반 3,000가구 방문 면접조사이며 <b>국가승인통계</b>다.
+     * 단위가 이미 마리당이라 가구 평균 ÷ 가구당 마리수 보정이 필요 없다 —
+     * 계획서 S2가 "마리당 수치가 없으면 보정하라"고 전제했던 것이 뒤집혔다.</p>
+     *
+     * <p>직전 값 513,500은 KB금융경영연구소 리포트의 <b>가구 평균</b> 2년 102.7만원을
+     * 연환산한 것으로, 마리당 수치가 아닌데 마리당으로 쓰고 있었다 (이슈 #178).</p>
+     *
+     * <p>같은 조사에 병원비 중 <b>사고·상해·질병 치료비 14,000원/월</b>(연 168,000원)이
+     * 따로 있다. 펫보험 보장 범위에 더 가까운 값이라 저 시나리오 앵커로 쓸 수 있으나,
+     * 시나리오 구간 표시는 별도 이슈다.</p>
+     */
+    private static final long ANNUAL_EXPECTED_VET_COST_KRW = 444_000L;
     private static final String ASSUMPTION_SOURCE =
-            "KB금융경영연구소 2025 한국 반려동물 보고서(가구 평균 2년 102.7만원 기준 연환산 추정치)";
+            "농림축산식품부 2025년 반려동물 양육현황 조사(국가승인통계, 3,000가구 방문면접) "
+                    + "마리당 월평균 병원비 37,000원 기준 연환산";
     /**
      * 사용자가 {@code annualMedicalCostKrw}를 직접 넘긴 경우의 근거 문구.
      *
@@ -54,6 +76,12 @@ public class InsuranceSimulationServiceImpl implements InsuranceSimulationServic
     private static final int[] BREAK_EVEN_YEARS = {1, 5, 10};
     private static final int RECOMMENDED_PRODUCT_LIMIT = 5;
     private static final String MEDICAL_CATEGORY = "MEDICAL";
+
+    /**
+     * 금감원 규제 상한으로 채운 티어(V34). 확인된 환급률이 아니라 "아무리 유리해도
+     * 이 이상은 아니다"라는 <b>상한</b>이다.
+     */
+    private static final String REGULATORY_BOUND_CONFIDENCE = "REGULATORY_BOUND";
 
     private final InsuranceMapper insuranceMapper;
     private final PetMapper petMapper;
@@ -119,11 +147,16 @@ public class InsuranceSimulationServiceImpl implements InsuranceSimulationServic
 
         InsuranceAdvice advice = buildAdvice(recommendedProducts);
 
-        // 대표 상품 = breakEvenAvailable=true인 추천 상품 중 보험료 최저가.
-        // 정렬 1위가 아니라 "계산 가능한 것 중 최저가"다 — Decision 4-A 이후
+        // 대표 상품 = 환급률이 확인된 추천 상품 중 보험료 최저가.
+        // 정렬 1위가 아니라 "판정 근거가 되는 것 중 최저가"다 — Decision 4-A 이후
         // 정렬 1위가 미확인 상품일 수 있기 때문이다 (계획서 M-8).
+        //
+        // 규제 상한 상품(REGULATORY_BOUND)은 제외한다 — 아래 isVerdictBasis 참조.
+        // 이 값은 insurance_simulation 이력에 "그 시점의 대표 상품"으로 남으므로,
+        // 확인되지 않은 환급률로 뽑힌 상품이 대표로 기록되면 이력 자체가 오해를 남긴다.
+        // 확인 상품이 하나도 없으면 대표 상품은 NULL이 된다 (기존에도 지원되는 경로).
         Optional<RecommendedProductResponse> representativeProduct = recommendedProducts.stream()
-                .filter(RecommendedProductResponse::isBreakEvenAvailable)
+                .filter(this::isVerdictBasis)
                 .min(Comparator.comparing(RecommendedProductResponse::getMonthlyPremiumKrw));
 
         persistSimulation(request.getPetId(), historyCodes, advice, annualMedicalCostKrw,
@@ -322,6 +355,29 @@ public class InsuranceSimulationServiceImpl implements InsuranceSimulationServic
         return netCost.multiply(rate);
     }
 
+    /**
+     * verdict 판정과 대표 상품 선정의 근거가 되는 상품인지 판단한다.
+     *
+     * <p>손익분기 계산이 가능하고({@code breakEvenAvailable}), 그 환급률이 <b>확인값</b>이어야 한다.
+     * {@link #REGULATORY_BOUND_CONFIDENCE} 상품은 계산은 되지만 판정에서 제외한다.</p>
+     *
+     * <p>V34가 미확인 16건에 금감원 규제 상한 70%를 채우면서, 이 값이 verdict에 그대로
+     * 들어가면 <b>"최선의 경우"가 "예상"으로 취급</b>된다. 실제로 적용 직후 CAT 판정이
+     * UNFAVORABLE → FAVORABLE로 뒤집혔다(계산 가능 2건 → 10건, 그중 8건이 상한 70%).
+     * 규제는 상한(자기부담률 30% 이상 → 환급률 70% 이하)만 정하고 하한을 정하지 않으므로
+     * 더 보수적인 값을 고르는 것도 임의 추측이 된다. 그래서 값을 바꾸는 대신
+     * <b>모르는 값으로는 판정하지 않는다</b> — 계획서 Principle 1.</p>
+     *
+     * <p>제외해도 상품 자체는 추천 목록에 남고 손익분기 표도 그려진다. 다만 그 숫자는
+     * "최선의 경우"라는 뜻이므로 화면이 <b>"최대 70%(규제 상한)"</b>로 표기해야 한다
+     * (프론트 이슈 aewol-frontend#253). 상한 기준으로도 불리하면 실제로는 더 불리하다는
+     * 하한 정보로 읽힌다.</p>
+     */
+    private boolean isVerdictBasis(RecommendedProductResponse product) {
+        return product.isBreakEvenAvailable()
+                && !REGULATORY_BOUND_CONFIDENCE.equals(product.getReimbursementConfidence());
+    }
+
     private InsuranceAdvice buildAdvice(List<RecommendedProductResponse> products) {
         if (products.isEmpty()) {
             return InsuranceAdvice.builder()
@@ -330,27 +386,27 @@ public class InsuranceSimulationServiceImpl implements InsuranceSimulationServic
                     .build();
         }
 
-        // 손익분기를 계산할 수 있는(breakEvenAvailable=true) 상품만 판정 대상으로 삼는다.
+        // 판정 대상은 손익분기를 계산할 수 있고, 그 환급률이 확인된 상품뿐이다.
         // 계산 불가 상품까지 분모에 섞으면 "비교를 한 건도 안 했는데 불리하다"는 잘못된 판정이 나온다.
-        List<RecommendedProductResponse> calculableProducts = products.stream()
-                .filter(RecommendedProductResponse::isBreakEvenAvailable)
+        List<RecommendedProductResponse> verdictBasis = products.stream()
+                .filter(this::isVerdictBasis)
                 .collect(Collectors.toList());
 
-        if (calculableProducts.isEmpty()) {
+        if (verdictBasis.isEmpty()) {
             return InsuranceAdvice.builder()
                     .verdict("NEUTRAL")
                     .message("추천 상품의 보장비율 정보가 아직 확인되지 않아 손익분기를 비교하지 못했어요. 상품 상세를 직접 확인해보세요.")
                     .build();
         }
 
-        long favorableCount = calculableProducts.stream()
+        long favorableCount = verdictBasis.stream()
                 .filter(product -> product.getBreakEvenScenarios().stream()
                         .anyMatch(scenario -> scenario.getYears() == 5 && Boolean.TRUE.equals(scenario.getIsFavorable())))
                 .count();
 
         String verdict;
         String message;
-        if (favorableCount * 2 > calculableProducts.size()) {
+        if (favorableCount * 2 > verdictBasis.size()) {
             verdict = "FAVORABLE";
             message = "가입 시 보험료보다 예상 보장 혜택이 더 큰 상품이 많아요. 가입을 검토해보세요.";
         } else if (favorableCount == 0) {
