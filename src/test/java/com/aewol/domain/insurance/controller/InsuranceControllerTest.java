@@ -25,6 +25,7 @@ import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
 import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
 import java.util.Collections;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -155,5 +156,39 @@ class InsuranceControllerTest {
 
         mockMvc.perform(post("/api/insurance/claims/1/confirm"))
                 .andExpect(status().isNotFound());
+    }
+
+    @Test
+    @DisplayName("annualMedicalCostKrw가 0이면 400을 반환한다 (0원은 전 상품을 기계적으로 불리하게 만든다)")
+    void should_return400_whenAnnualMedicalCostIsZero() throws Exception {
+        mockMvc.perform(post("/api/insurance/simulations")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"petId\":\"1\",\"medicalHistoryCodes\":[\"NONE\"],\"annualMedicalCostKrw\":0}"))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    @DisplayName("검증 실패 메시지는 Accept-Language와 무관하게 한글로 나간다")
+    void should_returnKoreanValidationMessage_regardlessOfAcceptLanguage() throws Exception {
+        // message를 생략하면 Hibernate Validator 기본 번역이 Accept-Language를 따라가
+        // en-US에서는 "must be greater than or equal to ..."가 나갔다. 한 응답 안에서
+        // 커스텀 제약(한글 고정)과 언어가 섞이는 문제라 명시 메시지로 고정했다.
+        for (String lang : new String[] {"en-US", "ja-JP", "ko-KR"}) {
+            MvcResult result = mockMvc.perform(post("/api/insurance/simulations")
+                            .header("Accept-Language", lang)
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content("{\"petId\":\"1\",\"medicalHistoryCodes\":[\"NONE\"],\"annualMedicalCostKrw\":0}"))
+                    .andExpect(status().isBadRequest())
+                    .andReturn();
+
+            // standaloneSetup의 MockHttpServletResponse 기본 charset은 ISO-8859-1이라
+            // 인자 없는 getContentAsString()으로 읽으면 한글이 깨진다. UTF-8을 명시한다.
+            String message = objectMapper.readTree(
+                            result.getResponse().getContentAsString(StandardCharsets.UTF_8))
+                    .path("message").asText();
+            assertEquals("annualMedicalCostKrw는 10,000원 이상이어야 합니다.",
+                    message.replaceFirst("^annualMedicalCostKrw: ", ""),
+                    "Accept-Language=" + lang + " 에서 한글 메시지가 아니었다: " + message);
+        }
     }
 }
