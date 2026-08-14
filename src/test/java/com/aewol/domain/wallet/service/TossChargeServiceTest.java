@@ -42,7 +42,8 @@ import org.springframework.test.util.ReflectionTestUtils;
 @ExtendWith(MockitoExtension.class)
 class TossChargeServiceTest {
 
-    private static final String MEMBER_ID = "member-1";
+    private static final String MEMBER_ID = "9001";
+    private static final long MEMBER_ID_VALUE = 9001L;
     private static final String PAYMENT_KEY = "toss-pay-key-001";
     private static final String ORDER_ID = "order-abc123";
 
@@ -266,7 +267,7 @@ class TossChargeServiceTest {
         init();
         Map<String, Object> order = new HashMap<>();
         order.put("order_id", ORDER_ID);
-        order.put("member_id", "other-member");
+        order.put("member_id", 9002L);
         order.put("amount", new BigDecimal("10000"));
         order.put("status", "PENDING");
         when(tossChargeOrderMapper.findByOrderId(ORDER_ID)).thenReturn(order);
@@ -284,7 +285,7 @@ class TossChargeServiceTest {
         init();
         Map<String, Object> order = new HashMap<>();
         order.put("order_id", ORDER_ID);
-        order.put("member_id", MEMBER_ID);
+        order.put("member_id", MEMBER_ID_VALUE);
         order.put("amount", new BigDecimal("10000"));
         order.put("status", "PENDING");
         when(tossChargeOrderMapper.findByOrderId(ORDER_ID)).thenReturn(order);
@@ -303,7 +304,7 @@ class TossChargeServiceTest {
         init();
         Map<String, Object> order = new HashMap<>();
         order.put("order_id", ORDER_ID);
-        order.put("member_id", MEMBER_ID);
+        order.put("member_id", MEMBER_ID_VALUE);
         order.put("amount", new BigDecimal("10000"));
         order.put("status", "APPROVED");
         when(tossChargeOrderMapper.findByOrderId(ORDER_ID)).thenReturn(order);
@@ -337,7 +338,7 @@ class TossChargeServiceTest {
     private void stubOrderFound() {
         Map<String, Object> order = new HashMap<>();
         order.put("order_id", ORDER_ID);
-        order.put("member_id", MEMBER_ID);
+        order.put("member_id", MEMBER_ID_VALUE);
         order.put("amount", new BigDecimal("10000"));
         order.put("status", "PENDING");
         when(tossChargeOrderMapper.findByOrderId(ORDER_ID)).thenReturn(order);
