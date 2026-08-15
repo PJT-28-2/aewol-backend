@@ -49,6 +49,14 @@ class GroupPurchaseServiceImplTest {
 
     private static final String PASSWORD = "123456";
 
+    // 마감 시각을 절대 날짜로 박으면 그 날짜가 지나는 순간 computeStatus가 OPEN 대신 FAILED를
+    // 돌려줘 테스트가 시한폭탄이 된다. 실제로 2026-08-15에 터졌다(픽스처 마감이 2026-08-15 00:00,
+    // 기대값은 OPEN). 이 파일의 다른 테스트들이 이미 쓰는 방식대로 현재 시각 기준 상대값으로 잡는다.
+    private static final LocalDateTime DEADLINE = LocalDate.now().plusDays(5).atStartOfDay();
+    /** 배송예정일은 admin 입력값이 아니라 deadline + deliveryEstimateDays(5일)로 계산된 잠정치다. */
+    private static final LocalDate DELIVERY_DATE = DEADLINE.toLocalDate().plusDays(5);
+    private static final LocalDateTime CREATED_AT = DEADLINE.minusDays(9);
+
     @Test
     @DisplayName("허용된 확장자의 이미지를 업로드하면 저장된 이미지 URL을 반환한다")
     void should_returnImageUrl_when_uploadSucceeds() throws IOException {
@@ -124,17 +132,17 @@ class GroupPurchaseServiceImplTest {
         assertEquals(10, result.getTargetQuantity());
         assertEquals(0, result.getCurrentQuantity());
         assertEquals("OPEN", result.getStatus());
-        assertEquals(LocalDate.of(2026, 8, 20), result.getDeliveryDate());
+        assertEquals(DELIVERY_DATE, result.getDeliveryDate());
         assertEquals(5, result.getDeliveryEstimateDays());
-        assertEquals(LocalDateTime.of(2026, 8, 15, 0, 0), result.getDeadline());
+        assertEquals(DEADLINE, result.getDeadline());
 
         ArgumentCaptor<Map<String, Object>> captor = ArgumentCaptor.forClass(Map.class);
         verify(groupPurchaseMapper).insert(captor.capture());
         assertEquals("member-1", captor.getValue().get("memberId"));
         assertEquals("사료 5kg", captor.getValue().get("productName"));
         assertEquals(10, captor.getValue().get("targetQuantity"));
-        // deliveryDate는 admin 입력값이 아니라 deadline(8/15) + deliveryEstimateDays(5일)로 계산된 잠정치여야 한다.
-        assertEquals(LocalDate.of(2026, 8, 20), captor.getValue().get("deliveryDate"));
+        // deliveryDate는 admin 입력값이 아니라 deadline + deliveryEstimateDays(5일)로 계산된 잠정치여야 한다.
+        assertEquals(DELIVERY_DATE, captor.getValue().get("deliveryDate"));
         assertEquals(5, captor.getValue().get("deliveryEstimateDays"));
     }
 
@@ -177,10 +185,10 @@ class GroupPurchaseServiceImplTest {
         assertEquals(new BigDecimal("25000"), result.getGroupPrice());
         assertEquals("택배배송", result.getDeliveryMethod());
         assertEquals(new BigDecimal("3000"), result.getDeliveryFee());
-        assertEquals(LocalDate.of(2026, 8, 20), result.getDeliveryDate());
+        assertEquals(DELIVERY_DATE, result.getDeliveryDate());
         assertEquals(10, result.getTargetQuantity());
         assertEquals(0, result.getCurrentQuantity());
-        assertEquals(LocalDateTime.of(2026, 8, 15, 0, 0), result.getDeadline());
+        assertEquals(DEADLINE, result.getDeadline());
         assertTrue(result.getIsParticipating());
     }
 
@@ -289,7 +297,7 @@ class GroupPurchaseServiceImplTest {
         assertEquals(10, result.getTargetQuantity());
         assertEquals(new BigDecimal("30000"), result.getUnitPrice());
         assertEquals(new BigDecimal("25000"), result.getGroupPrice());
-        assertEquals(LocalDate.of(2026, 8, 20), result.getDeliveryDate());
+        assertEquals(DELIVERY_DATE, result.getDeliveryDate());
         assertEquals(5, result.getDeliveryEstimateDays());
         assertNotNull(result.getParticipantInfo());
         assertEquals(10523L, result.getParticipantInfo().getParticipantId());
@@ -1438,7 +1446,7 @@ class GroupPurchaseServiceImplTest {
         ReflectionTestUtils.setField(request, "deliveryEstimateDays", 5);
         ReflectionTestUtils.setField(request, "description", "5kg 사료 공동구매");
         ReflectionTestUtils.setField(request, "targetQuantity", 10);
-        ReflectionTestUtils.setField(request, "deadline", LocalDateTime.of(2026, 8, 15, 0, 0));
+        ReflectionTestUtils.setField(request, "deadline", DEADLINE);
         return request;
     }
 
@@ -1453,14 +1461,14 @@ class GroupPurchaseServiceImplTest {
         row.put("group_price", new BigDecimal("25000"));
         row.put("delivery_method", "택배배송");
         row.put("delivery_fee", new BigDecimal("3000"));
-        row.put("delivery_date", LocalDate.of(2026, 8, 20));
+        row.put("delivery_date", DELIVERY_DATE);
         row.put("delivery_estimate_days", 5);
         row.put("description", "5kg 사료 공동구매");
         row.put("target_quantity", 10);
         row.put("current_quantity", 0);
         row.put("status", "OPEN");
-        row.put("deadline", LocalDateTime.of(2026, 8, 15, 0, 0));
-        row.put("created_at", LocalDateTime.of(2026, 8, 6, 12, 0));
+        row.put("deadline", DEADLINE);
+        row.put("created_at", CREATED_AT);
         return row;
     }
 
