@@ -744,7 +744,8 @@ class InsuranceSimulationServiceImplTest {
         // 보험료 100원 vs 상한 기준 보장금이라 산술적으로는 압도적으로 유리하지만,
         // 근거가 상한뿐이므로 FAVORABLE로 단정하지 않는다.
         assertEquals("NEUTRAL", response.getInsuranceAdvice().getVerdict());
-        assertTrue(response.getInsuranceAdvice().getMessage().contains("확인되지 않아"),
+        // 손익분기 표는 그려지므로 "비교하지 못했어요"가 아니라 "상한으로만 계산했어요"다.
+        assertTrue(response.getInsuranceAdvice().getMessage().contains("규제 상한으로만 계산했어요"),
                 response.getInsuranceAdvice().getMessage());
     }
 

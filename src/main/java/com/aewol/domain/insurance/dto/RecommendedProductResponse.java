@@ -15,7 +15,12 @@ public class RecommendedProductResponse {
     /** FIXED / BUNDLED_TIER / INDEPENDENT_SELECTABLE / UNKNOWN */
     private String reimbursementStructure;
     private Integer reimbursementRatePct;
-    /** CONFIRMED_OWN_COVERAGE_NAME / ASSUMED_FROM_RESEARCH / UNVERIFIED */
+    /**
+     * CONFIRMED_OWN_COVERAGE_NAME / ASSUMED_FROM_RESEARCH / REGULATORY_BOUND / UNVERIFIED
+     *
+     * <p>REGULATORY_BOUND는 확인값이 아니라 금감원 규제 상한(70%)이다. 화면에서 확정
+     * 환급률처럼 단언하면 거짓 표시가 된다(V34, 프론트 aewol-frontend#253).</p>
+     */
     private String reimbursementConfidence;
     /** 담보별 환급률이 갈리는 상품의 차이를 사람이 읽는 문장으로 기록한 노트(화면 표시용) */
     private String reimbursementRateNote;

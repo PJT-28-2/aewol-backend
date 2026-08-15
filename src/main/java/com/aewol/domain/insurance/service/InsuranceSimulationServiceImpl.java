@@ -129,11 +129,11 @@ public class InsuranceSimulationServiceImpl implements InsuranceSimulationServic
                                 (existing, duplicate) -> existing));
 
         // Decision 4(A): UNVERIFIED 필터를 제거해 근거 미확인 상품(=견적 기준 티어가
-        // 없거나 rate가 NULL인 상품)도 후보에 남긴다. breakEvenAvailable=true
-        // (=견적 기준 티어의 reimbursement_rate_pct 확정)인 상품을 우선 정렬한다.
+        // 없거나 rate가 NULL인 상품)도 후보에 남긴다. 대신 근거의 강도 순으로 정렬해
+        // 확인된 상품이 추천 5칸을 먼저 차지하게 한다.
         List<RecommendedProductResponse> recommendedProducts = candidateProducts.stream()
                 .sorted(Comparator
-                        .comparing((Map<String, Object> product) -> referenceTierRate(product, referenceTierByProductId) == null)
+                        .comparingInt((Map<String, Object> product) -> confidenceRank(product, referenceTierByProductId))
                         .thenComparing(product -> (BigDecimal) product.get("premium_monthly_equiv")))
                 .limit(RECOMMENDED_PRODUCT_LIMIT)
                 .map(product -> toRecommendedProduct(product,
@@ -189,10 +189,27 @@ public class InsuranceSimulationServiceImpl implements InsuranceSimulationServic
         return Period.between(birthDate, LocalDate.now()).getYears();
     }
 
-    /** 후보 상품의 견적 기준 티어 환급률만 뽑아본다(정렬용). 티어가 없으면 null(=미확인). */
-    private Integer referenceTierRate(Map<String, Object> product, Map<Long, Map<String, Object>> referenceTierByProductId) {
+    /**
+     * 추천 정렬의 1차 키. 환급률 <b>근거의 강도</b>를 순위로 바꾼다
+     * (0=확인값, 1=규제 상한, 2=미확인).
+     *
+     * <p>이전에는 "rate가 NULL인가"만 봤다. V34가 미확인 16건에 규제 상한 70%를 채우기
+     * 전까지는 rate를 가진 상품이 5건뿐이라 그 키가 사실상 "확인된 상품 먼저"로 동작했지만,
+     * 백필 후에는 21건이 rate를 가지므로 키가 전부 같은 값이 되어 정렬이 보험료 오름차순
+     * 하나로 붕괴한다. 그러면 {@link #RECOMMENDED_PRODUCT_LIMIT}개를 자를 때 <b>확인된
+     * 상품이 더 싼 규제 상한 상품에 밀려 목록 밖으로 나가고</b>, 그만큼
+     * {@link #isVerdictBasis} 분모가 줄어 판정 근거가 얇아진다(실제로 DOG 3→2, CAT 2→1).</p>
+     *
+     * <p>규제 상한 상품을 목록에서 빼지는 않는다 — Decision 4(A)의 "미확인도 보여준다"는
+     * 유지하되, 확인된 상품이 자리를 잃지 않도록 순서만 분리한다.</p>
+     */
+    private int confidenceRank(Map<String, Object> product,
+            Map<Long, Map<String, Object>> referenceTierByProductId) {
         Map<String, Object> tier = referenceTierByProductId.get(((Number) product.get("product_id")).longValue());
-        return tier == null ? null : (Integer) tier.get("reimbursement_rate_pct");
+        if (tier == null || tier.get("reimbursement_rate_pct") == null) {
+            return 2;
+        }
+        return REGULATORY_BOUND_CONFIDENCE.equals(tier.get("reimbursement_confidence")) ? 1 : 0;
     }
 
     private RecommendedProductResponse toRecommendedProduct(Map<String, Object> product,
@@ -266,9 +283,9 @@ public class InsuranceSimulationServiceImpl implements InsuranceSimulationServic
      * 현재 실질적으로 동작하는 분기는 다음과 같다:</p>
      * <ul>
      *   <li>{@code deductible_krw}가 NULL → 미반영, {@code C × rate/100} 그대로 적용
-     *       (현재 시드 23개 티어 중 21개가 이 분기)</li>
+     *       (V34 이후 23개 티어 중 5개가 이 분기 — 백필 전에는 21개였다)</li>
      *   <li>{@code deductible_basis} 또는 {@code deductible_order}가 미확인 → 미반영
-     *       (현재 시드에서 금액이 있는 메리츠 2건이 이 분기 — 둘 다 basis·order 모두 NULL)</li>
+     *       (V34 이후 금액이 있는 18개 티어 전부가 이 분기 — order는 채워졌고 basis만 NULL이다)</li>
      *   <li>{@code deductible_basis='PER_VISIT'} &amp; n 미확보 → 해당 상품만 미반영</li>
      *   <li>세 값이 모두 확정 → {@code PER_VISIT}이면 {@code d×n}, {@code PER_YEAR}면 {@code d}</li>
      * </ul>
@@ -315,8 +332,11 @@ public class InsuranceSimulationServiceImpl implements InsuranceSimulationServic
         // 즉 BEFORE_RATE ≥ AFTER_RATE가 항상 성립한다. 순서를 모를 때 BEFORE_RATE로
         // 떨어뜨리면 둘 중 보장금이 큰 쪽(=가입자에게 유리해 보이는 쪽)을 말없이
         // 고르는 셈이라, 바로 위 basis 가드와 같은 원칙을 어긴다.
-        // 현재 시드는 24개 상품 전부 deductible_order가 NULL이므로, 이 가드가 없으면
-        // 누군가 basis만 채우는 순간 전 상품이 곧바로 과대 계산으로 넘어간다.
+        // ⚠️ V34로 상황이 바뀌었다. 백필 전에는 24개 상품 전부 order가 NULL이라 이 가드가
+        // 실질적인 마지막 방어선이었지만, 이제 order는 전 상품 BEFORE_RATE로 채워져 있어
+        // 이 가드를 통과한다. 즉 **남은 스위치는 deductible_basis 하나뿐이고**, 누군가
+        // basis를 채우는 순간 금액이 있는 18개 티어가 한꺼번에 자기부담금 반영으로 넘어가
+        // 모든 손익분기 숫자가 바뀐다. basis를 채우는 마이그레이션은 그 파급을 먼저 계산할 것.
         String order = (String) product.get("deductible_order");
         if (!"BEFORE_RATE".equals(order) && !"AFTER_RATE".equals(order)) {
             return null;
@@ -396,9 +416,17 @@ public class InsuranceSimulationServiceImpl implements InsuranceSimulationServic
                 .collect(Collectors.toList());
 
         if (verdictBasis.isEmpty()) {
+            // 판정 근거가 없는 이유는 두 가지이고, 화면에 뜨는 카드 모양이 서로 다르다.
+            //   (a) rate 자체가 없음        → 카드에 손익분기 표가 없다
+            //   (b) 전부 REGULATORY_BOUND → 카드마다 손익분기 표가 그려져 있다
+            // (b)에 "비교하지 못했어요"를 그대로 쓰면 바로 아래 표와 정면으로 어긋난다.
+            boolean calculableButBoundOnly = products.stream()
+                    .anyMatch(RecommendedProductResponse::isBreakEvenAvailable);
             return InsuranceAdvice.builder()
                     .verdict("NEUTRAL")
-                    .message("추천 상품의 보장비율 정보가 아직 확인되지 않아 손익분기를 비교하지 못했어요. 상품 상세를 직접 확인해보세요.")
+                    .message(calculableButBoundOnly
+                            ? "추천 상품의 환급률을 약관에서 확인하지 못해 금융감독원 규제 상한으로만 계산했어요. 아래 표는 가장 유리한 경우라 유불리를 단정하지 않았어요."
+                            : "추천 상품의 보장비율 정보가 아직 확인되지 않아 손익분기를 비교하지 못했어요. 상품 상세를 직접 확인해보세요.")
                     .build();
         }
 
