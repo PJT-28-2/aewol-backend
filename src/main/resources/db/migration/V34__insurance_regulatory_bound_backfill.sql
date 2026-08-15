@@ -64,10 +64,16 @@
 -- 다른 순서가 확인되면 그 상품만 후속 마이그레이션으로 덮어쓴다.
 --
 -- IS NULL 조건: 이미 값이 있는 행(향후 개별 확인분)을 덮어쓰지 않는다.
+--
+-- product_category='MEDICAL' 조건: 아래 3번과 같은 대상으로 맞춘다. 롯데손보
+-- 여행자보험(LIABILITY_TRAVEL)은 의료비 담보가 0건이라 자기부담금/보험금 산식
+-- 자체가 성립하지 않는다. 계산에 영향은 없지만, 금감원 펫보험 감독행정을 근거로
+-- 쓰는 이상 그 규제가 적용되지 않는 상품에까지 값을 심을 이유가 없다.
 -- ---------------------------------------------------------------------
 UPDATE insurance_product
    SET deductible_order = 'BEFORE_RATE'
- WHERE deductible_order IS NULL;
+ WHERE deductible_order IS NULL
+   AND product_category = 'MEDICAL';
 
 
 -- ---------------------------------------------------------------------
@@ -175,10 +181,14 @@ ALTER TABLE insurance_product_plan_tiers
 --   SELECT COUNT(*) FROM insurance_product_plan_tiers
 --    WHERE reimbursement_confidence = 'CONFIRMED_OWN_COVERAGE_NAME';
 --
--- Q6. deductible_order가 NULL인 상품이 없어야 한다 (기대: 0)
---   SELECT COUNT(*) FROM insurance_product WHERE deductible_order IS NULL;
+-- Q6. 의료비 상품 중 deductible_order가 NULL인 것이 없어야 한다 (기대: 0)
+--     LIABILITY_TRAVEL 1건은 의도적으로 NULL로 남으므로 카테고리를 좁혀서 센다.
+--   SELECT COUNT(*) FROM insurance_product
+--    WHERE deductible_order IS NULL AND product_category = 'MEDICAL';
 --
 -- Q7. 가입연령이 1로 시작하는 재가입용 중 age_basis=OWNER가 없어야 한다 (기대: 0)
+--     위 2번 UPDATE는 회사를 현대해상으로 좁혔지만(오기재가 실증된 범위만 건드린다),
+--     이 불변식은 회사 무관이다. 다른 회사에서 같은 오기재가 생기면 여기서 잡힌다.
 --   SELECT COUNT(*) FROM insurance_product
 --    WHERE product_name LIKE '%재가입용%' AND join_age_min >= 1 AND age_basis = 'OWNER';
 --
