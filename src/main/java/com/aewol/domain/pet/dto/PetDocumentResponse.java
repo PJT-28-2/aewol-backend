@@ -12,4 +12,5 @@ public class PetDocumentResponse {
     private String docType;
     private String fileUrl;
     private String issuedDate;
+    private String createdAt;
 }

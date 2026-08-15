@@ -7,10 +7,12 @@ import com.aewol.common.exception.BusinessException;
 import com.aewol.common.util.FileUtil;
 import com.aewol.common.storage.FileStorage;
 import com.aewol.domain.pet.dto.PetDocumentResponse;
+import com.aewol.domain.pet.dto.PetRegistrationResponse;
 import com.aewol.domain.pet.mapper.PetDocumentMapper;
 import com.aewol.domain.pet.mapper.PetMapper;
 import java.io.IOException;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -28,12 +30,13 @@ class PetDocumentQueryDeleteServiceTest {
     @Mock PetDocumentMapper petDocumentMapper;
     @Mock FileUtil fileUtil;
     @Mock FileStorage fileStorage;
+    @Mock PetRegistrationService petRegistrationService;
 
     private PetServiceImpl service;
 
     @BeforeEach
     void setUp() {
-        service = new PetServiceImpl(petMapper, petDocumentMapper, fileUtil, fileStorage);
+        service = new PetServiceImpl(petMapper, petDocumentMapper, fileUtil, fileStorage, petRegistrationService);
         lenient().when(fileStorage.signedUrl(anyString()))
                 .thenAnswer(invocation -> "signed:" + invocation.getArgument(0));
     }
@@ -52,6 +55,7 @@ class PetDocumentQueryDeleteServiceTest {
         assertEquals("vaccination-certificate.pdf", result.get(0).getDocName());
         assertEquals("2026-08-07", result.get(0).getIssuedDate());
         assertEquals("signed:/uploads/pet-documents/new.pdf", result.get(0).getFileUrl());
+        assertEquals("2026-08-07T10:00:00", result.get(0).getCreatedAt());
         verify(petDocumentMapper).findByPetId("pet-1");
     }
 
@@ -166,6 +170,59 @@ class PetDocumentQueryDeleteServiceTest {
         document.put("doc_type", "VACCINATION");
         document.put("file_url", fileUrl);
         document.put("issued_date", issuedDate);
+        document.put("created_at", LocalDateTime.of(2026, 8, 7, 10, 0));
         return document;
+    }
+
+    @Test
+    void should_returnDocumentResponse_when_docTypeIsNotRegistration() {
+        givenOwner();
+        when(petDocumentMapper.findByIdAndPetId("doc-1", "pet-1"))
+                .thenReturn(document("doc-1", "/uploads/pet-documents/file.pdf", LocalDate.of(2026, 8, 7)));
+
+        Object result = service.getPetDocument("member-1", "pet-1", "doc-1");
+
+        assertInstanceOf(PetDocumentResponse.class, result);
+        assertEquals("doc-1", ((PetDocumentResponse) result).getDocId());
+        verifyNoInteractions(petRegistrationService);
+    }
+
+    @Test
+    void should_delegateToRegistrationService_when_docTypeIsRegistration() {
+        givenOwner();
+        Map<String, Object> registrationDocument = document("doc-2", null, null);
+        registrationDocument.put("doc_type", "REGISTRATION");
+        when(petDocumentMapper.findByIdAndPetId("doc-2", "pet-1")).thenReturn(registrationDocument);
+        PetRegistrationResponse expected = PetRegistrationResponse.builder().docId("doc-2").build();
+        when(petRegistrationService.getDetail("member-1", "pet-1", "doc-2")).thenReturn(expected);
+
+        Object result = service.getPetDocument("member-1", "pet-1", "doc-2");
+
+        assertSame(expected, result);
+        verify(petRegistrationService).getDetail("member-1", "pet-1", "doc-2");
+        verifyNoInteractions(fileStorage);
+    }
+
+    @Test
+    void should_throwNotFound_when_documentMissing_onGetDetail() {
+        givenOwner();
+        when(petDocumentMapper.findByIdAndPetId("doc-404", "pet-1")).thenReturn(null);
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.getPetDocument("member-1", "pet-1", "doc-404"));
+
+        assertEquals(HttpStatus.NOT_FOUND, exception.getStatus());
+        verifyNoInteractions(petRegistrationService);
+    }
+
+    @Test
+    void should_throwForbidden_when_nonOwnerRequestsDetail() {
+        when(petMapper.findById("pet-1")).thenReturn(pet("owner-1"));
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.getPetDocument("member-2", "pet-1", "doc-1"));
+
+        assertEquals(HttpStatus.FORBIDDEN, exception.getStatus());
+        verifyNoInteractions(petDocumentMapper, petRegistrationService);
     }
 }

@@ -7,6 +7,7 @@ import com.aewol.domain.auth.dto.SignupEmailVerificationRequest;
 import com.aewol.domain.auth.dto.SignupRequest;
 import com.aewol.domain.auth.dto.SignupResponse;
 import com.aewol.domain.auth.service.AuthService;
+import com.aewol.domain.auth.service.AccountFindService;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
@@ -27,7 +28,7 @@ class AuthControllerEmailVerificationTest {
 
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final AuthService authService = mock(AuthService.class);
-    private final AuthController controller = new AuthController(authService);
+    private final AuthController controller = new AuthController(authService, mock(AccountFindService.class));
 
     @Test
     void sendCodeResponseUsesResultContract() throws Exception {

@@ -5,8 +5,11 @@ import com.aewol.common.filter.JwtAuthenticationFilter;
 import com.aewol.common.util.JwtUtil;
 import com.aewol.config.SecurityConfig;
 import com.aewol.domain.auth.dto.TokenResponse;
+import com.aewol.domain.auth.dto.AccountFindSendCodeResponse;
+import com.aewol.domain.auth.dto.AccountFindResultResponse;
 import com.aewol.domain.auth.service.AuthCredentialStore;
 import com.aewol.domain.auth.service.AuthService;
+import com.aewol.domain.auth.service.AccountFindService;
 import com.aewol.domain.member.mapper.MemberMapper;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -45,6 +48,7 @@ class AuthControllerRefreshTest {
     private AuthService authService;
     private JwtUtil jwtUtil;
     private MemberMapper memberMapper;
+    private AccountFindService accountFindService;
 
     @BeforeEach
     void setUp() {
@@ -61,7 +65,8 @@ class AuthControllerRefreshTest {
         authService = context.getBean(AuthService.class);
         jwtUtil = context.getBean(JwtUtil.class);
         memberMapper = context.getBean(MemberMapper.class);
-        reset(authService, jwtUtil, memberMapper);
+        accountFindService = context.getBean(AccountFindService.class);
+        reset(authService, jwtUtil, memberMapper, accountFindService);
         mockMvc = MockMvcBuilders.webAppContextSetup(context)
                 .apply(springSecurity())
                 .build();
@@ -151,6 +156,26 @@ class AuthControllerRefreshTest {
                 .header("X-Refresh-Token", "refresh-token"));
     }
 
+    @Test
+    void accountFindEndpointsAllowAnonymousRequests() throws Exception {
+        when(accountFindService.sendVerificationCode(org.mockito.ArgumentMatchers.any()))
+                .thenReturn(new AccountFindSendCodeResponse("opaque-request-id", 300L));
+        when(accountFindService.verifyCode(org.mockito.ArgumentMatchers.any()))
+                .thenReturn(new AccountFindResultResponse("KAKAO", null));
+
+        mockMvc.perform(post("/api/auth/account/find/send-code")
+                        .with(csrf())
+                        .contentType("application/json")
+                        .content("{\"name\":\"홍길동\",\"phone\":\"01012345678\"}"))
+                .andExpect(status().isOk());
+        mockMvc.perform(post("/api/auth/account/find/verify-code")
+                        .with(csrf())
+                        .contentType("application/json")
+                        .content("{\"requestId\":\"123e4567-e89b-12d3-a456-426614174000\","
+                                + "\"verificationCode\":\"123456\"}"))
+                .andExpect(status().isOk());
+    }
+
     private void assertInvalidAuthorization(
             org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder request) throws Exception {
         MvcResult result = mockMvc.perform(request)
@@ -194,8 +219,13 @@ class AuthControllerRefreshTest {
         }
 
         @Bean
-        AuthController authController(AuthService authService) {
-            return new AuthController(authService);
+        AccountFindService accountFindService() {
+            return mock(AccountFindService.class);
+        }
+
+        @Bean
+        AuthController authController(AuthService authService, AccountFindService accountFindService) {
+            return new AuthController(authService, accountFindService);
         }
 
         @Bean

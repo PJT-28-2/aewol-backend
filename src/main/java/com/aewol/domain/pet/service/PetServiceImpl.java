@@ -2,6 +2,7 @@ package com.aewol.domain.pet.service;
 
 import com.aewol.common.exception.BusinessException;
 import com.aewol.common.storage.FileStorage;
+import com.aewol.common.util.DateTimeUtil;
 import com.aewol.common.util.FileUtil;
 import com.aewol.domain.pet.dto.PetCreateRequest;
 import com.aewol.domain.pet.dto.PetDocumentResponse;
@@ -29,6 +30,7 @@ public class PetServiceImpl implements PetService {
 
     private static final String VACCINATION = "VACCINATION";
     private static final String MEDICAL_CONFIRMATION = "MEDICAL_CONFIRMATION";
+    private static final String REGISTRATION = "REGISTRATION";
     private static final Set<String> UPLOADABLE_DOCUMENT_TYPES =
             Set.of(VACCINATION, MEDICAL_CONFIRMATION);
     private static final String DOCUMENT_SUB_DIR = "pet-documents";
@@ -45,6 +47,7 @@ public class PetServiceImpl implements PetService {
     private final PetDocumentMapper petDocumentMapper;
     private final FileUtil fileUtil;
     private final FileStorage fileStorage;
+    private final PetRegistrationService petRegistrationService;
 
     @Override
     @Transactional
@@ -110,6 +113,12 @@ public class PetServiceImpl implements PetService {
         }
     }
 
+    /**
+     * 접종증명서/진료확인서는 반려동물+타입당 여러 건이 누적된다 — 업로드할 때마다 새 문서로
+     * insert하며, 이전에 올린 문서를 덮어쓰거나 그 파일을 지우지 않는다(개별 삭제는
+     * deletePetDocument로 별도 처리). 동물등록증(REGISTRATION)은 이 메서드 대상이 아니고
+     * verify()가 자체적으로 1건만 유지하는 별도 upsert 로직을 갖는다.
+     */
     @Override
     @Transactional
     public PetDocumentResponse uploadPetDocument(String memberId, String petId, String docType,
@@ -118,8 +127,6 @@ public class PetServiceImpl implements PetService {
         String normalizedDocType = normalizeDocumentType(docType);
         String storageExtension = validateDocument(file);
         String originalFilename = extractOriginalFilename(file);
-        Map<String, Object> existing = petDocumentMapper.findByPetIdAndTypeForUpdate(
-                petId, normalizedDocType);
         String newFileUrl;
         try {
             newFileUrl = fileUtil.upload(file, DOCUMENT_SUB_DIR, storageExtension);
@@ -135,19 +142,13 @@ public class PetServiceImpl implements PetService {
         document.put("issuedDate", issuedDate);
 
         try {
-            if (existing == null) {
-                petDocumentMapper.insert(document);
-            } else {
-                document.put("docId", existing.get("doc_id"));
-                petDocumentMapper.update(document);
-            }
+            petDocumentMapper.insert(document);
         } catch (RuntimeException e) {
             deleteQuietly(newFileUrl);
             throw e;
         }
 
-        String oldFileUrl = existing == null ? null : (String) existing.get("file_url");
-        arrangeFileCleanup(newFileUrl, oldFileUrl);
+        arrangeUploadFailureCleanup(newFileUrl);
         return toDocumentResponse(document);
     }
 
@@ -167,6 +168,25 @@ public class PetServiceImpl implements PetService {
         return petDocumentMapper.findByPetId(petId).stream()
                 .map(this::toDocumentResponse)
                 .collect(Collectors.toList());
+    }
+
+    /**
+     * 문서 상세 조회(증명서 상세). docType에 따라 응답 형태가 다르다 — REGISTRATION은
+     * APMS 연동 상세(PetRegistrationResponse), 그 외(VACCINATION/MEDICAL_CONFIRMATION)는
+     * 목록과 동일한 얕은 형태(PetDocumentResponse)를 돌려준다.
+     */
+    @Override
+    @Transactional(readOnly = true)
+    public Object getPetDocument(String memberId, String petId, String docId) {
+        assertOwner(memberId, petId);
+        Map<String, Object> document = petDocumentMapper.findByIdAndPetId(docId, petId);
+        if (document == null) {
+            throw BusinessException.notFound("문서를 찾을 수 없습니다.");
+        }
+        if (REGISTRATION.equals(value(document, "doc_type", "docType"))) {
+            return petRegistrationService.getDetail(memberId, petId, docId);
+        }
+        return toDocumentResponse(document);
     }
 
     @Override
@@ -238,21 +258,15 @@ public class PetServiceImpl implements PetService {
         return filename;
     }
 
-    private void arrangeFileCleanup(String newFileUrl, String oldFileUrl) {
+    /** insert 이후 커밋 전에 트랜잭션이 롤백되면(DB 삽입은 되돌아가도 파일시스템 쓰기는 안 되므로) 방금 올린 파일을 지운다. */
+    private void arrangeUploadFailureCleanup(String newFileUrl) {
         if (TransactionSynchronizationManager.isSynchronizationActive()) {
             TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
-                @Override
-                public void afterCommit() {
-                    if (oldFileUrl != null) deleteQuietly(oldFileUrl);
-                }
-
                 @Override
                 public void afterCompletion(int status) {
                     if (status != STATUS_COMMITTED) deleteQuietly(newFileUrl);
                 }
             });
-        } else if (oldFileUrl != null) {
-            deleteQuietly(oldFileUrl);
         }
     }
 
@@ -290,6 +304,7 @@ public class PetServiceImpl implements PetService {
                 .docType(String.valueOf(value(document, "doc_type", "docType")))
                 .fileUrl(fileStorage.signedUrl((String) value(document, "file_url", "fileUrl")))
                 .issuedDate(issuedDate == null ? null : issuedDate.toString())
+                .createdAt(DateTimeUtil.toIsoString(value(document, "created_at", "createdAt")))
                 .build();
     }
 

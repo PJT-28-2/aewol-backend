@@ -116,6 +116,19 @@ public class PetController {
         return ResponseEntity.ok(ApiResponse.success(petService.getPetDocuments(memberId, petId)));
     }
 
+    /**
+     * REGISTRATION 문서는 PetRegistrationResponse(등록증 상세) 형태로, 그 외 문서 타입은
+     * PetDocumentResponse(목록과 동일한 얕은 형태)로 응답한다 — docType에 따라 result 스키마가 갈린다.
+     */
+    @Operation(summary = "반려동물 문서 상세 조회")
+    @GetMapping("/{petId}/documents/{docId}")
+    public ResponseEntity<ApiResponse<Object>> getPetDocument(
+            @AuthenticationPrincipal String memberId,
+            @PathVariable String petId,
+            @PathVariable String docId) {
+        return ResponseEntity.ok(ApiResponse.success(petService.getPetDocument(memberId, petId, docId)));
+    }
+
     @Operation(summary = "반려동물 문서 삭제")
     @DeleteMapping("/{petId}/documents/{docId}")
     public ResponseEntity<ApiResponse<Void>> deletePetDocument(

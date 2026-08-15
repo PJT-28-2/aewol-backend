@@ -19,6 +19,9 @@ public interface PetDocumentMapper {
     Map<String, Object> findByIdAndPetIdForUpdate(@Param("docId") String docId,
                                                   @Param("petId") String petId);
 
+    Map<String, Object> findByIdAndPetId(@Param("docId") String docId,
+                                         @Param("petId") String petId);
+
     void update(Map<String, Object> document);
 
     int deleteByIdAndPetId(@Param("docId") String docId,

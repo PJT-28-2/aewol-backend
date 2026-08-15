@@ -1,6 +1,7 @@
 package com.aewol.domain.pet.service;
 
 import com.aewol.common.exception.BusinessException;
+import com.aewol.common.util.DateTimeUtil;
 import com.aewol.domain.pet.dto.PetRegistrationResponse;
 import com.aewol.domain.pet.dto.PetRegistrationVerifyRequest;
 import com.aewol.domain.pet.mapper.PetDocumentMapper;
@@ -93,7 +94,63 @@ public class PetRegistrationServiceImpl implements PetRegistrationService {
         if (petMapper.updateRegistrationNumber(petId, memberId, request.getRegNumber()) != 1) {
             throw BusinessException.notFound("반려동물을 찾을 수 없습니다.");
         }
-        return response(registration);
+
+        // 방금 저장한 registration(메모리 맵)을 그대로 응답하면 last_synced_at이 빠진다 —
+        // 그 컬럼은 insert/update SQL의 NOW()로 DB에서만 채워지고 메모리 맵엔 없기 때문이다.
+        // getDetail()과 동일하게 저장된 값을 다시 조회해서 응답한다 — 같은 트랜잭션 안이라
+        // 방금 커밋한 값이 그대로 보이고, regTm/aprTm 포맷도 getDetail()과 일치하게 된다.
+        Map<String, Object> saved = petRegistrationMapper.findByPetIdAndDocId(
+                petId, String.valueOf(registration.get("docId")));
+        return toResponse(saved);
+    }
+
+    /**
+     * 등록증 상세 조회(순서: 증명서 상세). verify()와 달리 APMS를 다시 호출하지 않고
+     * pet_registration에 저장된 값을 그대로 돌려준다 — lastSyncedAt이 "마지막 동기화 시각"이다.
+     *
+     * pet_registration.doc_id는 항상 그 등록증의 pet_document.doc_id와 같은 값이다: verify()가
+     * insert/update 직전에 registration.put("docId", value(document, "doc_id", "docId"))로 방금
+     * 만들어지거나 조회된 pet_document 행의 doc_id를 그대로 실어 보내고(위 83번째 줄), 두 insert가
+     * 같은 @Transactional 안에서 함께 커밋되며, fk_petreg_doc FK가 DB 레벨에서도 이를 보장한다.
+     * 따라서 pet_document에 REGISTRATION 타입 행이 있는데 여기서 404가 나는 경우는 정상 흐름상
+     * 발생하지 않는다 — 그런 상황이 실제로 발생한다면 이 메서드가 아니라 데이터 정합성 자체를 봐야 한다.
+     */
+    @Override
+    public PetRegistrationResponse getDetail(String memberId, String petId, String docId) {
+        Map<String, Object> pet = petMapper.findById(petId);
+        if (pet == null) throw BusinessException.notFound("반려동물을 찾을 수 없습니다.");
+        if (!Objects.equals(memberId, String.valueOf(pet.get("member_id")))) {
+            throw BusinessException.forbidden("대표 보호자만 이 작업을 할 수 있습니다.");
+        }
+
+        Map<String, Object> registration = petRegistrationMapper.findByPetIdAndDocId(petId, docId);
+        if (registration == null) {
+            throw BusinessException.notFound("동물등록정보를 찾을 수 없습니다.");
+        }
+        return toResponse(registration);
+    }
+
+    /** pet_registration 테이블 행(DB 네이티브 컬럼)을 응답으로 매핑한다. verify()/getDetail() 공용. */
+    private PetRegistrationResponse toResponse(Map<String, Object> registration) {
+        return PetRegistrationResponse.builder()
+                .docId(string(registration.get("doc_id")))
+                .petId(string(registration.get("pet_id")))
+                .regNumber(string(registration.get("reg_number")))
+                .name(string(registration.get("name")))
+                .breed(string(registration.get("breed")))
+                .gender(string(registration.get("gender")))
+                .neutered(string(registration.get("neutered")))
+                .birthDate(string(registration.get("birth_date")))
+                .rfidCd(string(registration.get("rfid_cd")))
+                .rfidGubun(string(registration.get("rfid_gubun")))
+                .orgNm(string(registration.get("org_nm")))
+                .officeTel(string(registration.get("office_tel")))
+                .aprGbnNm(string(registration.get("apr_gbn_nm")))
+                .regTm(DateTimeUtil.toIsoString(registration.get("reg_tm")))
+                .aprTm(DateTimeUtil.toIsoString(registration.get("apr_tm")))
+                .lastSyncedAt(DateTimeUtil.toIsoString(registration.get("last_synced_at")))
+                .verified(true)
+                .build();
     }
 
     private void validateDuplicate(String petId, String regNumber) {
@@ -150,18 +207,6 @@ public class PetRegistrationServiceImpl implements PetRegistrationService {
         result.put("regTm", parseDateTime(first(source, null, "regTm", "resRegisterDate")));
         result.put("aprTm", parseDateTime(first(source, null, "aprTm")));
         return result;
-    }
-
-    private PetRegistrationResponse response(Map<String, Object> row) {
-        return PetRegistrationResponse.builder()
-                .docId(string(row.get("docId"))).petId(string(row.get("petId")))
-                .regNumber(string(row.get("regNumber"))).name(string(row.get("name")))
-                .breed(string(row.get("breed"))).gender(string(row.get("gender")))
-                .neutered(string(row.get("neutered"))).birthDate(string(row.get("birthDate")))
-                .rfidCd(string(row.get("rfidCd"))).rfidGubun(string(row.get("rfidGubun")))
-                .orgNm(string(row.get("orgNm"))).officeTel(string(row.get("officeTel")))
-                .aprGbnNm(string(row.get("aprGbnNm"))).regTm(string(row.get("regTm")))
-                .aprTm(string(row.get("aprTm"))).verified(true).build();
     }
 
     private static String first(Map<String, Object> map, String fallback, String... keys) {
