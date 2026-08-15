@@ -60,6 +60,7 @@ class AuthServiceImplEmailVerificationTest {
     @Mock EmailService emailService;
     @Mock KakaoAuthClient kakaoAuthClient;
     @Mock AuthCredentialStore authCredentialStore;
+    @Mock KakaoRegistrationStore kakaoRegistrationStore;
 
     private AuthServiceImpl authService;
 
@@ -67,7 +68,8 @@ class AuthServiceImplEmailVerificationTest {
     void setUp() {
         authService = new AuthServiceImpl(
                 memberMapper, walletMapper, notificationSettingMapper, jwtUtil, passwordEncoder,
-                redisTemplate, redisRateLimiter, emailService, kakaoAuthClient, authCredentialStore);
+                redisTemplate, redisRateLimiter, emailService, kakaoAuthClient, authCredentialStore,
+                kakaoRegistrationStore);
     }
 
     @Test

@@ -67,6 +67,7 @@ class AuthServiceImplPasswordResetTest {
     @Mock EmailService emailService;
     @Mock KakaoAuthClient kakaoAuthClient;
     @Mock AuthCredentialStore authCredentialStore;
+    @Mock KakaoRegistrationStore kakaoRegistrationStore;
 
     private AuthServiceImpl service;
 
@@ -74,7 +75,8 @@ class AuthServiceImplPasswordResetTest {
     void setUp() {
         service = new AuthServiceImpl(
                 memberMapper, walletMapper, notificationSettingMapper, jwtUtil, passwordEncoder,
-                redisTemplate, redisRateLimiter, emailService, kakaoAuthClient, authCredentialStore);
+                redisTemplate, redisRateLimiter, emailService, kakaoAuthClient, authCredentialStore,
+                kakaoRegistrationStore);
     }
 
     @AfterEach

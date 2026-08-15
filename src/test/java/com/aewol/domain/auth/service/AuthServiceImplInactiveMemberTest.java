@@ -3,11 +3,14 @@ package com.aewol.domain.auth.service;
 import com.aewol.common.exception.BusinessException;
 import com.aewol.common.util.JwtUtil;
 import com.aewol.common.util.RedisRateLimiter;
+import com.aewol.domain.auth.dto.KakaoAuthStatus;
+import com.aewol.domain.auth.dto.KakaoOAuthResponse;
 import com.aewol.domain.auth.dto.LoginRequest;
 import com.aewol.domain.member.mapper.MemberMapper;
 import com.aewol.domain.notification.mapper.NotificationSettingMapper;
 import com.aewol.domain.wallet.mapper.WalletMapper;
 import com.aewol.external.kakao.KakaoAuthClient;
+import com.aewol.external.kakao.KakaoUserInfo;
 import com.aewol.external.smtp.EmailService;
 import io.jsonwebtoken.Claims;
 import java.util.Date;
@@ -25,13 +28,12 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.lenient;
-import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
-import static org.mockito.Mockito.times;
 
 @ExtendWith(MockitoExtension.class)
 class AuthServiceImplInactiveMemberTest {
@@ -47,6 +49,7 @@ class AuthServiceImplInactiveMemberTest {
     @Mock EmailService emailService;
     @Mock KakaoAuthClient kakaoAuthClient;
     @Mock AuthCredentialStore authCredentialStore;
+    @Mock KakaoRegistrationStore kakaoRegistrationStore;
 
     private AuthServiceImpl service;
 
@@ -54,7 +57,7 @@ class AuthServiceImplInactiveMemberTest {
     void setUp() {
         service = new AuthServiceImpl(memberMapper, walletMapper, notificationSettingMapper,
                 jwtUtil, passwordEncoder, redisTemplate, redisRateLimiter, emailService,
-                kakaoAuthClient, authCredentialStore);
+                kakaoAuthClient, authCredentialStore, kakaoRegistrationStore);
     }
 
     @Test
@@ -72,11 +75,9 @@ class AuthServiceImplInactiveMemberTest {
 
     @Test
     void inactiveKakaoIdentityBlocksTokenAndNewMemberCreation() {
-        stubKakaoProfile("member@example.com");
-        when(memberMapper.findActiveKakaoByIdentity("member@example.com", "kakao-id"))
-                .thenReturn(null);
-        when(memberMapper.existsInactiveByKakaoIdentity("member@example.com", "kakao-id"))
-                .thenReturn(true);
+        stubKakaoUserInfo("member@example.com", "홍길동");
+        when(memberMapper.findActiveKakaoByProviderId("kakao-id")).thenReturn(null);
+        when(memberMapper.existsInactiveKakaoByProviderId("kakao-id")).thenReturn(true);
 
         BusinessException exception = assertThrows(BusinessException.class,
                 () -> service.kakaoLogin("authorization-code"));
@@ -86,151 +87,102 @@ class AuthServiceImplInactiveMemberTest {
     }
 
     @Test
-    void activeKakaoProviderIdUsesExistingMemberAndTakesPriorityOverInactiveRows() {
-        stubKakaoProfile("member@example.com");
+    void activeKakaoProviderIdLogsInWithoutRegistrationSessionOrNewData() {
+        stubKakaoUserInfo("member@example.com", "홍길동");
         Map<String, Object> activeMember = member(1);
         activeMember.put("member_id", 7L);
-        when(memberMapper.findActiveKakaoByIdentity("member@example.com", "kakao-id"))
-                .thenReturn(activeMember);
+        when(memberMapper.findActiveKakaoByProviderId("kakao-id")).thenReturn(activeMember);
         stubTokenGeneration("7");
 
-        service.kakaoLogin("authorization-code");
+        KakaoOAuthResponse response = service.kakaoLogin("authorization-code");
 
-        verify(memberMapper, never()).existsInactiveByKakaoIdentity(
-                org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.anyString());
+        assertEquals(KakaoAuthStatus.LOGIN_COMPLETE, response.getAuthStatus());
+        assertEquals("access-token", response.getAccessToken());
+        assertEquals("refresh-token", response.getRefreshToken());
+        assertNull(response.getRegistrationToken());
+        verify(memberMapper, never()).existsInactiveKakaoByProviderId(
+                org.mockito.ArgumentMatchers.anyString());
         verify(memberMapper, never()).insert(org.mockito.ArgumentMatchers.any());
+        verify(walletMapper, never()).insert(org.mockito.ArgumentMatchers.any());
+        verify(notificationSettingMapper, never()).insert(org.mockito.ArgumentMatchers.any());
         verify(jwtUtil).generateAccessToken("7", "USER");
         verify(jwtUtil).generateRefreshToken("7");
+        verify(authCredentialStore).storeRefresh("7", "refresh-token");
+        verify(kakaoRegistrationStore, never()).create(org.mockito.ArgumentMatchers.any());
     }
 
     @Test
-    void inactiveProviderIdWithoutEmailBlocksNewMemberCreation() {
-        stubKakaoProfile(null);
-        when(memberMapper.findActiveKakaoByIdentity(null, "kakao-id")).thenReturn(null);
-        when(memberMapper.existsInactiveByKakaoIdentity(null, "kakao-id")).thenReturn(true);
+    void newKakaoIdentityCreatesOnlyRegistrationSession() {
+        stubKakaoUserInfo("member@example.com", "홍길동");
+        when(memberMapper.findActiveKakaoByProviderId("kakao-id")).thenReturn(null);
+        when(memberMapper.findActiveByEmail("member@example.com")).thenReturn(null);
+        when(memberMapper.existsInactiveKakaoByProviderId("kakao-id")).thenReturn(false);
+        when(kakaoRegistrationStore.create(org.mockito.ArgumentMatchers.any()))
+                .thenReturn("registration-token");
 
-        assertThrows(BusinessException.class, () -> service.kakaoLogin("authorization-code"));
+        KakaoOAuthResponse response = service.kakaoLogin("authorization-code");
 
+        assertEquals(KakaoAuthStatus.ADDITIONAL_INFO_REQUIRED, response.getAuthStatus());
+        assertNull(response.getAccessToken());
+        assertNull(response.getRefreshToken());
+        assertEquals("registration-token", response.getRegistrationToken());
+        verify(kakaoRegistrationStore).create(org.mockito.ArgumentMatchers.argThat(session ->
+                "kakao-id".equals(session.getProviderId())
+                        && "member@example.com".equals(session.getEmail())
+                        && "홍길동".equals(session.getName())));
+        verify(memberMapper, never()).insert(org.mockito.ArgumentMatchers.any());
+        verify(walletMapper, never()).insert(org.mockito.ArgumentMatchers.any());
+        verify(notificationSettingMapper, never()).insert(org.mockito.ArgumentMatchers.any());
+        verify(jwtUtil, never()).generateAccessToken(
+                org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyString());
+        verify(jwtUtil, never()).generateRefreshToken(org.mockito.ArgumentMatchers.anyString());
+        verify(authCredentialStore, never()).storeRefresh(
+                org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyString());
+    }
+
+    @Test
+    void syntheticKakaoEmailIsStoredOnlyInRegistrationSession() {
+        stubKakaoUserInfo("kakao-id@kakao.user", "홍길동");
+        when(memberMapper.findActiveKakaoByProviderId("kakao-id")).thenReturn(null);
+        when(kakaoRegistrationStore.create(org.mockito.ArgumentMatchers.any()))
+                .thenReturn("registration-token");
+
+        service.kakaoLogin("authorization-code");
+
+        verify(memberMapper).findActiveByEmail("kakao-id@kakao.user");
+        verify(kakaoRegistrationStore).create(org.mockito.ArgumentMatchers.argThat(session ->
+                "kakao-id@kakao.user".equals(session.getEmail())));
+        verify(memberMapper, never()).insert(org.mockito.ArgumentMatchers.any());
+    }
+
+    @Test
+    void activeLocalEmailConflictDoesNotCreateRegistrationOrAuthentication() {
+        stubKakaoUserInfo("member@example.com", "홍길동");
+        when(memberMapper.findActiveKakaoByProviderId("kakao-id")).thenReturn(null);
+        Map<String, Object> localMember = member(1);
+        localMember.put("provider", "LOCAL");
+        when(memberMapper.findActiveByEmail("member@example.com")).thenReturn(localMember);
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.kakaoLogin("authorization-code"));
+
+        assertEquals(409, exception.getStatus().value());
+        assertEquals("이미 가입된 이메일입니다.", exception.getMessage());
+        verify(memberMapper, never()).insert(org.mockito.ArgumentMatchers.any());
         verifyKakaoAuthenticationWasNotCreated();
     }
 
     @Test
-    void inactiveEmailBlocksNewMemberCreation() {
-        stubKakaoProfile("member@example.com");
-        when(memberMapper.findActiveKakaoByIdentity("member@example.com", "kakao-id"))
-                .thenReturn(null);
-        when(memberMapper.existsInactiveByKakaoIdentity("member@example.com", "kakao-id"))
-                .thenReturn(true);
+    void invalidKakaoProfileFailsBeforeRegistrationSessionCreation() {
+        when(kakaoAuthClient.getAccessToken("authorization-code"))
+                .thenReturn("kakao-access-token");
+        when(kakaoAuthClient.getUserInfo("kakao-access-token"))
+                .thenThrow(new BusinessException("카카오 사용자 정보를 확인할 수 없습니다."));
 
-        assertThrows(BusinessException.class, () -> service.kakaoLogin("authorization-code"));
-
-        verifyKakaoAuthenticationWasNotCreated();
-    }
-
-    @Test
-    void activeLocalEmailBlocksNewKakaoMemberCreation() {
-        stubKakaoProfile("member@example.com");
-        when(memberMapper.findActiveKakaoByIdentity("member@example.com", "kakao-id"))
-                .thenReturn(null);
-        when(memberMapper.existsInactiveByKakaoIdentity("member@example.com", "kakao-id"))
-                .thenReturn(false);
-        when(memberMapper.existsActiveByEmail("member@example.com")).thenReturn(true);
-
-        assertThrows(BusinessException.class, () -> service.kakaoLogin("authorization-code"));
+        assertThrows(BusinessException.class,
+                () -> service.kakaoLogin("authorization-code"));
 
         verifyKakaoAuthenticationWasNotCreated();
-    }
-
-    @Test
-    void newKakaoIdentityKeepsExistingSignupAndWalletFlow() {
-        stubKakaoProfile("member@example.com");
-        when(memberMapper.findActiveKakaoByIdentity("member@example.com", "kakao-id"))
-                .thenReturn(null);
-        when(memberMapper.existsInactiveByKakaoIdentity("member@example.com", "kakao-id"))
-                .thenReturn(false);
-        when(memberMapper.existsActiveByEmail("member@example.com")).thenReturn(false);
-        doAnswer(invocation -> {
-            ((Map<String, Object>) invocation.getArgument(0)).put("memberId", 11L);
-            return null;
-        }).when(memberMapper).insert(org.mockito.ArgumentMatchers.any());
-        stubTokenGeneration("11");
-
-        service.kakaoLogin("authorization-code");
-
-        verify(memberMapper).insert(org.mockito.ArgumentMatchers.argThat(member ->
-                "KAKAO".equals(member.get("provider")) && "kakao-id".equals(member.get("providerId"))));
-        verify(walletMapper).insert(org.mockito.ArgumentMatchers.argThat(wallet ->
-                "11".equals(wallet.get("memberId")) && "MAIN".equals(wallet.get("walletType"))));
-        verify(jwtUtil).generateAccessToken("11", "USER");
-        verify(jwtUtil).generateRefreshToken("11");
-    }
-
-    @Test
-    void blankKakaoEmailUsesSyntheticEmailAndNeverUsesBlankIdentity() {
-        stubKakaoProfile("   ");
-        when(memberMapper.findActiveKakaoByIdentity(null, "kakao-id")).thenReturn(null);
-        when(memberMapper.existsInactiveByKakaoIdentity(null, "kakao-id")).thenReturn(false);
-        doAnswer(invocation -> {
-            ((Map<String, Object>) invocation.getArgument(0)).put("memberId", 11L);
-            return null;
-        }).when(memberMapper).insert(org.mockito.ArgumentMatchers.any());
-        stubTokenGeneration("11");
-
-        service.kakaoLogin("authorization-code");
-
-        verify(memberMapper).insert(org.mockito.ArgumentMatchers.argThat(member ->
-                "kakao-id@kakao.user".equals(member.get("email"))));
-        verify(memberMapper, never()).findActiveKakaoByIdentity("   ", "kakao-id");
-        verify(memberMapper, never()).existsInactiveByKakaoIdentity("   ", "kakao-id");
-    }
-
-    @Test
-    void emptyKakaoEmailAlsoUsesSyntheticEmail() {
-        stubKakaoProfile("");
-        when(memberMapper.findActiveKakaoByIdentity(null, "kakao-id")).thenReturn(null);
-        when(memberMapper.existsInactiveByKakaoIdentity(null, "kakao-id")).thenReturn(false);
-        doAnswer(invocation -> {
-            ((Map<String, Object>) invocation.getArgument(0)).put("memberId", 11L);
-            return null;
-        }).when(memberMapper).insert(org.mockito.ArgumentMatchers.any());
-        stubTokenGeneration("11");
-
-        service.kakaoLogin("authorization-code");
-
-        verify(memberMapper).insert(org.mockito.ArgumentMatchers.argThat(member ->
-                "kakao-id@kakao.user".equals(member.get("email"))));
-    }
-
-    @Test
-    void inactiveLocalEmailIntentionallyBlocksNewKakaoAccountForRecoveryPolicy() {
-        stubKakaoProfile("member@example.com");
-        when(memberMapper.findActiveKakaoByIdentity("member@example.com", "kakao-id"))
-                .thenReturn(null);
-        // Mapper의 email arm은 provider와 무관하므로 비활성 LOCAL도 true를 반환한다.
-        when(memberMapper.existsInactiveByKakaoIdentity("member@example.com", "kakao-id"))
-                .thenReturn(true);
-
-        assertThrows(BusinessException.class, () -> service.kakaoLogin("authorization-code"));
-
-        verifyKakaoAuthenticationWasNotCreated();
-    }
-
-    @Test
-    void kakaoEmailIsTrimmedBeforeIdentityLookupAndStorage() {
-        stubKakaoProfile("  member@example.com  ");
-        when(memberMapper.findActiveKakaoByIdentity("member@example.com", "kakao-id")).thenReturn(null);
-        when(memberMapper.existsInactiveByKakaoIdentity("member@example.com", "kakao-id")).thenReturn(false);
-        when(memberMapper.existsActiveByEmail("member@example.com")).thenReturn(false);
-        doAnswer(invocation -> {
-            ((Map<String, Object>) invocation.getArgument(0)).put("memberId", 11L);
-            return null;
-        }).when(memberMapper).insert(org.mockito.ArgumentMatchers.any());
-        stubTokenGeneration("11");
-
-        service.kakaoLogin("authorization-code");
-
-        verify(memberMapper).insert(org.mockito.ArgumentMatchers.argThat(member ->
-                "member@example.com".equals(member.get("email"))));
     }
 
     @Test
@@ -367,18 +319,11 @@ class AuthServiceImplInactiveMemberTest {
                 org.mockito.ArgumentMatchers.any(TimeUnit.class));
     }
 
-    private void stubKakaoProfile(String email) {
+    private void stubKakaoUserInfo(String email, String name) {
         when(kakaoAuthClient.getAccessToken("authorization-code"))
-                .thenReturn(Map.of("access_token", "kakao-access-token"));
-        Map<String, Object> kakaoAccount = new HashMap<>();
-        if (email != null) {
-            kakaoAccount.put("email", email);
-        }
-        kakaoAccount.put("profile", Map.of("nickname", "nickname"));
-        Map<String, Object> profile = new HashMap<>();
-        profile.put("id", "kakao-id");
-        profile.put("kakao_account", kakaoAccount);
-        when(kakaoAuthClient.getUserProfile("kakao-access-token")).thenReturn(profile);
+                .thenReturn("kakao-access-token");
+        when(kakaoAuthClient.getUserInfo("kakao-access-token"))
+                .thenReturn(new KakaoUserInfo("kakao-id", email, name));
     }
 
     private void stubTokenGeneration(String memberId) {
@@ -389,10 +334,13 @@ class AuthServiceImplInactiveMemberTest {
     private void verifyKakaoAuthenticationWasNotCreated() {
         verify(memberMapper, never()).insert(org.mockito.ArgumentMatchers.any());
         verify(walletMapper, never()).insert(org.mockito.ArgumentMatchers.any());
+        verify(notificationSettingMapper, never()).insert(org.mockito.ArgumentMatchers.any());
         verify(jwtUtil, never()).generateAccessToken(
                 org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyString());
         verify(jwtUtil, never()).generateRefreshToken(org.mockito.ArgumentMatchers.anyString());
-        verify(redisTemplate, never()).opsForValue();
+        verify(authCredentialStore, never()).storeRefresh(
+                org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyString());
+        verify(kakaoRegistrationStore, never()).create(org.mockito.ArgumentMatchers.any());
     }
 
     private Map<String, Object> member(int active) {
