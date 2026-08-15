@@ -7,7 +7,12 @@ import lombok.Getter;
 @Builder
 public class SimulationAssumptions {
     // annualClaimCount(연 진료 횟수)는 출처가 확정되지 않아 제거했다.
-    // TODO(S2): worker-2가 출처를 확정하면 Decision 5 분기에 맞춰 다시 노출한다.
+    //
+    // 이슈 #178에서 확보 불가로 종결됐다 — 펫보험 지급건수·건당 지급보험금은 공개
+    // 집계가 없고(보유계약건수·원수보험료까지만 공개), 동물병원 진료비 현황조사도
+    // 항목별 단가만 제공한다. 따라서 이 필드는 노출하지 않는 것이 정확한 상태다.
+    // 출처가 생기면 InsuranceSimulationServiceImpl의 CLAIM_COUNT_SOURCE_CONFIRMED와
+    // 함께 되살릴 것.
     private long annualExpectedVetCostKrw;
     private String assumptionSource;
     /**

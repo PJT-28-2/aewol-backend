@@ -10,6 +10,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.aewol.common.exception.BusinessException;
+import com.aewol.domain.insurance.dto.RecommendedProductResponse;
 import com.aewol.domain.insurance.dto.SimulationRequest;
 import com.aewol.domain.insurance.dto.SimulationResponse;
 import com.aewol.domain.insurance.mapper.InsuranceMapper;
@@ -92,6 +93,11 @@ class InsuranceSimulationServiceImplTest {
         return tier;
     }
 
+    /**
+     * ⚠️ 기대값 갱신 (이슈 #178): 예상 연 의료비 상수가 513,500 → 444,000으로 바뀌면서
+     * 보장금 계열 수치가 전부 바뀌었다. 누적보험료(21,541 × 12 × n)는 의료비와 무관하므로
+     * 그대로다. Notion API 명세의 예시 수치도 함께 갱신할 것.
+     */
     @Test
     @DisplayName("Notion 명세 예시 수치대로 손익분기 시나리오(1/5/10년)를 계산한다 — 견적 기준 티어에서 환급률을 읽는다")
     void should_calculateBreakEvenScenarios_matchingSpecExample() {
@@ -109,14 +115,16 @@ class InsuranceSimulationServiceImplTest {
         assertEquals(50, recommended.getReimbursementRatePct());
         assertEquals("CONFIRMED_OWN_COVERAGE_NAME", recommended.getReimbursementConfidence());
         var breakEvenScenarios = recommended.getBreakEvenScenarios();
+        // 누적보험료 = 21,541 × 12 × n (의료비 상수와 무관 — 변경 전과 동일)
+        // 예상보장금 = 444,000 × 50% × n = 222,000 × n
         assertEquals(258492L, breakEvenScenarios.get(0).getCumulativePremiumKrw());
-        assertEquals(256750L, breakEvenScenarios.get(0).getExpectedReimbursementKrw());
-        assertEquals(-1742L, breakEvenScenarios.get(0).getDifferenceKrw());
+        assertEquals(222000L, breakEvenScenarios.get(0).getExpectedReimbursementKrw());
+        assertEquals(-36492L, breakEvenScenarios.get(0).getDifferenceKrw());
         assertEquals(Boolean.FALSE, breakEvenScenarios.get(0).getIsFavorable());
         assertEquals(1292460L, breakEvenScenarios.get(1).getCumulativePremiumKrw());
-        assertEquals(1283750L, breakEvenScenarios.get(1).getExpectedReimbursementKrw());
+        assertEquals(1110000L, breakEvenScenarios.get(1).getExpectedReimbursementKrw());
         assertEquals(2584920L, breakEvenScenarios.get(2).getCumulativePremiumKrw());
-        assertEquals(2567500L, breakEvenScenarios.get(2).getExpectedReimbursementKrw());
+        assertEquals(2220000L, breakEvenScenarios.get(2).getExpectedReimbursementKrw());
     }
 
     @Test
@@ -651,8 +659,11 @@ class InsuranceSimulationServiceImplTest {
 
         SimulationResponse response = service.simulate(MEMBER_ID, request("3", List.of("NONE")));
 
+        // 출처는 농림축산식품부 국가승인통계다 (이슈 #178). 직전 KB금융경영연구소 리포트는
+        // 가구 평균을 마리당으로 오용한 값이었다.
         String source = response.getAssumptions().getAssumptionSource();
-        assertTrue(source.contains("KB금융경영연구소"), source);
+        assertTrue(source.contains("농림축산식품부"), source);
+        assertTrue(source.contains("마리당"), source);
         assertEquals(Boolean.FALSE, response.getAssumptions().getIsUserAdjusted());
 
         @SuppressWarnings("unchecked")
@@ -689,6 +700,138 @@ class InsuranceSimulationServiceImplTest {
         assertEquals(250_000L, recommended.getBreakEvenScenarios().get(0).getExpectedReimbursementKrw());
         // 계산에 반영하지 않았다는 사실이 화면 고지용 플래그와도 일치해야 한다.
         assertEquals(Boolean.FALSE, recommended.getDeductibleApplied());
+    }
+
+    @Test
+    @DisplayName("REGULATORY_BOUND 상품은 손익분기가 계산돼도 verdict 판정 분모에서 제외된다")
+    void should_excludeRegulatoryBound_fromVerdictBasis() {
+        service = new InsuranceSimulationServiceImpl(insuranceMapper, petMapper);
+        when(petMapper.findByIdAndMemberId("3", MEMBER_ID)).thenReturn(pet("CAT", 3));
+        // 1L: 확인값 50%, 비쌈 → 5년 불리 / 2L·3L: 규제 상한 70%, 저렴 → 5년 유리
+        when(insuranceMapper.findProductsBySpecies("CAT")).thenReturn(List.of(
+                product(1L, new BigDecimal("100000"), 0, 80),
+                product(2L, new BigDecimal("100"), 0, 80),
+                product(3L, new BigDecimal("100"), 0, 80)));
+        when(insuranceMapper.findReferenceTiersByProductIds(List.of(1L, 2L, 3L))).thenReturn(List.of(
+                referenceTier(1L, 50, "CONFIRMED_OWN_COVERAGE_NAME"),
+                referenceTier(2L, 70, "REGULATORY_BOUND"),
+                referenceTier(3L, 70, "REGULATORY_BOUND")));
+
+        SimulationResponse response = service.simulate(MEMBER_ID, request("3", List.of("NONE")));
+
+        // 규제 상한 2건을 분모에 넣으면 유리 2/3로 FAVORABLE이 되지만,
+        // 70%는 확인값이 아니라 "아무리 유리해도 이 이상은 아니다"라는 상한이다.
+        // 확인값 1건만으로 판정하므로 유리 0/1 → UNFAVORABLE이어야 한다.
+        assertEquals("UNFAVORABLE", response.getInsuranceAdvice().getVerdict());
+        // 제외는 판정에서만이다 — 상품 자체는 추천 목록에 남고 손익분기도 계산된다.
+        assertEquals(3, response.getRecommendedProducts().size());
+        assertTrue(response.getRecommendedProducts().stream()
+                .allMatch(RecommendedProductResponse::isBreakEvenAvailable));
+    }
+
+    @Test
+    @DisplayName("계산 가능 상품이 전부 REGULATORY_BOUND면 유불리를 단정하지 않고 NEUTRAL 안내를 반환한다")
+    void should_returnNeutral_whenAllCalculableProductsAreRegulatoryBound() {
+        service = new InsuranceSimulationServiceImpl(insuranceMapper, petMapper);
+        when(petMapper.findByIdAndMemberId("3", MEMBER_ID)).thenReturn(pet("CAT", 3));
+        when(insuranceMapper.findProductsBySpecies("CAT")).thenReturn(List.of(
+                product(1L, new BigDecimal("100"), 0, 80)));
+        when(insuranceMapper.findReferenceTiersByProductIds(List.of(1L))).thenReturn(List.of(
+                referenceTier(1L, 70, "REGULATORY_BOUND")));
+
+        SimulationResponse response = service.simulate(MEMBER_ID, request("3", List.of("NONE")));
+
+        // 보험료 100원 vs 상한 기준 보장금이라 산술적으로는 압도적으로 유리하지만,
+        // 근거가 상한뿐이므로 FAVORABLE로 단정하지 않는다.
+        assertEquals("NEUTRAL", response.getInsuranceAdvice().getVerdict());
+        // 손익분기 표는 그려지므로 "비교하지 못했어요"가 아니라 "상한으로만 계산했어요"다.
+        assertTrue(response.getInsuranceAdvice().getMessage().contains("규제 상한으로만 계산했어요"),
+                response.getInsuranceAdvice().getMessage());
+    }
+
+    @Test
+    @DisplayName("대표 상품 선정에서도 REGULATORY_BOUND는 제외된다 (더 저렴해도)")
+    void should_excludeRegulatoryBound_fromRepresentativeProduct() {
+        service = new InsuranceSimulationServiceImpl(insuranceMapper, petMapper);
+        when(petMapper.findByIdAndMemberId("3", MEMBER_ID)).thenReturn(pet("CAT", 3));
+        // 2L이 전체 최저가지만 규제 상한이므로 대표가 되면 안 된다
+        when(insuranceMapper.findProductsBySpecies("CAT")).thenReturn(List.of(
+                product(1L, new BigDecimal("500"), 0, 80),
+                product(2L, new BigDecimal("100"), 0, 80)));
+        when(insuranceMapper.findReferenceTiersByProductIds(List.of(1L, 2L))).thenReturn(List.of(
+                referenceTier(1L, 50, "CONFIRMED_OWN_COVERAGE_NAME"),
+                referenceTier(2L, 70, "REGULATORY_BOUND")));
+
+        service.simulate(MEMBER_ID, request("3", List.of("NONE")));
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Map<String, Object>> captor = ArgumentCaptor.forClass(Map.class);
+        verify(insuranceMapper).insertSimulation(captor.capture());
+        // 대표 상품은 insurance_simulation 이력에 남으므로, 확인되지 않은 환급률로
+        // 뽑힌 상품이 기록되면 이력 자체가 오해를 남긴다.
+        assertEquals(1L, captor.getValue().get("representativeProductId"));
+    }
+
+    @Test
+    @DisplayName("확인된 상품이 더 비싸도 규제 상한 상품에 밀려 추천 목록에서 잘려나가지 않는다")
+    void should_keepConfirmedProduct_when_cheaperRegulatoryBoundProductsExceedLimit() {
+        service = new InsuranceSimulationServiceImpl(insuranceMapper, petMapper);
+        when(petMapper.findByIdAndMemberId("3", MEMBER_ID)).thenReturn(pet("CAT", 3));
+        // 1L만 확인값이고 전체 최고가다. 나머지 5건은 규제 상한이면서 모두 더 싸다.
+        // 정렬 1차 키가 "rate가 NULL인가"뿐이면 6건 전부 같은 값이 되어 보험료순으로
+        // 붕괴하고, limit(5)에서 가장 비싼 1L이 잘려 판정 근거가 0건이 된다.
+        when(insuranceMapper.findProductsBySpecies("CAT")).thenReturn(List.of(
+                product(1L, new BigDecimal("100000"), 0, 80),
+                product(2L, new BigDecimal("100"), 0, 80),
+                product(3L, new BigDecimal("200"), 0, 80),
+                product(4L, new BigDecimal("300"), 0, 80),
+                product(5L, new BigDecimal("400"), 0, 80),
+                product(6L, new BigDecimal("500"), 0, 80)));
+        when(insuranceMapper.findReferenceTiersByProductIds(List.of(1L, 2L, 3L, 4L, 5L, 6L))).thenReturn(List.of(
+                referenceTier(1L, 50, "CONFIRMED_OWN_COVERAGE_NAME"),
+                referenceTier(2L, 70, "REGULATORY_BOUND"),
+                referenceTier(3L, 70, "REGULATORY_BOUND"),
+                referenceTier(4L, 70, "REGULATORY_BOUND"),
+                referenceTier(5L, 70, "REGULATORY_BOUND"),
+                referenceTier(6L, 70, "REGULATORY_BOUND")));
+
+        SimulationResponse response = service.simulate(MEMBER_ID, request("3", List.of("NONE")));
+
+        assertEquals(5, response.getRecommendedProducts().size());
+        // 근거가 강한 순 → 확인값 1건이 먼저, 그 뒤에 규제 상한이 보험료순으로 붙는다.
+        assertEquals("1", response.getRecommendedProducts().get(0).getProductId());
+        assertEquals("2", response.getRecommendedProducts().get(1).getProductId());
+        // 목록에 남았으므로 판정 근거도 살아 있다 — 확인값 1건 기준 5년 불리.
+        assertEquals("UNFAVORABLE", response.getInsuranceAdvice().getVerdict());
+    }
+
+    @Test
+    @DisplayName("전부 규제 상한일 때와 환급률 자체가 없을 때의 NEUTRAL 안내 문구를 구분한다")
+    void should_useDistinctMessage_when_calculableButAllRegulatoryBound() {
+        service = new InsuranceSimulationServiceImpl(insuranceMapper, petMapper);
+        when(petMapper.findByIdAndMemberId("3", MEMBER_ID)).thenReturn(pet("CAT", 3));
+
+        // (a) 계산은 되지만 근거가 상한뿐 → 카드에 손익분기 표가 그려진다
+        when(insuranceMapper.findProductsBySpecies("CAT")).thenReturn(List.of(
+                product(1L, new BigDecimal("100"), 0, 80)));
+        when(insuranceMapper.findReferenceTiersByProductIds(List.of(1L))).thenReturn(List.of(
+                referenceTier(1L, 70, "REGULATORY_BOUND")));
+        SimulationResponse boundOnly = service.simulate(MEMBER_ID, request("3", List.of("NONE")));
+
+        // (b) 환급률이 아예 없음 → 카드에 표가 없다
+        when(insuranceMapper.findReferenceTiersByProductIds(List.of(1L))).thenReturn(List.of());
+        SimulationResponse noRate = service.simulate(MEMBER_ID, request("3", List.of("NONE")));
+
+        assertEquals("NEUTRAL", boundOnly.getInsuranceAdvice().getVerdict());
+        assertEquals("NEUTRAL", noRate.getInsuranceAdvice().getVerdict());
+        // 같은 NEUTRAL이라도 화면 모양이 다르므로 문구가 같으면 안 된다.
+        // (a)에 "비교하지 못했어요"를 쓰면 바로 아래 손익분기 표와 어긋난다.
+        assertTrue(boundOnly.getInsuranceAdvice().getMessage().contains("규제 상한으로만 계산했어요"),
+                boundOnly.getInsuranceAdvice().getMessage());
+        assertTrue(noRate.getInsuranceAdvice().getMessage().contains("비교하지 못했어요"),
+                noRate.getInsuranceAdvice().getMessage());
+        assertTrue(boundOnly.getRecommendedProducts().get(0).isBreakEvenAvailable());
+        assertFalse(noRate.getRecommendedProducts().get(0).isBreakEvenAvailable());
     }
 
     @Test
