@@ -40,6 +40,9 @@ import org.springframework.web.multipart.MultipartFile;
 
 @ExtendWith(MockitoExtension.class)
 class GroupPurchaseServiceImplTest {
+    private static final LocalDateTime FUTURE_DEADLINE = LocalDateTime.now().plusYears(1).withNano(0);
+    private static final LocalDate FUTURE_DELIVERY_DATE = FUTURE_DEADLINE.toLocalDate().plusDays(5);
+
 
     @Mock GroupPurchaseMapper groupPurchaseMapper;
     @Mock FileUtil fileUtil;
@@ -124,17 +127,17 @@ class GroupPurchaseServiceImplTest {
         assertEquals(10, result.getTargetQuantity());
         assertEquals(0, result.getCurrentQuantity());
         assertEquals("OPEN", result.getStatus());
-        assertEquals(LocalDate.of(2026, 8, 20), result.getDeliveryDate());
+        assertEquals(FUTURE_DELIVERY_DATE, result.getDeliveryDate());
         assertEquals(5, result.getDeliveryEstimateDays());
-        assertEquals(LocalDateTime.of(2026, 8, 15, 0, 0), result.getDeadline());
+        assertEquals(FUTURE_DEADLINE, result.getDeadline());
 
         ArgumentCaptor<Map<String, Object>> captor = ArgumentCaptor.forClass(Map.class);
         verify(groupPurchaseMapper).insert(captor.capture());
         assertEquals("member-1", captor.getValue().get("memberId"));
         assertEquals("사료 5kg", captor.getValue().get("productName"));
         assertEquals(10, captor.getValue().get("targetQuantity"));
-        // deliveryDate는 admin 입력값이 아니라 deadline(8/15) + deliveryEstimateDays(5일)로 계산된 잠정치여야 한다.
-        assertEquals(LocalDate.of(2026, 8, 20), captor.getValue().get("deliveryDate"));
+        // deliveryDate는 admin 입력값이 아니라 deadline + deliveryEstimateDays(5일)로 계산된 잠정치여야 한다.
+        assertEquals(FUTURE_DELIVERY_DATE, captor.getValue().get("deliveryDate"));
         assertEquals(5, captor.getValue().get("deliveryEstimateDays"));
     }
 
@@ -177,10 +180,10 @@ class GroupPurchaseServiceImplTest {
         assertEquals(new BigDecimal("25000"), result.getGroupPrice());
         assertEquals("택배배송", result.getDeliveryMethod());
         assertEquals(new BigDecimal("3000"), result.getDeliveryFee());
-        assertEquals(LocalDate.of(2026, 8, 20), result.getDeliveryDate());
+        assertEquals(FUTURE_DELIVERY_DATE, result.getDeliveryDate());
         assertEquals(10, result.getTargetQuantity());
         assertEquals(0, result.getCurrentQuantity());
-        assertEquals(LocalDateTime.of(2026, 8, 15, 0, 0), result.getDeadline());
+        assertEquals(FUTURE_DEADLINE, result.getDeadline());
         assertTrue(result.getIsParticipating());
     }
 
@@ -289,7 +292,7 @@ class GroupPurchaseServiceImplTest {
         assertEquals(10, result.getTargetQuantity());
         assertEquals(new BigDecimal("30000"), result.getUnitPrice());
         assertEquals(new BigDecimal("25000"), result.getGroupPrice());
-        assertEquals(LocalDate.of(2026, 8, 20), result.getDeliveryDate());
+        assertEquals(FUTURE_DELIVERY_DATE, result.getDeliveryDate());
         assertEquals(5, result.getDeliveryEstimateDays());
         assertNotNull(result.getParticipantInfo());
         assertEquals(10523L, result.getParticipantInfo().getParticipantId());
@@ -1438,7 +1441,7 @@ class GroupPurchaseServiceImplTest {
         ReflectionTestUtils.setField(request, "deliveryEstimateDays", 5);
         ReflectionTestUtils.setField(request, "description", "5kg 사료 공동구매");
         ReflectionTestUtils.setField(request, "targetQuantity", 10);
-        ReflectionTestUtils.setField(request, "deadline", LocalDateTime.of(2026, 8, 15, 0, 0));
+        ReflectionTestUtils.setField(request, "deadline", FUTURE_DEADLINE);
         return request;
     }
 
@@ -1453,13 +1456,13 @@ class GroupPurchaseServiceImplTest {
         row.put("group_price", new BigDecimal("25000"));
         row.put("delivery_method", "택배배송");
         row.put("delivery_fee", new BigDecimal("3000"));
-        row.put("delivery_date", LocalDate.of(2026, 8, 20));
+        row.put("delivery_date", FUTURE_DELIVERY_DATE);
         row.put("delivery_estimate_days", 5);
         row.put("description", "5kg 사료 공동구매");
         row.put("target_quantity", 10);
         row.put("current_quantity", 0);
         row.put("status", "OPEN");
-        row.put("deadline", LocalDateTime.of(2026, 8, 15, 0, 0));
+        row.put("deadline", FUTURE_DEADLINE);
         row.put("created_at", LocalDateTime.of(2026, 8, 6, 12, 0));
         return row;
     }
