@@ -63,6 +63,7 @@ class AuthServiceImplSignupTest {
     @Mock EmailService emailService;
     @Mock KakaoAuthClient kakaoAuthClient;
     @Mock AuthCredentialStore authCredentialStore;
+    @Mock KakaoRegistrationStore kakaoRegistrationStore;
 
     private AuthServiceImpl authService;
 
@@ -70,7 +71,7 @@ class AuthServiceImplSignupTest {
     void setUp() {
         authService = new AuthServiceImpl(memberMapper, walletMapper, notificationSettingMapper,
                 jwtUtil, passwordEncoder, redisTemplate, redisRateLimiter, emailService,
-                kakaoAuthClient, authCredentialStore);
+                kakaoAuthClient, authCredentialStore, kakaoRegistrationStore);
         when(redisTemplate.opsForValue()).thenReturn(valueOperations);
         TransactionSynchronizationManager.initSynchronization();
     }

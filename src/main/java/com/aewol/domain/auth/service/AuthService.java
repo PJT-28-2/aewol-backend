@@ -1,6 +1,7 @@
 package com.aewol.domain.auth.service;
 
 import com.aewol.domain.auth.dto.LoginRequest;
+import com.aewol.domain.auth.dto.KakaoOAuthResponse;
 import com.aewol.domain.auth.dto.PasswordResetEmailRequest;
 import com.aewol.domain.auth.dto.PasswordResetRequest;
 import com.aewol.domain.auth.dto.PasswordResetVerifyRequest;
@@ -17,7 +18,7 @@ public interface AuthService {
     void verifySignupEmailCode(SignupEmailVerificationRequest request);
     SignupResponse signup(SignupRequest request);
     TokenResponse login(LoginRequest request);
-    TokenResponse kakaoLogin(String code);
+    KakaoOAuthResponse kakaoLogin(String code);
     TokenResponse refresh(String refreshToken);
     void logout(String memberId);
     SignupEmailCodeResponse sendPasswordResetVerificationCode(PasswordResetEmailRequest request);

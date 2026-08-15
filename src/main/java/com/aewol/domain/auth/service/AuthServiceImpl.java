@@ -5,6 +5,8 @@ import com.aewol.common.util.JwtUtil;
 import com.aewol.common.util.PhoneNumberUtil;
 import com.aewol.common.util.RedisRateLimiter;
 import com.aewol.domain.auth.dto.LoginRequest;
+import com.aewol.domain.auth.dto.KakaoOAuthResponse;
+import com.aewol.domain.auth.dto.KakaoRegistrationSession;
 import com.aewol.domain.auth.dto.PasswordResetEmailRequest;
 import com.aewol.domain.auth.dto.PasswordResetRequest;
 import com.aewol.domain.auth.dto.PasswordResetVerifyRequest;
@@ -19,6 +21,7 @@ import com.aewol.domain.member.mapper.MemberMapper;
 import com.aewol.domain.notification.mapper.NotificationSettingMapper;
 import com.aewol.domain.wallet.mapper.WalletMapper;
 import com.aewol.external.kakao.KakaoAuthClient;
+import com.aewol.external.kakao.KakaoUserInfo;
 import com.aewol.external.smtp.EmailService;
 import io.jsonwebtoken.Claims;
 import lombok.RequiredArgsConstructor;
@@ -142,6 +145,7 @@ public class AuthServiceImpl implements AuthService {
     private final EmailService emailService;
     private final KakaoAuthClient kakaoAuthClient;
     private final AuthCredentialStore authCredentialStore;
+    private final KakaoRegistrationStore kakaoRegistrationStore;
 
     @Override
     public SignupEmailCodeResponse sendSignupVerificationCode(SignupEmailCodeRequest request) {
@@ -353,55 +357,29 @@ public class AuthServiceImpl implements AuthService {
     }
 
     @Override
-    @Transactional
-    public TokenResponse kakaoLogin(String code) {
-        Map<String, Object> tokenInfo = kakaoAuthClient.getAccessToken(code);
-        String kakaoAccessToken = (String) tokenInfo.get("access_token");
-        Map<String, Object> profile = kakaoAuthClient.getUserProfile(kakaoAccessToken);
+    public KakaoOAuthResponse kakaoLogin(String code) {
+        String kakaoAccessToken = kakaoAuthClient.getAccessToken(code);
+        KakaoUserInfo userInfo = kakaoAuthClient.getUserInfo(kakaoAccessToken);
 
-        String kakaoId = String.valueOf(profile.get("id"));
-        Map<String, Object> kakaoAccount = (Map<String, Object>) profile.get("kakao_account");
-        String email = normalizeKakaoEmail(
-                kakaoAccount != null ? (String) kakaoAccount.get("email") : null);
-        Map<String, Object> profileInfo = kakaoAccount != null ? (Map<String, Object>) kakaoAccount.get("profile") : null;
-        String nickname = profileInfo != null ? (String) profileInfo.get("nickname") : "카카오유저";
-
-        Map<String, Object> existingMember = memberMapper.findActiveKakaoByIdentity(email, kakaoId);
-
-        String memberId;
-        if (existingMember == null) {
-            // 탈퇴한 동일 카카오 계정이나 이메일이 있으면 토큰 발급과 신규 계정 생성을 모두 막는다.
-            if (memberMapper.existsInactiveByKakaoIdentity(email, kakaoId)
-                    || (email != null && memberMapper.existsActiveByEmail(email))) {
-                throw BusinessException.unauthorized("카카오 로그인에 실패했습니다.");
-            }
-            Map<String, Object> member = new HashMap<>();
-            member.put("email", email != null ? email : kakaoId + "@kakao.user");
-            member.put("password", null);
-            member.put("name", nickname);
-            member.put("phone", null);
-            member.put("provider", "KAKAO");
-            member.put("providerId", kakaoId);
-            member.put("emailVerified", "Y");
-            member.put("role", "USER");
-            member.put("profileImg", null);
-            // 주소는 NOT NULL — 카카오 가입 시점엔 없으므로 빈 값으로 두고 프로필 수정에서 보완한다
-            member.put("zipCode", "");
-            member.put("address", "");
-            member.put("addressDetail", null);
-            memberMapper.insert(member); // member_id는 AUTO_INCREMENT 생성
-            memberId = String.valueOf(member.get("memberId"));
-
-            Map<String, Object> wallet = new HashMap<>();
-            wallet.put("memberId", memberId);
-            wallet.put("walletType", "MAIN");
-            wallet.put("balance", 0);
-            walletMapper.insert(wallet);
-        } else {
-            memberId = String.valueOf(existingMember.get("member_id"));
+        Map<String, Object> existingMember =
+                memberMapper.findActiveKakaoByProviderId(userInfo.getProviderId());
+        if (existingMember != null) {
+            String memberId = String.valueOf(existingMember.get("member_id"));
+            String role = (String) existingMember.get("role");
+            return KakaoOAuthResponse.loginComplete(generateTokens(memberId, role));
         }
 
-        return generateTokens(memberId, "USER");
+        Map<String, Object> activeEmailMember = memberMapper.findActiveByEmail(userInfo.getEmail());
+        if (activeEmailMember != null && "LOCAL".equals(activeEmailMember.get("provider"))) {
+            throw BusinessException.conflict("이미 가입된 이메일입니다.");
+        }
+        if (memberMapper.existsInactiveKakaoByProviderId(userInfo.getProviderId())) {
+            throw BusinessException.unauthorized("카카오 로그인에 실패했습니다.");
+        }
+
+        String registrationToken = kakaoRegistrationStore.create(new KakaoRegistrationSession(
+                userInfo.getProviderId(), userInfo.getEmail(), userInfo.getName()));
+        return KakaoOAuthResponse.additionalInfoRequired(registrationToken);
     }
 
     @Override
@@ -618,14 +596,6 @@ public class AuthServiceImpl implements AuthService {
                 .accessToken(accessToken)
                 .refreshToken(refreshToken)
                 .build();
-    }
-
-    private String normalizeKakaoEmail(String email) {
-        if (email == null) {
-            return null;
-        }
-        String normalized = email.trim();
-        return normalized.isEmpty() ? null : normalized;
     }
 
     private String generateVerificationCode() {
