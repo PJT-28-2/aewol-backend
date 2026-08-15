@@ -3,6 +3,7 @@ package com.aewol.domain.auth.controller;
 import com.aewol.common.exception.BusinessException;
 import com.aewol.common.response.ApiResponse;
 import com.aewol.domain.auth.dto.LoginRequest;
+import com.aewol.domain.auth.dto.KakaoOAuthResponse;
 import com.aewol.domain.auth.dto.AccountFindResultResponse;
 import com.aewol.domain.auth.dto.AccountFindSendCodeRequest;
 import com.aewol.domain.auth.dto.AccountFindSendCodeResponse;
@@ -90,7 +91,7 @@ public class AuthController {
 
     @Operation(summary = "카카오 소셜 로그인")
     @PostMapping("/oauth/kakao")
-    public ResponseEntity<ApiResponse<TokenResponse>> kakaoLogin(@RequestParam String code) {
+    public ResponseEntity<ApiResponse<KakaoOAuthResponse>> kakaoLogin(@RequestParam String code) {
         return ResponseEntity.ok(ApiResponse.success(authService.kakaoLogin(code)));
     }
 

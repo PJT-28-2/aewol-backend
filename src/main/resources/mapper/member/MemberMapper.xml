@@ -27,13 +27,12 @@
         LIMIT 1
     </select>
 
-    <select id="findActiveKakaoByIdentity" resultType="map">
+    <select id="findActiveKakaoByProviderId" resultType="map">
         SELECT *
         FROM member
         WHERE provider = 'KAKAO'
           AND is_active = 1
-          AND (provider_id = #{providerId}
-               OR (#{email} IS NOT NULL AND TRIM(#{email}) &lt;&gt; '' AND email = #{email}))
+          AND provider_id = #{providerId}
         ORDER BY member_id DESC
         LIMIT 1
     </select>
@@ -83,12 +82,12 @@
           AND is_active = 1
     </select>
 
-    <select id="existsInactiveByKakaoIdentity" resultType="boolean">
+    <select id="existsInactiveKakaoByProviderId" resultType="boolean">
         SELECT COUNT(*) > 0
         FROM member
-        WHERE is_active = 0
-          AND (provider_id = #{providerId}
-               OR (#{email} IS NOT NULL AND TRIM(#{email}) &lt;&gt; '' AND email = #{email}))
+        WHERE provider = 'KAKAO'
+          AND is_active = 0
+          AND provider_id = #{providerId}
     </select>
 
     <!-- 동시 복구 요청이 같은 회원을 중복 활성화하지 못하도록 복구 대상 행을 잠근다. -->
