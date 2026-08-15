@@ -773,6 +773,68 @@ class InsuranceSimulationServiceImplTest {
     }
 
     @Test
+    @DisplayName("확인된 상품이 더 비싸도 규제 상한 상품에 밀려 추천 목록에서 잘려나가지 않는다")
+    void should_keepConfirmedProduct_when_cheaperRegulatoryBoundProductsExceedLimit() {
+        service = new InsuranceSimulationServiceImpl(insuranceMapper, petMapper);
+        when(petMapper.findByIdAndMemberId("3", MEMBER_ID)).thenReturn(pet("CAT", 3));
+        // 1L만 확인값이고 전체 최고가다. 나머지 5건은 규제 상한이면서 모두 더 싸다.
+        // 정렬 1차 키가 "rate가 NULL인가"뿐이면 6건 전부 같은 값이 되어 보험료순으로
+        // 붕괴하고, limit(5)에서 가장 비싼 1L이 잘려 판정 근거가 0건이 된다.
+        when(insuranceMapper.findProductsBySpecies("CAT")).thenReturn(List.of(
+                product(1L, new BigDecimal("100000"), 0, 80),
+                product(2L, new BigDecimal("100"), 0, 80),
+                product(3L, new BigDecimal("200"), 0, 80),
+                product(4L, new BigDecimal("300"), 0, 80),
+                product(5L, new BigDecimal("400"), 0, 80),
+                product(6L, new BigDecimal("500"), 0, 80)));
+        when(insuranceMapper.findReferenceTiersByProductIds(List.of(1L, 2L, 3L, 4L, 5L, 6L))).thenReturn(List.of(
+                referenceTier(1L, 50, "CONFIRMED_OWN_COVERAGE_NAME"),
+                referenceTier(2L, 70, "REGULATORY_BOUND"),
+                referenceTier(3L, 70, "REGULATORY_BOUND"),
+                referenceTier(4L, 70, "REGULATORY_BOUND"),
+                referenceTier(5L, 70, "REGULATORY_BOUND"),
+                referenceTier(6L, 70, "REGULATORY_BOUND")));
+
+        SimulationResponse response = service.simulate(MEMBER_ID, request("3", List.of("NONE")));
+
+        assertEquals(5, response.getRecommendedProducts().size());
+        // 근거가 강한 순 → 확인값 1건이 먼저, 그 뒤에 규제 상한이 보험료순으로 붙는다.
+        assertEquals("1", response.getRecommendedProducts().get(0).getProductId());
+        assertEquals("2", response.getRecommendedProducts().get(1).getProductId());
+        // 목록에 남았으므로 판정 근거도 살아 있다 — 확인값 1건 기준 5년 불리.
+        assertEquals("UNFAVORABLE", response.getInsuranceAdvice().getVerdict());
+    }
+
+    @Test
+    @DisplayName("전부 규제 상한일 때와 환급률 자체가 없을 때의 NEUTRAL 안내 문구를 구분한다")
+    void should_useDistinctMessage_when_calculableButAllRegulatoryBound() {
+        service = new InsuranceSimulationServiceImpl(insuranceMapper, petMapper);
+        when(petMapper.findByIdAndMemberId("3", MEMBER_ID)).thenReturn(pet("CAT", 3));
+
+        // (a) 계산은 되지만 근거가 상한뿐 → 카드에 손익분기 표가 그려진다
+        when(insuranceMapper.findProductsBySpecies("CAT")).thenReturn(List.of(
+                product(1L, new BigDecimal("100"), 0, 80)));
+        when(insuranceMapper.findReferenceTiersByProductIds(List.of(1L))).thenReturn(List.of(
+                referenceTier(1L, 70, "REGULATORY_BOUND")));
+        SimulationResponse boundOnly = service.simulate(MEMBER_ID, request("3", List.of("NONE")));
+
+        // (b) 환급률이 아예 없음 → 카드에 표가 없다
+        when(insuranceMapper.findReferenceTiersByProductIds(List.of(1L))).thenReturn(List.of());
+        SimulationResponse noRate = service.simulate(MEMBER_ID, request("3", List.of("NONE")));
+
+        assertEquals("NEUTRAL", boundOnly.getInsuranceAdvice().getVerdict());
+        assertEquals("NEUTRAL", noRate.getInsuranceAdvice().getVerdict());
+        // 같은 NEUTRAL이라도 화면 모양이 다르므로 문구가 같으면 안 된다.
+        // (a)에 "비교하지 못했어요"를 쓰면 바로 아래 손익분기 표와 어긋난다.
+        assertTrue(boundOnly.getInsuranceAdvice().getMessage().contains("규제 상한으로만 계산했어요"),
+                boundOnly.getInsuranceAdvice().getMessage());
+        assertTrue(noRate.getInsuranceAdvice().getMessage().contains("비교하지 못했어요"),
+                noRate.getInsuranceAdvice().getMessage());
+        assertTrue(boundOnly.getRecommendedProducts().get(0).isBreakEvenAvailable());
+        assertFalse(noRate.getRecommendedProducts().get(0).isBreakEvenAvailable());
+    }
+
+    @Test
     @DisplayName("견적 기준 티어가 중복된 상품이 있어도 시뮬레이션이 예외 없이 첫 행 기준으로 계산된다")
     void should_notFail_whenDuplicateReferenceTiersExist() {
         service = new InsuranceSimulationServiceImpl(insuranceMapper, petMapper);
