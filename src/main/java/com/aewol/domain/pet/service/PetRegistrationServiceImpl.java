@@ -130,7 +130,61 @@ public class PetRegistrationServiceImpl implements PetRegistrationService {
         return toResponse(registration);
     }
 
-    /** pet_registration 테이블 행(DB 네이티브 컬럼)을 응답으로 매핑한다. verify()/getDetail() 공용. */
+    @Override
+    @Transactional
+    public PetRegistrationResponse resync(String memberId, String petId, String docId) {
+        Map<String, Object> pet = petMapper.findById(petId);
+        if (pet == null) throw BusinessException.notFound("반려동물을 찾을 수 없습니다.");
+        if (!Objects.equals(memberId, String.valueOf(pet.get("member_id")))) {
+            throw BusinessException.forbidden("대표 보호자만 이 작업을 할 수 있습니다.");
+        }
+
+        Map<String, Object> document = petDocumentMapper.findByIdAndPetId(docId, petId);
+        if (document == null) {
+            throw BusinessException.notFound("문서를 찾을 수 없습니다.");
+        }
+        if (!REGISTRATION.equals(string(document.get("doc_type")))) {
+            throw new BusinessException("동물등록증만 재동기화할 수 있습니다.");
+        }
+
+        Map<String, Object> stored = petRegistrationMapper.findByPetIdAndDocId(petId, docId);
+        if (stored == null) {
+            throw BusinessException.notFound("동물등록정보를 찾을 수 없습니다.");
+        }
+        String storedRegNumber = trimToNull(string(stored.get("reg_number")));
+        if (storedRegNumber == null) {
+            throw new BusinessException("저장된 동물등록번호가 없습니다.");
+        }
+
+        Map<String, Object> external = apmsClient.verifyRegistration(storedRegNumber, null, null);
+        if (external == null) {
+            throw new BusinessException("일치하는 동물등록정보를 찾을 수 없습니다.");
+        }
+
+        Map<String, Object> registration = normalize(external, petId);
+        validateExternalResponse(registration);
+        if (!Objects.equals(storedRegNumber, registration.get("regNumber"))) {
+            throw new BusinessException(HttpStatus.BAD_GATEWAY,
+                    "동물등록정보 응답의 등록번호가 저장된 값과 일치하지 않습니다.");
+        }
+
+        registration.put("docId", docId);
+        try {
+            if (petRegistrationMapper.update(registration) != 1) {
+                throw BusinessException.notFound("동물등록정보를 찾을 수 없습니다.");
+            }
+        } catch (DuplicateKeyException e) {
+            throw BusinessException.conflict("이미 다른 반려동물에 사용 중인 동물등록번호입니다.");
+        }
+
+        Map<String, Object> saved = petRegistrationMapper.findByPetIdAndDocId(petId, docId);
+        if (saved == null) {
+            throw BusinessException.notFound("동물등록정보를 찾을 수 없습니다.");
+        }
+        return toResponse(saved);
+    }
+
+    /** pet_registration 테이블 행(DB 네이티브 컬럼)을 응답으로 매핑한다. */
     private PetRegistrationResponse toResponse(Map<String, Object> registration) {
         return PetRegistrationResponse.builder()
                 .docId(string(registration.get("doc_id")))

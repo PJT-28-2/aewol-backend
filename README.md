@@ -176,6 +176,7 @@ PR은 `feature/{기능명}` → `develop` → `main` 순서로 병합합니다.
 | 반려동물 | GET | `/api/pets` | 반려동물 목록 조회 |
 | 반려동물 | POST | `/api/pets` | 반려동물 등록 |
 | 반려동물 | GET | `/api/pets/{petId}` | 반려동물 상세 조회 |
+| 반려동물 | POST | `/api/pets/{petId}/documents/{docId}/resync` | 저장된 등록번호로 동물등록증 재동기화 |
 | 지갑 | GET | `/api/wallet` | 지갑 조회 (MAIN) |
 | 지갑 | POST | `/api/wallet/deposit` | 지갑 충전 |
 | 거래 | GET | `/api/transactions` | 거래 내역 조회 |

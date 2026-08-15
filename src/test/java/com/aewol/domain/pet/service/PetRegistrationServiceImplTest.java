@@ -212,8 +212,155 @@ class PetRegistrationServiceImplTest {
         verifyNoInteractions(petRegistrationMapper);
     }
 
+    @Test
+    void should_resyncRegistration_usingStoredRegistrationNumber() {
+        when(petMapper.findById("pet-1")).thenReturn(pet("member-1"));
+        when(petDocumentMapper.findByIdAndPetId("doc-1", "pet-1")).thenReturn(map(
+                "doc_id", "doc-1", "pet_id", "pet-1", "doc_type", "REGISTRATION",
+                "file_url", null, "issued_date", null));
+        Map<String, Object> stored = map(
+                "doc_id", "doc-1", "pet_id", "pet-1", "reg_number", "410000012345678",
+                "name", "몽이");
+        Map<String, Object> saved = map(
+                "doc_id", "doc-1", "pet_id", "pet-1", "reg_number", "410000012345678",
+                "name", "몽이", "breed", "말티즈", "gender", "MALE", "neutered", "Y",
+                "birth_date", "20220101", "apr_gbn_nm", "승인",
+                "last_synced_at", LocalDateTime.of(2026, 8, 15, 13, 20, 30));
+        when(petRegistrationMapper.findByPetIdAndDocId("pet-1", "doc-1"))
+                .thenReturn(stored, saved);
+        when(apmsClient.verifyRegistration("410000012345678", null, null))
+                .thenReturn(registration());
+        when(petRegistrationMapper.update(any())).thenReturn(1);
+
+        PetRegistrationResponse response = service.resync("member-1", "pet-1", "doc-1");
+
+        assertEquals("410000012345678", response.getRegNumber());
+        assertEquals("2026-08-15T13:20:30", response.getLastSyncedAt());
+        verify(apmsClient).verifyRegistration("410000012345678", null, null);
+        verify(petRegistrationMapper).update(argThat(row ->
+                "doc-1".equals(row.get("docId"))
+                        && "410000012345678".equals(row.get("regNumber"))));
+        // 재동기화 응답에 문서 발급일이 없더라도 기존 pet_document 메타데이터는 지우지 않는다.
+        verify(petDocumentMapper, never()).update(any());
+    }
+
+    @Test
+    void should_throwForbidden_when_nonOwnerResyncsRegistration() {
+        when(petMapper.findById("pet-1")).thenReturn(pet("owner-1"));
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.resync("member-2", "pet-1", "doc-1"));
+
+        assertEquals(HttpStatus.FORBIDDEN, exception.getStatus());
+        verifyNoInteractions(petDocumentMapper, petRegistrationMapper, apmsClient);
+    }
+
+    @Test
+    void should_throwNotFound_when_resyncDocumentDoesNotExist() {
+        when(petMapper.findById("pet-1")).thenReturn(pet("member-1"));
+        when(petDocumentMapper.findByIdAndPetId("doc-404", "pet-1")).thenReturn(null);
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.resync("member-1", "pet-1", "doc-404"));
+
+        assertEquals(HttpStatus.NOT_FOUND, exception.getStatus());
+        verifyNoInteractions(petRegistrationMapper, apmsClient);
+    }
+
+    @Test
+    void should_throwBadRequest_when_resyncDocumentIsNotRegistration() {
+        when(petMapper.findById("pet-1")).thenReturn(pet("member-1"));
+        when(petDocumentMapper.findByIdAndPetId("doc-1", "pet-1")).thenReturn(map(
+                "doc_id", "doc-1", "pet_id", "pet-1", "doc_type", "VACCINATION"));
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.resync("member-1", "pet-1", "doc-1"));
+
+        assertEquals(HttpStatus.BAD_REQUEST, exception.getStatus());
+        verifyNoInteractions(petRegistrationMapper, apmsClient);
+    }
+
+    @Test
+    void should_throwNotFound_when_storedRegistrationIsMissing_onResync() {
+        when(petMapper.findById("pet-1")).thenReturn(pet("member-1"));
+        when(petDocumentMapper.findByIdAndPetId("doc-1", "pet-1")).thenReturn(map(
+                "doc_id", "doc-1", "pet_id", "pet-1", "doc_type", "REGISTRATION"));
+        when(petRegistrationMapper.findByPetIdAndDocId("pet-1", "doc-1")).thenReturn(null);
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.resync("member-1", "pet-1", "doc-1"));
+
+        assertEquals(HttpStatus.NOT_FOUND, exception.getStatus());
+        verifyNoInteractions(apmsClient);
+    }
+
+    @Test
+    void should_throwBadRequest_when_apmsReturnsNoRegistration_onResync() {
+        stubStoredRegistrationForResync();
+        when(apmsClient.verifyRegistration("410000012345678", null, null)).thenReturn(null);
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.resync("member-1", "pet-1", "doc-1"));
+
+        assertEquals(HttpStatus.BAD_REQUEST, exception.getStatus());
+        verify(petRegistrationMapper, never()).update(any());
+        verify(petDocumentMapper, never()).update(any());
+    }
+
+    @Test
+    void should_throwBadGateway_when_apmsRegistrationNumberDiffers_onResync() {
+        stubStoredRegistrationForResync();
+        Map<String, Object> differentRegistration = registration();
+        differentRegistration.put("dogRegNo", "410000099999999");
+        when(apmsClient.verifyRegistration("410000012345678", null, null))
+                .thenReturn(differentRegistration);
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.resync("member-1", "pet-1", "doc-1"));
+
+        assertEquals(HttpStatus.BAD_GATEWAY, exception.getStatus());
+        verify(petRegistrationMapper, never()).update(any());
+        verify(petDocumentMapper, never()).update(any());
+    }
+
+    @Test
+    void should_propagateApmsFailure_withoutUpdatingRegistration() {
+        stubStoredRegistrationForResync();
+        when(apmsClient.verifyRegistration("410000012345678", null, null))
+                .thenThrow(new BusinessException(HttpStatus.BAD_GATEWAY, "APMS 장애"));
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.resync("member-1", "pet-1", "doc-1"));
+
+        assertEquals(HttpStatus.BAD_GATEWAY, exception.getStatus());
+        verify(petRegistrationMapper, never()).update(any());
+        verify(petDocumentMapper, never()).update(any());
+    }
+
+    @Test
+    void should_throwNotFound_when_registrationDisappearsDuringResync() {
+        stubStoredRegistrationForResync();
+        when(apmsClient.verifyRegistration("410000012345678", null, null))
+                .thenReturn(registration());
+        when(petRegistrationMapper.update(any())).thenReturn(0);
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.resync("member-1", "pet-1", "doc-1"));
+
+        assertEquals(HttpStatus.NOT_FOUND, exception.getStatus());
+        verify(petDocumentMapper, never()).update(any());
+    }
+
     private PetRegistrationVerifyRequest request(String regNumber, String userName, String birthDate) {
         return new PetRegistrationVerifyRequest(regNumber, userName, birthDate);
+    }
+
+    private void stubStoredRegistrationForResync() {
+        when(petMapper.findById("pet-1")).thenReturn(pet("member-1"));
+        when(petDocumentMapper.findByIdAndPetId("doc-1", "pet-1")).thenReturn(map(
+                "doc_id", "doc-1", "pet_id", "pet-1", "doc_type", "REGISTRATION"));
+        when(petRegistrationMapper.findByPetIdAndDocId("pet-1", "doc-1")).thenReturn(map(
+                "doc_id", "doc-1", "pet_id", "pet-1", "reg_number", "410000012345678"));
     }
 
     private Map<String, Object> pet(String memberId) {

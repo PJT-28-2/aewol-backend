@@ -129,6 +129,17 @@ public class PetController {
         return ResponseEntity.ok(ApiResponse.success(petService.getPetDocument(memberId, petId, docId)));
     }
 
+    @Operation(summary = "동물등록증 재동기화",
+            description = "저장된 등록번호로 APMS 정보를 다시 조회해 등록증 상세를 갱신한다.")
+    @PostMapping("/{petId}/documents/{docId}/resync")
+    public ResponseEntity<ApiResponse<PetRegistrationResponse>> resyncPetRegistration(
+            @AuthenticationPrincipal String memberId,
+            @PathVariable String petId,
+            @PathVariable String docId) {
+        return ResponseEntity.ok(ApiResponse.success(
+                petRegistrationService.resync(memberId, petId, docId)));
+    }
+
     @Operation(summary = "반려동물 문서 삭제")
     @DeleteMapping("/{petId}/documents/{docId}")
     public ResponseEntity<ApiResponse<Void>> deletePetDocument(

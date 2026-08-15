@@ -12,4 +12,10 @@ public interface PetRegistrationService {
      * 소유권 없이 등록증 상세(RFID 등 개인 정보 포함)가 노출되지 않도록 하기 위해서다.
      */
     PetRegistrationResponse getDetail(String memberId, String petId, String docId);
+
+    /**
+     * 이미 검증해 저장한 등록번호로 APMS 정보를 다시 조회한다.
+     * 소유자 이름·생년월일을 다시 받지 않으며, 저장된 등록번호 외의 값은 조회 조건으로 사용하지 않는다.
+     */
+    PetRegistrationResponse resync(String memberId, String petId, String docId);
 }
