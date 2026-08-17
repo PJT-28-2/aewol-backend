@@ -40,6 +40,18 @@ class ApiResponseTest {
     }
 
     @Test
+    void acceptedResponseCarriesStatusAndMessageWithoutPayload() throws Exception {
+        ApiResponse<Void> response = ApiResponse.accepted("시딩을 시작했습니다.");
+        JsonNode json = objectMapper.readTree(objectMapper.writeValueAsString(response));
+
+        assertEquals(202, json.get("status").asInt());
+        assertEquals("시딩을 시작했습니다.", json.get("message").asText());
+        assertTrue(json.has("result"));
+        assertTrue(json.get("result").isNull());
+        assertNull(response.getResult());
+    }
+
+    @Test
     void businessExceptionResponseUsesSameContract() throws Exception {
         GlobalExceptionHandler handler = new GlobalExceptionHandler();
         ResponseEntity<ApiResponse<Void>> entity = handler.handleBusinessException(
