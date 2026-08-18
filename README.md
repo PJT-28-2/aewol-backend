@@ -177,9 +177,14 @@ docker-compose up -d --force-recreate mysql
 docker exec aewol-mysql mysql -uaewol -paewol1234 aewol -e "SELECT member_id, name FROM member WHERE HEX(name) REGEXP '^([0-9A-F][0-9A-F])*(C3..|C2[89].|EFBFBD)'"
 ```
 
-깨진 행이 있으면 해당 데이터를 지우고 다시 만드는 것 말고는 방법이 없다. 지원사업처럼
-시드 마이그레이션이 있는 데이터는 그 테이블만 비우고 `./gradlew flywayClean flywayMigrate`로
-다시 채우면 된다.
+깨진 행의 원래 바이트는 남아 있지 않으므로, 삭제부터 하지 말고 먼저 정상 백업에서
+복원한다. 백업이 없는 회원 입력값은 사용자에게 다시 입력받아야 한다. 지원사업 데이터는
+`GOV24_API_KEY`를 설정한 뒤 아래 관리자 동기화 API로 다시 가져온다.
+
+> **주의:** `./gradlew flywayClean`은 특정 테이블만 비우는 명령이 아니라 DB의 전체
+> 스키마와 데이터를 삭제한다. 공유·스테이징·운영 DB의 복구 절차로 절대 사용하지 않는다.
+> 로컬 일회용 DB를 통째로 초기화하려는 경우에도 필요한 데이터의 백업과 삭제 범위를
+> 먼저 확인한다.
 
 ### 지원사업 목록이 비어 있을 때
 
