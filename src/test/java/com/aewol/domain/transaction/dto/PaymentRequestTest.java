@@ -8,6 +8,8 @@ import java.util.Set;
 import javax.validation.ConstraintViolation;
 import javax.validation.Validation;
 import javax.validation.Validator;
+import javax.validation.ValidatorFactory;
+import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.springframework.test.util.ReflectionTestUtils;
@@ -15,15 +17,27 @@ import org.springframework.test.util.ReflectionTestUtils;
 class PaymentRequestTest {
 
     private static Validator validator;
+    private static ValidatorFactory validatorFactory;
 
     @BeforeAll
     static void setUpValidator() {
-        validator = Validation.buildDefaultValidatorFactory().getValidator();
+        validatorFactory = Validation.buildDefaultValidatorFactory();
+        validator = validatorFactory.getValidator();
+    }
+
+    @AfterAll
+    static void closeValidatorFactory() {
+        validatorFactory.close();
     }
 
     @Test
     void should_acceptRequest_when_valuesAreValid() {
         assertTrue(validator.validate(request("애월동물병원", new BigDecimal("72000"))).isEmpty());
+    }
+
+    @Test
+    void should_acceptRequest_when_amountHasOnlyTrailingZeros() {
+        assertTrue(validator.validate(request("애월동물병원", new BigDecimal("72000.00"))).isEmpty());
     }
 
     @Test
@@ -47,7 +61,8 @@ class PaymentRequestTest {
         Set<ConstraintViolation<PaymentRequest>> violations =
                 validator.validate(request("애월동물병원", new BigDecimal("10000000000000")));
 
-        assertEquals("결제 금액은 1원 단위여야 합니다.", violations.iterator().next().getMessage());
+        assertEquals("결제 금액은 정수부 13자리 이하만 입력할 수 있습니다.",
+                violations.iterator().next().getMessage());
     }
 
     @Test
