@@ -43,6 +43,10 @@ RUN useradd --system --create-home --uid 1001 aewol
 WORKDIR /app
 COPY --from=build /workspace/app.jar /app/app.jar
 
+# 마이그레이션 스크립트를 파일시스템에 둔다. JAR 안에도 함께 들어가지만, 손으로 만든
+# fat JAR에서는 Flyway의 클래스패스 스캐너가 파일명을 잘못 읽어 전부 건너뛴다(MigrateMain 참고).
+COPY --from=build /workspace/src/main/resources/db/migration /app/db/migration
+
 # S3 전환(#198) 전까지 업로드 파일이 쌓이는 경로. 컨테이너를 갈아끼워도
 # 파일이 남도록 볼륨으로 마운트한다.
 RUN mkdir -p /app/uploads && chown -R aewol:aewol /app
