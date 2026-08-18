@@ -81,6 +81,10 @@ dependencies {
     // ── Connection Pool ───────────────────────────────────────────
     implementation("com.zaxxer:HikariCP:5.1.0")
 
+    // ── AWS S3 (업로드 파일 저장소, prod 프로파일) ────────────────
+    implementation(platform("software.amazon.awssdk:bom:2.53.2"))
+    implementation("software.amazon.awssdk:s3")
+
     // ── JWT ───────────────────────────────────────────────────────
     implementation("io.jsonwebtoken:jjwt-api:0.12.6")
     runtimeOnly("io.jsonwebtoken:jjwt-impl:0.12.6")

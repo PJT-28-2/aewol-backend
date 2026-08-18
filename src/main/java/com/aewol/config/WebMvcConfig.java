@@ -2,10 +2,8 @@ package com.aewol.config;
 
 import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
-import java.nio.file.Path;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.core.env.Environment;
 import org.springframework.http.converter.HttpMessageConverter;
 import org.springframework.http.converter.json.MappingJackson2HttpMessageConverter;
 import org.springframework.validation.beanvalidation.MethodValidationPostProcessor;
@@ -21,23 +19,8 @@ import java.util.TimeZone;
 @EnableWebMvc
 public class WebMvcConfig implements WebMvcConfigurer {
 
-    private final String uploadDir;
-
-    public WebMvcConfig(Environment environment) {
-        this.uploadDir = environment.getProperty("file.upload-dir", "./uploads");
-    }
-
     @Override
     public void addResourceHandlers(ResourceHandlerRegistry registry) {
-        // 공동구매 상품 이미지만 공개 정적 리소스다. 그 외 업로드 파일은
-        // FileController의 만료 가능한 서명 URL을 통해서만 조회한다.
-        String publicImageLocation = Path.of(uploadDir, "group-purchase").toUri().toString();
-        if (!publicImageLocation.endsWith("/")) {
-            publicImageLocation += "/";
-        }
-        registry.addResourceHandler("/uploads/group-purchase/**")
-                .addResourceLocations(publicImageLocation);
-
         // springfox-swagger-ui 정적 리소스 (Boot 자동설정이 없으므로 수동 등록)
         registry.addResourceHandler("/swagger-ui/**")
                 .addResourceLocations("classpath:/META-INF/resources/webjars/springfox-swagger-ui/")

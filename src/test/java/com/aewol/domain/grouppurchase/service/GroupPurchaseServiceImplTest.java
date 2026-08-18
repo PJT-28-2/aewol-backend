@@ -1,10 +1,10 @@
 package com.aewol.domain.grouppurchase.service;
 
+import com.aewol.common.storage.FileStorage;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
 import com.aewol.common.exception.BusinessException;
-import com.aewol.common.util.FileUtil;
 import com.aewol.domain.grouppurchase.dto.GroupPurchaseCancelResponse;
 import com.aewol.domain.grouppurchase.dto.GroupPurchaseCreateRequest;
 import com.aewol.domain.grouppurchase.dto.GroupPurchaseImageUploadResponse;
@@ -42,7 +42,7 @@ import org.springframework.web.multipart.MultipartFile;
 class GroupPurchaseServiceImplTest {
 
     @Mock GroupPurchaseMapper groupPurchaseMapper;
-    @Mock FileUtil fileUtil;
+    @Mock FileStorage fileStorage;
     @Mock WalletMapper walletMapper;
     @Mock TransactionMapper transactionMapper;
     @Mock SimplePasswordVerificationService simplePasswordVerificationService;
@@ -62,12 +62,15 @@ class GroupPurchaseServiceImplTest {
     void should_returnImageUrl_when_uploadSucceeds() throws IOException {
         GroupPurchaseServiceImpl service = service();
         MultipartFile image = new MockMultipartFile("image", "product.png", "image/png", "content".getBytes());
-        when(fileUtil.upload(image, "group-purchase")).thenReturn("/uploads/group-purchase/product.png");
+        when(fileStorage.store(any(), eq("group-purchase"), eq("png")))
+                .thenReturn("group-purchase/product.png");
 
         GroupPurchaseImageUploadResponse result = service.uploadImage(image);
 
-        assertEquals("/uploads/group-purchase/product.png", result.getImageUrl());
-        verify(fileUtil).upload(image, "group-purchase");
+        // 업로드 응답은 저장 키를 그대로 돌려준다. 클라이언트는 이 값을 화면에 쓰지 않고
+        // 등록 요청의 image 필드로 되돌려 보낸다.
+        assertEquals("group-purchase/product.png", result.getImageUrl());
+        verify(fileStorage).store(any(), eq("group-purchase"), eq("png"));
     }
 
     @Test
@@ -80,7 +83,7 @@ class GroupPurchaseServiceImplTest {
                 () -> service.uploadImage(image));
 
         assertEquals("업로드할 이미지가 없습니다.", exception.getMessage());
-        verifyNoInteractions(fileUtil);
+        verifyNoInteractions(fileStorage);
     }
 
     @Test
@@ -93,20 +96,21 @@ class GroupPurchaseServiceImplTest {
                 () -> service.uploadImage(image));
 
         assertEquals("이미지 파일(jpg, jpeg, png, webp)만 업로드할 수 있습니다.", exception.getMessage());
-        verifyNoInteractions(fileUtil);
+        verifyNoInteractions(fileStorage);
     }
 
     @Test
-    @DisplayName("파일 저장 중 IO 오류가 발생하면 예외가 발생한다")
-    void should_throwException_when_fileStorageFails() throws IOException {
+    @DisplayName("파일 저장에 실패하면 저장소가 던진 예외가 그대로 전달된다")
+    void should_throwException_when_fileStorageFails() {
         GroupPurchaseServiceImpl service = service();
         MultipartFile image = new MockMultipartFile("image", "product.jpg", "image/jpeg", "content".getBytes());
-        when(fileUtil.upload(image, "group-purchase")).thenThrow(new IOException("disk full"));
+        when(fileStorage.store(any(), eq("group-purchase"), eq("jpg")))
+                .thenThrow(new BusinessException("파일을 저장하지 못했어요. 잠시 후 다시 시도해 주세요."));
 
         BusinessException exception = assertThrows(BusinessException.class,
                 () -> service.uploadImage(image));
 
-        assertEquals("이미지 업로드에 실패했습니다.", exception.getMessage());
+        assertEquals("파일을 저장하지 못했어요. 잠시 후 다시 시도해 주세요.", exception.getMessage());
     }
 
     @Test
@@ -1473,7 +1477,10 @@ class GroupPurchaseServiceImplTest {
     }
 
     private GroupPurchaseServiceImpl service() {
-        return new GroupPurchaseServiceImpl(groupPurchaseMapper, fileUtil, walletMapper, transactionMapper,
+        // 조회 응답은 저장 키를 signedUrl로 감싸 내려준다. 여기서는 키를 그대로
+        // 돌려주어 각 테스트가 저장값 자체를 검증하도록 둔다.
+        lenient().when(fileStorage.signedUrl(anyString())).thenAnswer(i -> i.getArgument(0));
+        return new GroupPurchaseServiceImpl(groupPurchaseMapper, fileStorage, walletMapper, transactionMapper,
                 simplePasswordVerificationService);
     }
 }

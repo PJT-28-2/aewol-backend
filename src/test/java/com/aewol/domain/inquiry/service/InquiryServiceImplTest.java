@@ -117,8 +117,8 @@ class InquiryServiceImplTest {
         MockMultipartFile first = new MockMultipartFile("attachments", "a.jpg", "image/jpeg", new byte[]{1});
         MockMultipartFile second = new MockMultipartFile("attachments", "b.png", "image/png", new byte[]{1});
         when(fileStorage.store(any(), eq("inquiries"), eq("jpg"))).thenReturn("inquiries/a.jpg");
-        // LocalFileStorage.store()는 저장 실패 시 IOException이 아니라 BusinessException(런타임)을 던진다.
-        when(fileStorage.store(any(), eq("inquiries"), eq("png"))).thenThrow(new BusinessException("디스크가 가득 찼어요"));
+        when(fileStorage.store(any(), eq("inquiries"), eq("png")))
+                .thenThrow(new BusinessException("파일을 저장하지 못했어요. 잠시 후 다시 시도해 주세요."));
 
         assertThrows(BusinessException.class,
                 () -> service.createInquiry(MEMBER_ID, "기타", "제목", "내용", "user@example.com", List.of(first, second)));
@@ -161,9 +161,9 @@ class InquiryServiceImplTest {
         row.put("answer", "확인해주세요");
         when(inquiryMapper.findByIdAndMemberId(INQUIRY_ID, MEMBER_ID)).thenReturn(row);
         Map<String, Object> attachment = new HashMap<>();
-        attachment.put("file_url", "/uploads/inquiries/a.jpg");
+        attachment.put("file_url", "inquiries/a.jpg");
         when(inquiryMapper.findAttachmentsByInquiryId(INQUIRY_ID)).thenReturn(List.of(attachment));
-        when(fileStorage.signedUrl("/uploads/inquiries/a.jpg")).thenReturn("signed:inquiries/a.jpg");
+        when(fileStorage.signedUrl("inquiries/a.jpg")).thenReturn("signed:inquiries/a.jpg");
 
         InquiryDetailResponse result = service.getInquiry(MEMBER_ID, INQUIRY_ID);
 

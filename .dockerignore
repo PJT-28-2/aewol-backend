@@ -1,0 +1,32 @@
+# 빌드 컨텍스트에서 제외한다.
+#
+# application-local.yml은 실제 외부 API 시크릿(Toss·Gemini·CODEF·메일 앱 비밀번호)을
+# 담고 있고, fatJar 태스크가 src/main/resources를 통째로 넣기 때문에 컨텍스트에
+# 들어오면 그대로 이미지에 실려 레지스트리까지 새어나간다.
+src/main/resources/application-local.yml
+src/main/resources/application-secret.yml
+.env
+.env.prod
+
+# 빌드 산출물 — 이미지 안에서 새로 빌드하므로 가져갈 필요가 없다
+build/
+.gradle/
+out/
+bin/
+
+# 런타임 데이터
+uploads/
+tomcat.8080/
+
+# VCS·에디터·문서
+.git/
+.github/
+.idea/
+.vscode/
+.claude/
+.omc/
+docs/
+*.md
+
+# 로컬 전용 구성
+docker-compose.yml

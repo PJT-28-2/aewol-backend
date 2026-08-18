@@ -29,19 +29,14 @@ public class ClaimServiceImpl implements ClaimService {
     private final PaddleOcrClient paddleOcrClient;
     private final FileStorage fileStorage;
 
-    @Value("${file.upload-dir:./uploads}")
-    private String uploadDir;
-
     @Override
     public ClaimResponse createClaim(String memberId, String petId, MultipartFile receipt) {
         try {
-            Path dir = Paths.get(uploadDir, "receipts");
-            Files.createDirectories(dir);
-            String filename = UUID.randomUUID() + "_" + receipt.getOriginalFilename();
-            Path filepath = dir.resolve(filename);
-            Files.write(filepath, receipt.getBytes());
-
-            String imageUrl = "/uploads/receipts/" + filename;
+            // 저장 위치는 FileStorage가 정한다. 예전에는 여기서 디스크에 직접 쓰고
+            // "/uploads/receipts/..." 형태의 URL을 DB에 넣었는데, 조회는 이미
+            // fileStorage.signedUrl로 하고 있어 저장소를 옮기면 읽기와 어긋났다.
+            String imageUrl = fileStorage.store(receipt.getBytes(), "receipts",
+                    extensionOf(receipt.getOriginalFilename()));
 
             // PaddleOCR (트랜잭션 밖에서 호출 - 응답 지연이 DB 커넥션을 점유하지 않도록)
             String extractedJson = paddleOcrClient.extractReceiptData(
@@ -120,5 +115,18 @@ public class ClaimServiceImpl implements ClaimService {
                 .receiptImageUrl(fileStorage.signedUrl((String) claim.get("receipt_image_url")))
                 .extractedData(claim.get("extracted_data"))
                 .build();
+    }
+
+    /**
+     * 저장 키에 붙일 확장자를 뽑는다.
+     *
+     * <p>S3는 업로드 시 지정한 Content-Type을 그대로 응답에 실어 주고, 그 판정은 키의
+     * 확장자로 한다. 확장자를 잃으면 브라우저가 영수증 이미지를 표시하지 않고 내려받는다.
+     */
+    private String extensionOf(String originalFilename) {
+        if (originalFilename == null || !originalFilename.contains(".")) {
+            return "jpg";
+        }
+        return originalFilename.substring(originalFilename.lastIndexOf('.') + 1).toLowerCase();
     }
 }

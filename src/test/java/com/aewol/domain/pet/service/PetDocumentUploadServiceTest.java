@@ -5,7 +5,6 @@ import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
 import com.aewol.common.exception.BusinessException;
-import com.aewol.common.util.FileUtil;
 import com.aewol.common.storage.FileStorage;
 import com.aewol.domain.pet.dto.PetDocumentResponse;
 import com.aewol.domain.pet.mapper.PetDocumentMapper;
@@ -27,16 +26,14 @@ import org.springframework.mock.web.MockMultipartFile;
 class PetDocumentUploadServiceTest {
 
     @Mock PetMapper petMapper;
-    @Mock PetDocumentMapper petDocumentMapper;
-    @Mock FileUtil fileUtil;
-    @Mock FileStorage fileStorage;
+    @Mock PetDocumentMapper petDocumentMapper;    @Mock FileStorage fileStorage;
     @Mock PetRegistrationService petRegistrationService;
 
     private PetServiceImpl service;
 
     @BeforeEach
     void setUp() {
-        service = new PetServiceImpl(petMapper, petDocumentMapper, fileUtil, fileStorage, petRegistrationService);
+        service = new PetServiceImpl(petMapper, petDocumentMapper, fileStorage, petRegistrationService);
         lenient().when(fileStorage.signedUrl(anyString()))
                 .thenAnswer(invocation -> "signed:" + invocation.getArgument(0));
     }
@@ -45,13 +42,13 @@ class PetDocumentUploadServiceTest {
     void should_registerDocument_when_ownerUploadsFirstTime() throws IOException {
         givenOwner();
         MockMultipartFile file = jpeg();
-        when(fileUtil.upload(file, "pet-documents", "jpg")).thenReturn("/uploads/pet-documents/new.jpg");
+        when(fileStorage.store(any(), eq("pet-documents"), eq("jpg"))).thenReturn("pet-documents/new.jpg");
         PetDocumentResponse response = service.uploadPetDocument("member-1", "pet-1", "VACCINATION", file,
                 LocalDate.of(2026, 8, 1));
 
         assertEquals("VACCINATION", response.getDocType());
         assertEquals("certificate.jpeg", response.getDocName());
-        assertEquals("signed:/uploads/pet-documents/new.jpg", response.getFileUrl());
+        assertEquals("signed:pet-documents/new.jpg", response.getFileUrl());
         verify(petDocumentMapper).insert(argThat(row ->
                 "certificate.jpeg".equals(row.get("docName"))));
     }
@@ -60,7 +57,7 @@ class PetDocumentUploadServiceTest {
     void should_insertSeparateDocument_when_sameTypeUploadedAgain() throws IOException {
         givenOwner();
         MockMultipartFile file = jpeg();
-        when(fileUtil.upload(file, "pet-documents", "jpg")).thenReturn("/uploads/pet-documents/new.jpg");
+        when(fileStorage.store(any(), eq("pet-documents"), eq("jpg"))).thenReturn("pet-documents/new.jpg");
 
         service.uploadPetDocument("member-1", "pet-1", "VACCINATION", file, null);
         service.uploadPetDocument("member-1", "pet-1", "VACCINATION", file, null);
@@ -70,14 +67,14 @@ class PetDocumentUploadServiceTest {
         verify(petDocumentMapper, times(2)).insert(argThat(row ->
                 "certificate.jpeg".equals(row.get("docName"))));
         verify(petDocumentMapper, never()).update(anyMap());
-        verify(fileUtil, never()).delete(anyString());
+        verify(fileStorage, never()).delete(anyString());
     }
 
     @Test
     void should_insertDocument_when_ownerReuploads() throws IOException {
         givenOwner();
         MockMultipartFile file = pdf("certificate.pdf", "application/pdf");
-        when(fileUtil.upload(file, "pet-documents", "pdf")).thenReturn("/uploads/pet-documents/new.pdf");
+        when(fileStorage.store(any(), eq("pet-documents"), eq("pdf"))).thenReturn("pet-documents/new.pdf");
         LocalDate issuedDate = LocalDate.of(2026, 7, 31);
 
         PetDocumentResponse response = service.uploadPetDocument(
@@ -85,7 +82,7 @@ class PetDocumentUploadServiceTest {
 
         verify(petDocumentMapper).insert(argThat(row ->
                 "VACCINATION".equals(row.get("docType"))
-                        && "/uploads/pet-documents/new.pdf".equals(row.get("fileUrl"))
+                        && "pet-documents/new.pdf".equals(row.get("fileUrl"))
                         && issuedDate.equals(row.get("issuedDate"))));
         assertEquals("2026-07-31", response.getIssuedDate());
     }
@@ -94,8 +91,8 @@ class PetDocumentUploadServiceTest {
     void should_registerMedicalConfirmation() throws IOException {
         givenOwner();
         MockMultipartFile file = pdf("medical-confirmation.pdf", "application/pdf");
-        when(fileUtil.upload(file, "pet-documents", "pdf"))
-                .thenReturn("/uploads/pet-documents/medical.pdf");
+        when(fileStorage.store(any(), eq("pet-documents"), eq("pdf")))
+                .thenReturn("pet-documents/medical.pdf");
 
         PetDocumentResponse response = service.uploadPetDocument(
                 "member-1", "pet-1", "MEDICAL_CONFIRMATION", file, LocalDate.of(2026, 8, 10));
@@ -116,7 +113,7 @@ class PetDocumentUploadServiceTest {
         assertEquals(HttpStatus.BAD_REQUEST, exception.getStatus());
         assertEquals("문서 유형은 VACCINATION 또는 MEDICAL_CONFIRMATION만 가능합니다.",
                 exception.getMessage());
-        verifyNoInteractions(petDocumentMapper, fileUtil);
+        verifyNoInteractions(petDocumentMapper, fileStorage);
     }
 
     @Test
@@ -127,7 +124,7 @@ class PetDocumentUploadServiceTest {
                 () -> service.uploadPetDocument("member-2", "pet-1", "VACCINATION", jpeg(), null));
 
         assertEquals(HttpStatus.FORBIDDEN, exception.getStatus());
-        verifyNoInteractions(petDocumentMapper, fileUtil);
+        verifyNoInteractions(petDocumentMapper, fileStorage);
     }
 
     @Test
@@ -138,7 +135,7 @@ class PetDocumentUploadServiceTest {
                 () -> service.uploadPetDocument("member-1", "pet-404", "VACCINATION", jpeg(), null));
 
         assertEquals(HttpStatus.NOT_FOUND, exception.getStatus());
-        verifyNoInteractions(petDocumentMapper, fileUtil);
+        verifyNoInteractions(petDocumentMapper, fileStorage);
     }
 
     @Test
@@ -150,7 +147,7 @@ class PetDocumentUploadServiceTest {
                 () -> service.uploadPetDocument("member-1", "pet-1", "VACCINATION", empty, null));
 
         assertEquals(HttpStatus.BAD_REQUEST, exception.getStatus());
-        verifyNoInteractions(petDocumentMapper, fileUtil);
+        verifyNoInteractions(petDocumentMapper, fileStorage);
     }
 
     @Test
@@ -162,7 +159,7 @@ class PetDocumentUploadServiceTest {
                 () -> service.uploadPetDocument("member-1", "pet-1", "VACCINATION", file, null));
 
         assertEquals(HttpStatus.BAD_REQUEST, exception.getStatus());
-        verifyNoInteractions(petDocumentMapper, fileUtil);
+        verifyNoInteractions(petDocumentMapper, fileStorage);
     }
 
     @Test
@@ -174,15 +171,15 @@ class PetDocumentUploadServiceTest {
                 () -> service.uploadPetDocument("member-1", "pet-1", "VACCINATION", file, null));
 
         assertEquals(HttpStatus.BAD_REQUEST, exception.getStatus());
-        verifyNoInteractions(petDocumentMapper, fileUtil);
+        verifyNoInteractions(petDocumentMapper, fileStorage);
     }
 
     @Test
     void should_acceptPng_when_clientSendsGenericContentType() throws IOException {
         givenOwner();
         MockMultipartFile file = png("medical-confirmation.png", "application/octet-stream");
-        when(fileUtil.upload(file, "pet-documents", "png"))
-                .thenReturn("/uploads/pet-documents/medical-confirmation.png");
+        when(fileStorage.store(any(), eq("pet-documents"), eq("png")))
+                .thenReturn("pet-documents/medical-confirmation.png");
 
         PetDocumentResponse response = service.uploadPetDocument(
                 "member-1", "pet-1", "MEDICAL_CONFIRMATION", file, LocalDate.of(2026, 8, 10));
@@ -196,7 +193,7 @@ class PetDocumentUploadServiceTest {
     void should_storeFilenameOnly_when_originalFilenameContainsPath() throws IOException {
         givenOwner();
         MockMultipartFile file = png("C:\\fakepath\\몽이_접종증명서.png", "image/png");
-        when(fileUtil.upload(file, "pet-documents", "png")).thenReturn("/uploads/pet-documents/new.png");
+        when(fileStorage.store(any(), eq("pet-documents"), eq("png"))).thenReturn("pet-documents/new.png");
 
         PetDocumentResponse response = service.uploadPetDocument(
                 "member-1", "pet-1", "VACCINATION", file, null);
@@ -216,14 +213,15 @@ class PetDocumentUploadServiceTest {
                 () -> service.uploadPetDocument("member-1", "pet-1", "VACCINATION", file, null));
 
         assertEquals(HttpStatus.BAD_REQUEST, exception.getStatus());
-        verifyNoInteractions(petDocumentMapper, fileUtil);
+        verifyNoInteractions(petDocumentMapper, fileStorage);
     }
 
     @Test
     void should_throwInternalServerError_when_fileStorageFails() throws IOException {
         givenOwner();
         MockMultipartFile file = jpeg();
-        when(fileUtil.upload(file, "pet-documents", "jpg")).thenThrow(new IOException("disk full"));
+        when(fileStorage.store(any(), eq("pet-documents"), eq("jpg"))).thenThrow(new BusinessException(HttpStatus.INTERNAL_SERVER_ERROR,
+                        "파일을 저장하지 못했어요. 잠시 후 다시 시도해 주세요."));
 
         BusinessException exception = assertThrows(BusinessException.class,
                 () -> service.uploadPetDocument("member-1", "pet-1", "VACCINATION", file, null));
@@ -236,13 +234,13 @@ class PetDocumentUploadServiceTest {
     void should_deleteNewFile_when_databaseInsertFails() throws IOException {
         givenOwner();
         MockMultipartFile file = jpeg();
-        when(fileUtil.upload(file, "pet-documents", "jpg")).thenReturn("/uploads/pet-documents/new.jpg");
+        when(fileStorage.store(any(), eq("pet-documents"), eq("jpg"))).thenReturn("pet-documents/new.jpg");
         doThrow(new RuntimeException("database error")).when(petDocumentMapper).insert(anyMap());
 
         assertThrows(RuntimeException.class,
                 () -> service.uploadPetDocument("member-1", "pet-1", "VACCINATION", file, null));
 
-        verify(fileUtil).delete("/uploads/pet-documents/new.jpg");
+        verify(fileStorage).delete("pet-documents/new.jpg");
     }
 
     private void givenOwner() {

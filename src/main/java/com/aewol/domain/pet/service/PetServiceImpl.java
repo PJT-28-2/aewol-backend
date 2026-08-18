@@ -3,7 +3,6 @@ package com.aewol.domain.pet.service;
 import com.aewol.common.exception.BusinessException;
 import com.aewol.common.storage.FileStorage;
 import com.aewol.common.util.DateTimeUtil;
-import com.aewol.common.util.FileUtil;
 import com.aewol.domain.pet.dto.PetCreateRequest;
 import com.aewol.domain.pet.dto.PetDocumentResponse;
 import com.aewol.domain.pet.dto.PetResponse;
@@ -45,7 +44,6 @@ public class PetServiceImpl implements PetService {
 
     private final PetMapper petMapper;
     private final PetDocumentMapper petDocumentMapper;
-    private final FileUtil fileUtil;
     private final FileStorage fileStorage;
     private final PetRegistrationService petRegistrationService;
 
@@ -129,7 +127,7 @@ public class PetServiceImpl implements PetService {
         String originalFilename = extractOriginalFilename(file);
         String newFileUrl;
         try {
-            newFileUrl = fileUtil.upload(file, DOCUMENT_SUB_DIR, storageExtension);
+            newFileUrl = fileStorage.store(file.getBytes(), DOCUMENT_SUB_DIR, storageExtension);
         } catch (IOException e) {
             throw new BusinessException(HttpStatus.INTERNAL_SERVER_ERROR, "파일 저장에 실패했습니다.");
         }
@@ -285,11 +283,12 @@ public class PetServiceImpl implements PetService {
     }
 
     private void deleteQuietly(String fileUrl) {
+        // 저장소는 DB 트랜잭션에 참여하지 않으므로, 이전 파일 정리에 실패해도 이미 끝난
+        // 작업을 되돌리지 않는다. FileStorage 구현체들이 스스로 실패를 삼키긴 하지만
+        // 인터페이스가 보장하는 계약은 아니라 호출부에서도 막아 둔다.
         try {
-            fileUtil.delete(fileUrl);
-        } catch (IOException e) {
-            // 파일시스템은 DB 트랜잭션에 참여하지 않으므로 실패를 숨기지 않고 후속 정리가
-            // 가능하도록 파일 URL과 예외를 남긴다. 영속 재시도는 별도 이슈에서 처리한다.
+            fileStorage.delete(fileUrl);
+        } catch (RuntimeException e) {
             log.warn("반려동물 문서 파일 삭제 실패 - fileUrl: {}", fileUrl, e);
         }
     }
