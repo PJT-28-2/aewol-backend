@@ -1,5 +1,6 @@
 package com.aewol;
 
+import com.aewol.config.MultipartLimits;
 import org.apache.catalina.Context;
 import org.apache.catalina.startup.Tomcat;
 import org.apache.tomcat.util.descriptor.web.FilterDef;
@@ -43,9 +44,12 @@ public class AewolApplication {
         context.addServletMappingDecoded("/", "dispatcher");
 
         // 멀티파트(파일 업로드) 요청 처리를 위한 설정. Spring Boot가 아니므로
-        // application.yml의 spring.servlet.multipart.* 값은 자동 반영되지 않아 여기서 직접 설정한다.
-        long maxFileSize = 10L * 1024 * 1024;   // application.yml: max-file-size
-        long maxRequestSize = 10L * 1024 * 1024; // application.yml: max-request-size
+        // application.yml의 spring.servlet.multipart.* 값은 자동 반영되지 않아 여기서 직접 설정해야
+        // 한다 — 다만 숫자를 또 하드코딩하면 값이 다시 어긋날 수 있으므로(PR #197 리뷰) 실제
+        // application.yml을 그대로 읽어오는 MultipartLimits를 거친다. 값을 바꿀 땐 application.yml만
+        // 고치면 된다.
+        long maxFileSize = MultipartLimits.maxFileSizeBytes();
+        long maxRequestSize = MultipartLimits.maxRequestSizeBytes();
         servletWrapper.setMultipartConfigElement(new MultipartConfigElement(
                 System.getProperty("java.io.tmpdir"), maxFileSize, maxRequestSize, 0));
 

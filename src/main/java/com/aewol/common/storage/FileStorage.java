@@ -21,6 +21,14 @@ public interface FileStorage {
      */
     String store(byte[] content, String directory, String extension);
 
+    /**
+     * 저장된 파일을 지운다.
+     *
+     * <p><b>계약: 구현체는 예외를 던지지 않는다.</b> 실패는 구현체 내부에서 로그만 남기고
+     * 삼켜야 한다. 업로드 롤백처럼 "정리가 실패해도 원래 예외를 가리면 안 되는" 호출부가
+     * 안전하게 fire-and-forget으로 쓸 수 있어야 하기 때문이다(PR #200 리뷰). {@link LocalFileStorage}는
+     * 이 계약을 따른다 — 새 구현체를 추가할 때도 반드시 지킬 것.
+     */
     void delete(String key);
 
     InputStream read(String key);

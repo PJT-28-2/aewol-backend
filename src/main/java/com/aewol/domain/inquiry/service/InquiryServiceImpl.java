@@ -94,23 +94,26 @@ public class InquiryServiceImpl implements InquiryService {
                 + "-" + String.format("%04d", Long.parseLong(inquiryId));
         inquiryMapper.updateInquiryNumber(inquiryId, inquiryNumber);
 
-        List<String> uploadedUrls = new ArrayList<>();
+        // FileStorage로 저장하는 키는 "/uploads/..." URL이 아니라 "inquiries/xxx.png" 형태다.
+        // DB(file_url 컬럼)에는 이 키를 그대로 저장하고, 조회 시 fileStorage.signedUrl()이
+        // 만들어주는 서명 URL로 내려준다(과거 FileUtil로 저장된 "/uploads/..." 형식의 기존
+        // 데이터도 LocalFileStorage.normalize()가 함께 처리하므로 마이그레이션은 불필요하다).
+        List<String> uploadedKeys = new ArrayList<>();
         try {
             for (int i = 0; i < files.size(); i++) {
                 MultipartFile file = files.get(i);
-                String fileUrl;
+                String fileKey;
                 try {
-                    fileUrl = fileStorage.store(file.getBytes(), ATTACHMENT_SUB_DIR,
-                            storageExtensions.get(i));
+                    fileKey = fileStorage.store(file.getBytes(), ATTACHMENT_SUB_DIR, storageExtensions.get(i));
                 } catch (IOException e) {
                     throw new BusinessException(HttpStatus.INTERNAL_SERVER_ERROR, "첨부파일 저장에 실패했어요");
                 }
-                uploadedUrls.add(fileUrl);
+                uploadedKeys.add(fileKey);
 
                 Map<String, Object> attachment = new HashMap<>();
                 attachment.put("inquiryId", inquiryId);
                 attachment.put("fileName", extractOriginalFilename(file));
-                attachment.put("fileUrl", fileUrl);
+                attachment.put("fileUrl", fileKey);
                 attachment.put("fileSize", file.getSize());
                 inquiryMapper.insertAttachment(attachment);
             }
@@ -118,7 +121,16 @@ public class InquiryServiceImpl implements InquiryService {
             // 이 메서드가 @Transactional이라 DB(inquiry/inquiry_attachment insert)는 이
             // 예외로 자동 롤백되지만, 파일시스템은 트랜잭션에 안 묶여 있어서 이미 저장한
             // 파일은 직접 지워야 한다(PetServiceImpl의 파일 정리와 같은 이유).
-            uploadedUrls.forEach(this::deleteQuietly);
+            // FileStorage.delete()는 "실패를 삼킨다"는 문서화된 계약(FileStorage 인터페이스 참고)이지만,
+            // 그건 구현체의 책임이지 컴파일러가 보장해주는 게 아니다. 여기서 삭제가 새 예외를 던지면
+            // 원래 예외 e가 가려져 원인 파악이 어려워지므로(PR #200 리뷰) 방어적으로 한 번 더 감싼다.
+            uploadedKeys.forEach(key -> {
+                try {
+                    fileStorage.delete(key);
+                } catch (RuntimeException deleteFailure) {
+                    log.warn("문의 첨부파일 롤백 삭제 실패 - key: {}", key, deleteFailure);
+                }
+            });
             throw e;
         }
 
@@ -196,16 +208,6 @@ public class InquiryServiceImpl implements InquiryService {
             throw new BusinessException("파일명이 올바르지 않습니다.");
         }
         return filename;
-    }
-
-    private void deleteQuietly(String fileUrl) {
-        // 첨부 정리는 부가 작업이라 실패해도 본 작업을 깨뜨려선 안 된다. FileStorage
-        // 구현체들이 스스로 실패를 삼키지만 인터페이스가 보장하는 계약은 아니다.
-        try {
-            fileStorage.delete(fileUrl);
-        } catch (RuntimeException e) {
-            log.warn("문의 첨부파일 삭제 실패 - fileUrl: {}", fileUrl, e);
-        }
     }
 
     private InquiryListItemResponse toListItemResponse(Map<String, Object> row) {
