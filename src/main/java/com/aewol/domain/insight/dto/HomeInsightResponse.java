@@ -16,6 +16,12 @@ public class HomeInsightResponse {
     private final String body;
     private final String ctaLabel;
     private final String ctaPath;
+    /**
+     * 앞으로 어떻게 될지 한 줄. 헤드라인과 마찬가지로 자바에서 계산해 매번 새로 만든다.
+     *
+     * <p>근거가 부족하면(관측 기간이 짧으면) null 이다. 없는 값을 억지로 채우지 않는다.
+     */
+    private final String projection;
     /** 문구가 LLM 없이 만들어졌는지. 프론트가 표시를 달리하고 싶을 때 쓴다. */
     private final boolean fallback;
     private final String generatedAt;
