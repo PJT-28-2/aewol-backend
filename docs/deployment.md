@@ -58,9 +58,13 @@ docker-compose up -d          # mysql/redis/ocr만 (앱은 IDE에서 실행)
 > **예외**: 최초 부트스트랩 1회는 EC2에서 직접 빌드했다. ECR·OIDC 설정을 뒤로 미뤄
 > 검증 대상을 줄이기 위해서다. 시크릿 유출 위험은 없다 — `git archive`로 만든 소스에는
 > 추적 파일만 들어가므로 gitignore된 `application-local.yml`이 구조적으로 포함될 수 없다.
-> CD(#206)가 붙으면 원칙대로 CI 빌드에서 ECR push로 돌아간다.
+> #206에서 CD가 붙으면서 원칙대로 CI 빌드 → ECR push로 돌아왔다.
 
 ## 배포 절차
+
+`main`에 머지되면 아래 절차를 `.github/workflows/cd.yml`이 자동으로 수행한다(→ 자동 배포).
+여기 적힌 명령은 그 워크플로가 하는 일이자, 워크플로가 막혔을 때 손으로 밟는 절차이기도
+하다 — `scripts/deploy.sh`는 SSM으로 불리든 손으로 실행되든 동작이 같다.
 
 환경변수는 리포지토리나 GitHub Secrets가 아니라 **SSM Parameter Store**에 두고, EC2가
 직접 받아 간다. 배포 워크플로는 명령만 전달하며 시크릿 값을 알지 못한다.
@@ -92,6 +96,112 @@ mysql (healthy) → migrate (정상 종료) → app
 
 `migrate`가 실패하면 `app`은 기동하지 않는다. 스키마가 절반만 적용된 채 애플리케이션이
 올라가는 상황을 막기 위한 구성이다.
+
+## 자동 배포 (CD)
+
+`main` 푸시에 `.github/workflows/cd.yml`이 돈다. `workflow_dispatch`로 태그를 직접
+지정해 실행하면 그 태그로 되돌아간다(롤백).
+
+```
+main push --> build (ECR push) --> [Environment 승인] --> deploy (SSM) --> 외부 헬스체크
+                   |                                          |
+              태그 = 커밋 SHA                 번들 전송 -> 백업 -> migrate -> app
+```
+
+### 선택의 이유
+
+| 선택 | 대안 | 이유 |
+| --- | --- | --- |
+| OIDC로 AWS 인증 | 액세스 키를 GitHub Secrets에 | 장기 자격증명을 아예 만들지 않는다. 회수·교체 절차가 필요 없고, 신뢰 정책에서 리포지토리와 브랜치까지 좁힐 수 있다 |
+| SSM SendCommand | SSH 접속 | GitHub Actions의 IP 대역에 22번 포트를 열 필요도, 개인키를 Secrets에 둘 필요도 없다. 인바운드 규칙이 하나도 늘지 않는다 |
+| 커밋 SHA 태그만 사용 | `latest` 병행 | `latest`는 어떤 커밋인지 알 수 없어 롤백 대상으로 지정할 수 없다. 태그가 곧 커밋이면 "무엇이 돌고 있는지"에 답이 하나뿐이다 |
+| compose·스크립트를 매번 함께 전송 | 호스트에 둔 파일을 그대로 사용 | 이미지만 새것이고 compose는 옛날 것인 상태가 생기지 않는다. 호스트 파일이 배포 커밋과 항상 일치한다 |
+| 시크릿은 SSM Parameter Store | GitHub Secrets | 워크플로가 값을 알지 못하므로 로그에 찍힐 경로 자체가 없다. 값은 EC2가 직접 받아 간다 |
+| 마이그레이션 직전 백업 | 하루 1회 cron 백업만 | DB가 앱과 같은 인스턴스에 있어 복제본이 없다. 스키마 변경이 데이터를 망가뜨리면 최대 24시간을 잃는다 |
+| 자동 롤백 없음 | 헬스체크 실패 시 이전 이미지로 복귀 | 그 시점엔 마이그레이션이 이미 적용돼 있다. Flyway는 forward-only이므로 이미지만 되돌리면 **예전 코드가 새 스키마 위에서 도는 더 나쁜 상태**가 된다. 되돌릴지는 변경 내용을 아는 사람이 정한다 |
+| `concurrency`로 배포 직렬화 | 기본값(동시 실행) | 두 배포가 같은 호스트에서 부딪히면 마이그레이션만 적용되고 앱은 교체되지 않은 상태가 남을 수 있다. 앞선 배포를 취소하지 않고 줄을 세운다 |
+
+### 최초 1회 AWS 설정
+
+**1. GitHub OIDC 자격증명 공급자**
+
+```bash
+aws iam create-open-id-connect-provider   --url https://token.actions.githubusercontent.com   --client-id-list sts.amazonaws.com
+```
+
+**2. Actions가 맡을 역할** — 신뢰 정책에서 `sub`로 리포지토리와 브랜치를 못박는다. 이
+조건이 없으면 **다른 리포지토리의 워크플로도 이 역할을 맡을 수 있다.**
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [{
+    "Effect": "Allow",
+    "Principal": { "Federated": "arn:aws:iam::596617418243:oidc-provider/token.actions.githubusercontent.com" },
+    "Action": "sts:AssumeRoleWithWebIdentity",
+    "Condition": {
+      "StringEquals": { "token.actions.githubusercontent.com:aud": "sts.amazonaws.com" },
+      "StringLike": {
+        "token.actions.githubusercontent.com:sub": [
+          "repo:PJT-28-2/aewol-backend:ref:refs/heads/main",
+          "repo:PJT-28-2/aewol-backend:environment:production"
+        ]
+      }
+    }
+  }]
+}
+```
+
+두 개인 이유: `build` 잡은 브랜치 컨텍스트(`ref:...`)로, `deploy` 잡은 Environment를
+쓰므로 `environment:production`으로 토큰이 발급된다.
+
+**3. 그 역할의 권한** — ECR push와 SSM SendCommand만 준다.
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    { "Sid": "EcrAuth", "Effect": "Allow", "Action": "ecr:GetAuthorizationToken", "Resource": "*" },
+    { "Sid": "EcrPush", "Effect": "Allow",
+      "Action": ["ecr:BatchCheckLayerAvailability", "ecr:InitiateLayerUpload",
+                 "ecr:UploadLayerPart", "ecr:CompleteLayerUpload", "ecr:PutImage",
+                 "ecr:BatchGetImage", "ecr:GetDownloadUrlForLayer", "ecr:DescribeImages"],
+      "Resource": ["arn:aws:ecr:ap-northeast-2:596617418243:repository/aewol-backend",
+                   "arn:aws:ecr:ap-northeast-2:596617418243:repository/aewol-ocr"] },
+    { "Sid": "SsmSend", "Effect": "Allow", "Action": "ssm:SendCommand",
+      "Resource": ["arn:aws:ec2:ap-northeast-2:596617418243:instance/i-0b63ce3e8f7d98f9d",
+                   "arn:aws:ssm:ap-northeast-2::document/AWS-RunShellScript"] },
+    { "Sid": "SsmRead", "Effect": "Allow",
+      "Action": ["ssm:GetCommandInvocation", "ssm:ListCommandInvocations"], "Resource": "*" }
+  ]
+}
+```
+
+`ssm:SendCommand`의 리소스에 **인스턴스와 문서를 모두** 적어야 한다. 하나만 적으면
+AccessDenied가 난다.
+
+**4. GitHub Environment `production`** — 리포지토리 Settings > Environments에서 만든다.
+`Deployment branches and tags`를 `Selected branches and tags`로 바꾸고 `main`만 추가한다.
+다른 브랜치에서는 이 environment를 쓰는 잡이 실행되지 않는다.
+
+> **승인 게이트는 걸지 못했다.** Environment의 보호 규칙(Required reviewers)은 private
+> 리포지토리에서 GitHub Pro/Team/Enterprise 기능이라, 무료 플랜에서는 설정 화면에
+> 항목 자체가 나오지 않는다. `environment: production` 선언은 그대로 두는데, 배포 이력이
+> Environments 탭에 남고 OIDC 토큰의 `sub`가 `environment:production`으로 발급되는 것은
+> 플랜과 무관하게 동작하기 때문이다(신뢰 정책이 그 값을 기대한다).
+>
+> 대신 실질적인 검토 지점은 PR 리뷰다 — 배포는 `main` 푸시에만 걸려 있고 `main`은
+> PR로만 갱신한다. 리포지토리를 public으로 전환하면 보호 규칙이 열리지만, 과거 커밋이
+> 전부 공개되므로 히스토리 점검이 선행되어야 한다.
+
+### 롤백
+
+Actions > Backend CD > Run workflow > `image_tag`에 되돌릴 태그(커밋 SHA 12자리)를 넣는다.
+빌드를 건너뛰고 ECR에 이미 있는 이미지로 배포한다.
+
+**마이그레이션이 포함된 배포는 이미지 롤백으로 되돌아가지 않는다.** 스키마는 이미 앞으로
+가 있다. 이 경우 되돌리는 대신 앞으로 고치는 편이 안전하고, 데이터가 깨졌다면 배포 직전
+백업(`db-backup/`)에서 복구한다.
 
 ## 환경변수 체크리스트
 
@@ -182,14 +292,14 @@ OCR 추론 중 OOM으로 컨테이너가 죽는다.
   실패한 업로드 조각은 목록에 보이지 않으면서 저장 요금만 계속 발생한다
 - 버저닝은 사용하지 않는다. 켠다면 비현행 버전 만료 규칙을 반드시 함께 건다
 
-### ⚠️ 아직 남은 작업
+### 레거시 경로 (#203에서 정리됨)
 
-`FileUtil`(레거시 경로)은 여전히 로컬 디스크에 저장한다. 공동구매 이미지, 1:1 문의 첨부,
-반려동물 서류가 여기에 해당한다. 특히 문의 첨부와 반려동물 서류는 **쓰기는 `FileUtil`,
-읽기는 `FileStorage.signedUrl()`** 로 갈라져 있어, 운영에서는 디스크에 쓰고 S3에서 읽는
-상태가 된다.
+한동안 `FileUtil`이 로컬 디스크에 직접 쓰고 읽기만 `FileStorage.signedUrl()`을 타는
+갈라진 상태였다. 운영에서는 디스크에 쓰고 S3에서 읽게 되므로 배포를 막는 조건이었다.
+#203에서 `FileUtil`을 제거해 **쓰기·읽기가 모두 `FileStorage`를 통한다.**
 
-**`FileUtil` 통합이 끝나기 전에는 운영 배포를 하면 안 된다.**
+과거에 `/uploads/...` 형식으로 저장된 기존 행은 `normalize()`가 함께 처리하므로 데이터
+마이그레이션이 필요 없다. compose가 `uploads` 볼륨을 계속 마운트하는 것도 그 때문이다.
 
 ## 데이터베이스를 같은 EC2에 둔 이유
 
@@ -224,7 +334,9 @@ MySQL을 RDS로 분리하지 않고 애플리케이션과 같은 EC2에 컨테�
 
 ### 백업
 
-`scripts/backup-db.sh`가 컨테이너의 MySQL을 덤프해 S3로 올린다.
+`scripts/backup-db.sh`가 컨테이너의 MySQL을 덤프해 S3로 올린다. 아래 cron 외에
+**배포 때마다 마이그레이션 직전에도 한 번 더** 돈다(`scripts/deploy.sh`). 스키마 변경은
+되돌릴 수 없으므로 하루 1회 백업만으로는 최대 24시간을 잃을 수 있다.
 
 Amazon Linux 2023에는 cron이 기본 설치되어 있지 않다.
 

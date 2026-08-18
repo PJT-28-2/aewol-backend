@@ -1,0 +1,217 @@
+# main에 머지되면 이미지를 빌드해 ECR에 올리고, SSM으로 EC2에 배포 명령을 보낸다.
+#
+# 설계 메모
+#   - AWS 인증은 OIDC로 한다. 장기 액세스 키를 GitHub Secrets에 두지 않는다.
+#   - 배포는 SSH가 아니라 SSM SendCommand로 한다. 22번 포트를 GitHub에 열 필요도,
+#     개인키를 Secrets에 둘 필요도 없다.
+#   - 이미지 태그는 커밋 SHA뿐이다. latest는 붙이지 않는다 — 어떤 커밋인지 알 수 없는
+#     태그는 롤백 대상으로 지정할 수 없기 때문이다.
+#   - 시크릿 값은 워크플로가 알지 못한다. EC2가 SSM Parameter Store에서 직접 받아 간다.
+name: Backend CD
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: '배포할 이미지 태그. 비우면 현재 커밋으로 새로 빌드한다. 롤백할 때 이전 태그를 넣는다.'
+        required: false
+        type: string
+
+# 배포가 겹치면 두 개의 compose up이 같은 호스트에서 부딪힌다. 취소하지 않고 줄을 세운다 —
+# 앞선 배포를 중간에 끊으면 마이그레이션만 적용되고 앱은 교체되지 않은 상태가 남을 수 있다.
+concurrency:
+  group: deploy-prod
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: ap-northeast-2
+  REGISTRY: 596617418243.dkr.ecr.ap-northeast-2.amazonaws.com
+  INSTANCE_ID: i-0b63ce3e8f7d98f9d
+  ROLE_ARN: arn:aws:iam::596617418243:role/aewol-github-actions
+
+permissions:
+  contents: read
+  id-token: write   # OIDC 토큰 발급에 필요하다
+
+jobs:
+  build:
+    # 롤백(태그를 직접 지정한 실행)일 때는 이미 ECR에 있는 이미지를 쓰므로 빌드하지 않는다.
+    if: ${{ !inputs.image_tag }}
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.meta.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 이미지 태그 결정
+        id: meta
+        run: echo "tag=$(git rev-parse --short=12 HEAD)" >> "$GITHUB_OUTPUT"
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - uses: aws-actions/amazon-ecr-login@v2
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: 백엔드 이미지 빌드·푸시
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ env.REGISTRY }}/aewol-backend:${{ steps.meta.outputs.tag }}
+          cache-from: type=gha,scope=backend
+          cache-to: type=gha,mode=max,scope=backend
+
+      - name: OCR 이미지 빌드·푸시
+        uses: docker/build-push-action@v6
+        with:
+          context: ./ocr-service
+          push: true
+          tags: ${{ env.REGISTRY }}/aewol-ocr:${{ steps.meta.outputs.tag }}
+          cache-from: type=gha,scope=ocr
+          cache-to: type=gha,mode=max,scope=ocr
+
+  deploy:
+    needs: [build]
+    # build가 건너뛰어졌을 때(롤백)도 실행되어야 하므로 성공 조건을 직접 적는다.
+    if: ${{ !cancelled() && needs.build.result != 'failure' }}
+    runs-on: ubuntu-latest
+    # 승인자를 지정한 GitHub Environment. 승인 전에는 SSM 명령이 나가지 않는다.
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 배포 태그 확인
+        id: tag
+        run: |
+          TAG="${{ inputs.image_tag || needs.build.outputs.tag }}"
+          if [ -z "$TAG" ]; then
+            echo "배포할 태그를 결정하지 못했습니다." >&2
+            exit 1
+          fi
+          echo "value=$TAG" >> "$GITHUB_OUTPUT"
+          echo "배포 태그: $TAG" >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: 이미지가 ECR에 있는지 확인
+        env:
+          TAG: ${{ steps.tag.outputs.value }}
+        run: |
+          set -euo pipefail
+          for REPO in aewol-backend aewol-ocr; do
+            aws ecr describe-images --repository-name "$REPO" --image-ids "imageTag=$TAG" >/dev/null \
+              || { echo "ECR에 ${REPO}:${TAG} 이미지가 없습니다." >&2; exit 1; }
+          done
+          echo "두 이미지 모두 확인했습니다."
+
+      - name: 배포 번들 만들기
+        id: bundle
+        run: |
+          set -euo pipefail
+          # 호스트에 남는 파일(compose·스크립트)을 배포 커밋과 항상 일치시킨다.
+          # 이 번들을 보내지 않으면 이미지만 새것이고 compose는 옛날 것인 상태가 생긴다.
+          tar czf bundle.tgz \
+            docker-compose.prod.yml \
+            scripts/deploy.sh scripts/fetch-env.sh scripts/backup-db.sh
+          BYTES=$(wc -c < bundle.tgz)
+          # SSM SendCommand의 요청 크기 제한에 걸리면 원인을 알기 어려운 에러가 난다.
+          # 번들에 큰 파일이 들어오면 여기서 먼저 잡는다.
+          if [ "$BYTES" -gt 40000 ]; then
+            echo "배포 번들이 너무 큽니다(${BYTES}B). SSM으로 보내는 방식을 재검토하세요." >&2
+            exit 1
+          fi
+          echo "b64=$(base64 -w0 bundle.tgz)" >> "$GITHUB_OUTPUT"
+          echo "번들 ${BYTES}B"
+
+      - name: SSM으로 배포 실행
+        id: send
+        env:
+          TAG: ${{ steps.tag.outputs.value }}
+          BUNDLE_B64: ${{ steps.bundle.outputs.b64 }}
+        run: |
+          set -euo pipefail
+          # 인스턴스에서 돌 스크립트. base64로 실어 보내므로 따옴표·개행 문제가 없다.
+          SCRIPT=$(cat <<SH
+          set -euo pipefail
+          APP_DIR=/opt/aewol
+          mkdir -p "\$APP_DIR"
+          cd "\$APP_DIR"
+          # SSM 명령은 root로 실행된다. 그대로 두면 파일이 root 소유가 되어 이후
+          # 수동 운영(ec2-user로 compose 실행)이 막힌다. 성공하든 실패하든 되돌린다.
+          trap 'chown -R ec2-user:ec2-user "\$APP_DIR" 2>/dev/null || true' EXIT
+          echo '${BUNDLE_B64}' | base64 -d | tar xzf -
+          chmod +x scripts/*.sh
+          export AWS_REGION=${AWS_REGION}
+          export REGISTRY=${REGISTRY}
+          export APP_IMAGE=${REGISTRY}/aewol-backend:${TAG}
+          export OCR_IMAGE=${REGISTRY}/aewol-ocr:${TAG}
+          ./scripts/deploy.sh
+          SH
+          )
+          # 셸 따옴표 처리를 거치지 않도록 jq로 JSON을 만들어 파일로 넘긴다.
+          jq -n --arg id "$INSTANCE_ID" --arg script "$SCRIPT" --arg comment "deploy $TAG" '{
+            InstanceIds: [$id],
+            DocumentName: "AWS-RunShellScript",
+            Comment: $comment,
+            TimeoutSeconds: 600,
+            Parameters: { commands: [$script], executionTimeout: ["1800"] }
+          }' > payload.json
+          CMD_ID=$(aws ssm send-command --cli-input-json file://payload.json \
+            --query Command.CommandId --output text)
+          echo "command_id=$CMD_ID" >> "$GITHUB_OUTPUT"
+          echo "SSM CommandId: $CMD_ID"
+
+      - name: 배포 결과 기다리기
+        env:
+          CMD_ID: ${{ steps.send.outputs.command_id }}
+        run: |
+          set -uo pipefail
+          STATUS=Pending
+          # aws ssm wait는 100초에서 끊긴다. 이미지 pull과 헬스체크에는 그보다 오래 걸린다.
+          for _ in $(seq 1 120); do
+            STATUS=$(aws ssm get-command-invocation \
+              --command-id "$CMD_ID" --instance-id "$INSTANCE_ID" \
+              --query Status --output text 2>/dev/null || echo Pending)
+            case "$STATUS" in
+              Success|Failed|Cancelled|TimedOut) break ;;
+            esac
+            sleep 10
+          done
+
+          RESULT=$(aws ssm get-command-invocation \
+            --command-id "$CMD_ID" --instance-id "$INSTANCE_ID" --output json)
+          echo "----- 인스턴스 출력 -----"
+          echo "$RESULT" | jq -r '.StandardOutputContent'
+          echo "----- 인스턴스 오류 출력 -----"
+          echo "$RESULT" | jq -r '.StandardErrorContent'
+
+          if [ "$STATUS" != "Success" ]; then
+            # 위 출력은 각각 2400자에서 잘린다. 전체 로그는 인스턴스에 있다.
+            echo "배포 실패 (Status=$STATUS). 전체 로그: SSM 세션으로 접속해" >&2
+            echo "  docker compose --env-file .env.prod -f docker-compose.prod.yml logs --tail=200 app" >&2
+            exit 1
+          fi
+          echo "배포 성공: ${{ steps.tag.outputs.value }}" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: CloudFront를 통해 외부에서 확인
+        run: |
+          set -euo pipefail
+          for i in $(seq 1 10); do
+            if curl -fsS --max-time 10 https://d2wzfpczojllq5.cloudfront.net/api/health >/dev/null; then
+              echo "외부 헬스체크 통과"
+              exit 0
+            fi
+            sleep 6
+          done
+          echo "인스턴스에서는 정상이지만 CloudFront를 통해서는 응답하지 않습니다." >&2
+          echo "오리진 설정이나 보안그룹(8080 인바운드)을 확인하세요." >&2
+          exit 1
