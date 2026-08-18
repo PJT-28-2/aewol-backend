@@ -1,0 +1,97 @@
+# 운영용 구성. 로컬 개발은 기존 docker-compose.yml을 그대로 쓴다.
+#
+#   로컬:  docker-compose up -d
+#          (mysql/redis/ocr만 띄우고 앱은 IDE에서 실행 — 기존과 동일)
+#   운영:  docker compose --env-file .env.prod -f docker-compose.prod.yml up -d
+#
+# 로컬 구성과 달리 DB·Redis·OCR의 호스트 포트를 열지 않는다. 컨테이너끼리는 compose
+# 네트워크에서 서비스명으로 통신하므로 외부에 노출할 이유가 없고, docker의 포트 매핑은
+# iptables를 직접 조작해 호스트 방화벽(ufw 등)을 우회하기 때문에 실수로 열어두면
+# 방화벽을 믿고 있다가 그대로 노출된다.
+
+services:
+  mysql:
+    image: mysql:8
+    container_name: aewol-mysql-prod
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:?DB_ROOT_PASSWORD가 필요합니다}
+      MYSQL_DATABASE: ${DB_NAME:-aewol}
+      MYSQL_USER: ${DB_USERNAME:?DB_USERNAME이 필요합니다}
+      MYSQL_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD가 필요합니다}
+      TZ: Asia/Seoul
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      # 로컬 구성과 같은 이유로 유지한다. 문자셋을 지정하지 않은 클라이언트가 붙으면
+      # 세션이 latin1로 떨어져 한글이 '?'로 저장되고 되돌릴 수 없다.
+      - --init-connect=SET NAMES utf8mb4 COLLATE utf8mb4_unicode_ci
+    volumes:
+      - mysql-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  redis:
+    image: redis:7
+    container_name: aewol-redis-prod
+    restart: unless-stopped
+    # 호스트 포트를 열지 않으므로 compose 네트워크 밖에서는 접근할 수 없다.
+    # 혹시라도 Redis를 외부에 노출하게 되면 requirepass 설정이 반드시 선행되어야 한다
+    # (인증 없는 Redis는 공개되는 즉시 침해 대상이 된다).
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  ocr-service:
+    # EC2에서 직접 빌드하지 않는다. onnxruntime·opencv 설치는 메모리를 크게 써서
+    # 작은 인스턴스에서는 빌드 자체가 실패한다. CI에서 빌드해 ECR에 올린 이미지를 pull만 한다.
+    image: ${OCR_IMAGE:?OCR_IMAGE가 필요합니다}
+    container_name: aewol-ocr-prod
+    restart: unless-stopped
+
+  migrate:
+    # 앱과 같은 이미지를 쓰되 진입점만 바꿔 마이그레이션만 수행하고 종료한다.
+    # 앱보다 먼저 단독으로 돌고, 실패하면 app이 아예 기동하지 않는다.
+    image: ${APP_IMAGE:?APP_IMAGE가 필요합니다}
+    container_name: aewol-migrate
+    restart: "no"
+    depends_on:
+      mysql:
+        condition: service_healthy
+    env_file:
+      - .env.prod
+    entrypoint: ["java", "-cp", "/app/app.jar", "com.aewol.MigrateMain"]
+
+  app:
+    image: ${APP_IMAGE:?APP_IMAGE가 필요합니다}
+    container_name: aewol-app
+    restart: unless-stopped
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+      ocr-service:
+        condition: service_started
+    env_file:
+      - .env.prod
+    environment:
+      SPRING_PROFILES_ACTIVE: prod
+    ports:
+      # 리버스 프록시(Nginx/ALB)만 접근하면 되므로 루프백에만 바인딩한다.
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - uploads:/app/uploads
+
+volumes:
+  mysql-data:
+  redis-data:
+  uploads:
