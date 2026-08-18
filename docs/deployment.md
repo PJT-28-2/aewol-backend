@@ -143,8 +143,8 @@ aws iam create-open-id-connect-provider   --url https://token.actions.githubuser
       "StringEquals": { "token.actions.githubusercontent.com:aud": "sts.amazonaws.com" },
       "StringLike": {
         "token.actions.githubusercontent.com:sub": [
-          "repo:PJT-28-2/aewol-backend:ref:refs/heads/main",
-          "repo:PJT-28-2/aewol-backend:environment:production"
+          "repo:PJT-28-2@305673706/aewol-backend@1322553788:ref:refs/heads/main",
+          "repo:PJT-28-2@305673706/aewol-backend@1322553788:environment:production"
         ]
       }
     }
@@ -154,6 +154,22 @@ aws iam create-open-id-connect-provider   --url https://token.actions.githubuser
 
 두 개인 이유: `build` 잡은 브랜치 컨텍스트(`ref:...`)로, `deploy` 잡은 Environment를
 쓰므로 `environment:production`으로 토큰이 발급된다.
+
+> **`@305673706`/`@1322553788`는 오타가 아니다.** 조직·리포지토리의 불변(immutable) ID다.
+> 이 조직은 OIDC subject에 이름 대신(또는 이름과 함께) 이 ID를 포함하는 설정이 켜져
+> 있어서, `repo:OWNER/REPO:...` 형태의 신뢰 정책은 실제 토큰과 맞지 않아 매번
+> `AssumeRoleWithWebIdentity`가 "Not authorized"로 거부됐다. 실제 배포에서 겪은 문제이고
+> 첫 배포가 여기서 한동안 막혔다.
+>
+> 이름은 조직·리포지토리 개명이나 이관으로 바뀔 수 있지만 ID는 바뀌지 않는다 — 즉
+> 이 방식이 이름만 쓰는 것보다 **더 안전하다**(삭제된 리포지토리와 같은 이름으로 새
+> 리포지토리를 만들어 신뢰를 가로채는 공격을 막는다). 그래서 끄는 대신 신뢰 정책 쪽을
+> 실제 형식에 맞췄다. 실제 값은 아래로 확인한다.
+>
+> ```bash
+> gh api repos/PJT-28-2/aewol-backend --jq .id   # 리포지토리 ID
+> gh api orgs/PJT-28-2 --jq .id                   # 조직 ID
+> ```
 
 **3. 그 역할의 권한** — ECR push와 SSM SendCommand만 준다.
 
