@@ -16,7 +16,7 @@ KB IT's Your Life 7기 팀 이파리 28-2팀 종합실무 프로젝트입니다.
 | Framework | Spring 5.3.x | Spring MVC, Spring Security 5.8.x |
 | ORM | MyBatis 3.5+ | XML Mapper |
 | Auth | JWT (jjwt 0.12.x) + Redis RTR | Access 30분 / Refresh 7일 |
-| Batch | Spring Batch 4.3.x | 일배치 3종 |
+| Batch | Spring Batch 4.3.x | 정기 작업 스케줄링 |
 | Server | Embedded Tomcat 9 | Fat JAR |
 | DB | MySQL 8.0 | InnoDB, utf8mb4 |
 | Cache | Redis 7 | 토큰 저장, Rate Limit |
@@ -70,7 +70,6 @@ src/main/java/com/aewol/
 │   ├── smtp/                   # 이메일 인증
 │   └── tosspayments/           # TossPayments
 └── batch/
-    ├── DashboardAggregationJob.java    # 자정 지출 집계
     ├── RecurringPaymentJob.java        # 오전 9시 정기결제
     └── DonationRoundUpJob.java         # 오후 11시 잔돈 적립
 
