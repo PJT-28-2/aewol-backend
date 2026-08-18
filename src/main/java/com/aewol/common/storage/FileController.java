@@ -7,7 +7,6 @@ import java.io.InputStream;
 import lombok.RequiredArgsConstructor;
 import org.springframework.core.io.InputStreamResource;
 import org.springframework.http.CacheControl;
-import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -53,7 +52,7 @@ public class FileController {
         long remainingSeconds = Math.max(0, expires - Instant.now().getEpochSecond());
         Duration cacheDuration = Duration.ofSeconds(Math.min(Duration.ofMinutes(10).getSeconds(), remainingSeconds));
         return ResponseEntity.ok()
-                .contentType(mediaTypeOf(key))
+                .contentType(FileMediaTypes.of(key))
                 // 서명 만료 뒤까지 브라우저 캐시에 남지 않도록 남은 유효시간 이내로 제한한다.
                 .cacheControl(CacheControl.maxAge(cacheDuration).cachePrivate())
                 .body(new InputStreamResource(content));
@@ -69,13 +68,4 @@ public class FileController {
         return path.substring(prefix.length());
     }
 
-    private MediaType mediaTypeOf(String key) {
-        String lower = key.toLowerCase();
-        if (lower.endsWith(".png")) return MediaType.IMAGE_PNG;
-        if (lower.endsWith(".jpg") || lower.endsWith(".jpeg")) return MediaType.IMAGE_JPEG;
-        if (lower.endsWith(".gif")) return MediaType.IMAGE_GIF;
-        if (lower.endsWith(".webp")) return MediaType.parseMediaType("image/webp");
-        if (lower.endsWith(".pdf")) return MediaType.APPLICATION_PDF;
-        return MediaType.APPLICATION_OCTET_STREAM;
-    }
 }
