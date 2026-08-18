@@ -34,7 +34,8 @@ public class SpendingInsightCollector implements InsightCardCollector {
 
     @Override
     public InsightCard collect(String memberId, String petId) {
-        String month = LocalDate.now().format(MONTH);
+        LocalDate today = LocalDate.now();
+        String month = today.format(MONTH);
         Map<String, Object> summary;
         Map<String, Object> breakdown;
         try {
@@ -77,9 +78,15 @@ public class SpendingInsightCollector implements InsightCardCollector {
                 .map(item -> categoryLabel(String.valueOf(item.get("category"))))
                 .orElse("지출");
 
+        BigDecimal projected = MonthPace.projectMonthEnd(total, today);
+        String projection = projected == null ? null
+                : "이 속도면 이달 말 약 %s원 (남은 %d일)".formatted(
+                        WON.format(projected), MonthPace.remainingDays(today));
+
         return InsightCard.builder()
                 .type(type())
                 .headline("이번 달 지출 %s원".formatted(WON.format(total)))
+                .projection(projection)
                 .facts("""
                         기간: %s
                         총 지출: %s원 %s
@@ -90,7 +97,9 @@ public class SpendingInsightCollector implements InsightCardCollector {
                         .formatted(WON.format(total), top))
                 .ctaLabel("내역 보기")
                 .ctaPath("/wallet")
-                .digest(month + ":" + total.toPlainString())
+                // 남은 일수가 매일 줄어 예측 문장도 매일 달라진다. 날짜를 지문에 넣어
+                // 어제 문장이 오늘 그대로 재사용되지 않게 한다.
+                .digest(today + ":" + total.toPlainString())
                 .build();
     }
 

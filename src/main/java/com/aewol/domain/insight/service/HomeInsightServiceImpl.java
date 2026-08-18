@@ -114,7 +114,7 @@ public class HomeInsightServiceImpl implements HomeInsightService {
     }
 
     private HomeInsightResponse generateAndStore(String memberId, InsightCard card) {
-        String body = openAiChatClient.complete(systemPrompt(), card.getFacts());
+        String body = openAiChatClient.complete(systemPrompt(), card.promptFacts());
         boolean fallback = body == null;
         if (fallback) {
             body = card.getFallbackBody();
@@ -142,6 +142,7 @@ public class HomeInsightServiceImpl implements HomeInsightService {
                 .type(card.getType().name())
                 .headline(card.getHeadline())
                 .body(body)
+                .projection(card.getProjection())
                 .ctaLabel(card.getCtaLabel())
                 .ctaPath(card.getCtaPath())
                 .fallback(fallback)
@@ -174,6 +175,9 @@ public class HomeInsightServiceImpl implements HomeInsightService {
                 // 옛 제목이 남아 있으면 카드가 거짓말을 하게 된다.
                 .headline(card.getHeadline())
                 .body(String.valueOf(cached.get("body")))
+                // 예측도 제목과 같은 이유로 캐시하지 않는다. 어제 계산한 '이달 말 예상'을
+                // 오늘 그대로 보여주면 남은 일수가 어긋난다.
+                .projection(card.getProjection())
                 .ctaLabel(card.getCtaLabel())
                 .ctaPath(card.getCtaPath())
                 .fallback("Y".equals(String.valueOf(cached.get("fallback"))))

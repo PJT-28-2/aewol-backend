@@ -7,6 +7,7 @@ import com.aewol.domain.insight.service.InsightCard;
 import com.aewol.domain.insight.service.InsightCardCollector;
 import com.aewol.domain.insight.service.InsightCardType;
 import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.text.NumberFormat;
 import java.util.List;
 import java.util.Locale;
@@ -58,9 +59,19 @@ public class DonationInsightCollector implements InsightCardCollector {
                 .map(campaign -> "- %s".formatted(campaign.getTitle()))
                 .collect(Collectors.joining("\n"));
 
+        // 이번 달 적립분만으로 속도를 잰다. 누적액에는 지난달까지의 적립이 섞여 있어
+        // 그것으로 나누면 지금 페이스가 아니라 평생 평균이 나온다.
+        LocalDate today = LocalDate.now();
+        BigDecimal projectedMonthly = MonthPace.projectMonthEnd(monthly, today);
+        String projection = projectedMonthly == null ? null
+                : "이 속도면 이달 말 누적 약 %s원 (이번 달 %s원 예상)".formatted(
+                        WON.format(balance.subtract(monthly).add(projectedMonthly)),
+                        WON.format(projectedMonthly));
+
         return InsightCard.builder()
                 .type(type())
                 .headline("모인 잔돈 %s원".formatted(WON.format(balance)))
+                .projection(projection)
                 .facts("""
                         짜투리지갑(결제 잔돈 자동 적립) 현황
                         - 누적 %s원, 이번 달 %s원 적립
@@ -76,7 +87,8 @@ public class DonationInsightCollector implements InsightCardCollector {
                                         ? "기부할 곳을 골라보세요." : overview.getImpactMessage()))
                 .ctaLabel("기부하기")
                 .ctaPath("/donation")
-                .digest(balance.toPlainString() + ":" + campaigns.size())
+                // 남은 일수가 줄면 예측 문장이 달라지므로 날짜를 지문에 넣는다.
+                .digest(today + ":" + balance.toPlainString() + ":" + campaigns.size())
                 .build();
     }
 }
