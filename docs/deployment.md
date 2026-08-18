@@ -130,3 +130,70 @@ DB가 컨테이너 볼륨(EBS)에 있어 인스턴스를 잃으면 함께 사라
 상태가 된다.
 
 **`FileUtil` 통합이 끝나기 전에는 운영 배포를 하면 안 된다.**
+
+## 데이터베이스를 같은 EC2에 둔 이유
+
+MySQL을 RDS로 분리하지 않고 애플리케이션과 같은 EC2에 컨테이너로 올렸다.
+
+**판단 기준은 프로젝트 기간과 비용이다.** RDS는 자동 백업·장애조치·파라미터 튜닝을 제공하지만,
+이 프로젝트는 상시 운영이 아니라 정해진 기간의 시연이 목표라 그 이점이 회수되기 전에 끝난다.
+
+**대신 포기한 것을 명확히 한다.**
+
+- 인스턴스를 잃으면 `mysql-data` 볼륨도 함께 사라진다
+- 자동 복구 지점이 없다 — `docker compose down -v` 한 번이면 전체가 지워진다
+- DB가 애플리케이션·OCR과 같은 메모리를 나눠 쓴다
+
+그래서 **아래 백업이 이 결정의 전제 조건이다.** 백업이 돌지 않으면 이 선택은 정당화되지 않는다.
+
+### 언제 RDS로 옮기는가
+
+실사용 트래픽을 받기 시작하면 옮긴다. 전환 비용은 크지 않다.
+
+- 애플리케이션은 접속 정보를 전부 환경변수(`DB_URL` / `DB_USERNAME` / `DB_PASSWORD`)로 받는다.
+  `MigrateMain`도 같은 값을 읽으므로 마이그레이션 경로가 그대로 유지된다
+- 실제 작업은 `DB_URL` 교체와 `docker-compose.prod.yml`에서 `mysql` 서비스·볼륨 제거가 전부다
+
+⚠️ **단, 문자셋 설정이 함께 사라진다.** 지금은 compose의 `--character-set-server`,
+`--collation-server`, `--init-connect` 세 플래그가 한글 깨짐을 막고 있는데, RDS에서는 이
+플래그를 쓸 수 없고 **커스텀 파라미터 그룹**으로 같은 값을 설정해야 한다. 기본 파라미터
+그룹을 그대로 쓰면 세션이 latin1로 떨어져 한글이 `?`로 저장되고 되돌릴 수 없다.
+이 프로젝트는 이미 한 번 겪은 문제다(#126).
+
+## 백업과 복구
+
+### 백업
+
+`scripts/backup-db.sh`가 컨테이너의 MySQL을 덤프해 S3로 올린다.
+
+```bash
+sudo crontab -e
+# 매일 04:00
+0 4 * * * /opt/aewol/scripts/backup-db.sh >> /var/log/aewol-backup.log 2>&1
+```
+
+- 필요 환경변수: `.env.prod`의 `DB_NAME` / `DB_USERNAME` / `DB_PASSWORD` / `BACKUP_BUCKET`
+- 필요 권한: EC2 인스턴스 프로파일에 백업 버킷 `s3:PutObject`
+- S3 키 형식: `db-backup/YYYY/MM/aewol-YYYYMMDDTHHMMSS.sql.gz`
+- 원격 보관 기간은 **S3 수명주기 규칙**으로 관리한다 (스크립트는 호스트 디스크만 정리)
+- 배포 직전에도 1회 수행한다 (CD 워크플로 스텝)
+
+### 복구
+
+**복구해 본 적 없는 백업은 백업이 아니다.** 최소 한 번은 아래 절차를 연습해 둔다.
+
+```bash
+aws s3 cp s3://<버킷>/db-backup/2026/08/aewol-20260818T040000.sql.gz .
+```
+
+```bash
+gunzip -c aewol-20260818T040000.sql.gz | docker exec -i -e MYSQL_PWD="$DB_PASSWORD" aewol-mysql-prod mysql --user="$DB_USERNAME" --default-character-set=utf8mb4 "$DB_NAME"
+```
+
+복원 후 **한글 데이터를 조회해 문자셋을 반드시 확인한다.** `?`로 보이면 덤프나 복원 중
+문자셋이 어긋난 것이므로 그 백업은 쓸 수 없다.
+
+### EBS 스냅샷
+
+`mysqldump`는 논리 백업이라 복원에 시간이 걸린다. 인스턴스 자체가 사라진 경우를 대비해
+EBS 스냅샷도 함께 건다 (Data Lifecycle Manager로 자동화).
