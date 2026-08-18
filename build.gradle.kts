@@ -1,6 +1,7 @@
 plugins {
     java
     id("org.flywaydb.flyway") version "9.22.3"
+    id("com.github.johnrengelman.shadow") version "8.1.1"
 }
 
 group = "com.aewol"
@@ -151,20 +152,29 @@ flyway {
 }
 
 // 실행 가능한 Fat JAR 생성
-tasks.register<Jar>("fatJar") {
+//
+// 직접 zipTree로 합치던 방식은 DuplicatesStrategy.EXCLUDE 때문에 경로가 겹치는 파일 중
+// 먼저 들어간 하나만 남겼다. 문제는 META-INF/services/* 다. 여러 의존성이 같은 경로에
+// 각자의 목록을 두기 때문에, 하나만 남으면 ServiceLoader로 등록되는 기능이 조용히 사라진다.
+//
+// 실제로 flyway-core의 플러그인 목록이 flyway-mysql 것에 밀려 없어졌고, 그 결과 운영에서
+// 마이그레이션 36개가 전부 "이름 규칙 위반"으로 무시되어 스키마가 생성되지 않았다.
+// shadowJar의 mergeServiceFiles()는 이 파일들을 이어붙여 합친다.
+tasks.shadowJar {
     archiveClassifier.set("all")
-    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    manifest {
+        attributes["Main-Class"] = "com.aewol.AewolApplication"
+    }
+    mergeServiceFiles()
     exclude(
         "META-INF/INDEX.LIST",
         "META-INF/*.SF",
         "META-INF/*.DSA",
-        "META-INF/*.RSA",
-        "module-info.class",
-        "META-INF/versions/**/module-info.class"
+        "META-INF/*.RSA"
     )
-    manifest {
-        attributes["Main-Class"] = "com.aewol.AewolApplication"
-    }
-    from(configurations.runtimeClasspath.get().map { if (it.isDirectory) it else zipTree(it) })
-    from(sourceSets.main.get().output)
+}
+
+// Dockerfile과 문서가 쓰던 이름을 그대로 유지한다.
+tasks.register("fatJar") {
+    dependsOn(tasks.shadowJar)
 }
