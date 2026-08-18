@@ -21,6 +21,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.HttpStatus;
@@ -40,6 +41,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -52,6 +54,8 @@ class KakaoSignupServiceImplTest {
     private static final String REGISTRATION_TOKEN = "a".repeat(43);
     private static final String TOKEN_HASH =
             "66d34fba71f8f450f7e45598853e53bfc23bbd129027cbb131a2f4ffd7878cd0";
+    private static final String PHONE_HASH =
+            "e60124f2fe2045215abda1ae912aa80bb66dab5fc231a758387682c9c0e70c01";
 
     @Mock MemberMapper memberMapper;
     @Mock WalletMapper walletMapper;
@@ -132,6 +136,30 @@ class KakaoSignupServiceImplTest {
                 () -> service.sendPhoneVerificationCode(request));
 
         assertEquals(HttpStatus.CONFLICT, duplicate.getStatus());
+        verify(smsSender, never()).send(anyString(), anyString());
+    }
+
+    @Test
+    void duplicatePhoneConsumesBothRateLimitsBeforeConflict() {
+        KakaoPhoneSendCodeRequest request = sendRequest("01012345678");
+        when(registrationStore.getAvailable(REGISTRATION_TOKEN)).thenReturn(session(null));
+        when(redisRateLimiter.incrementWithExpiry(anyString(),
+                org.mockito.ArgumentMatchers.eq(1800L))).thenReturn(1L);
+        when(memberMapper.existsActiveByPhone("01012345678")).thenReturn(true);
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.sendPhoneVerificationCode(request));
+
+        assertEquals(HttpStatus.CONFLICT, exception.getStatus());
+        InOrder order = inOrder(registrationStore, redisRateLimiter, memberMapper);
+        order.verify(registrationStore).getAvailable(REGISTRATION_TOKEN);
+        order.verify(redisRateLimiter).incrementWithExpiry(
+                KakaoSignupServiceImpl.TOKEN_RATE_LIMIT_PREFIX + TOKEN_HASH, 1800L);
+        order.verify(redisRateLimiter).incrementWithExpiry(
+                KakaoSignupServiceImpl.PHONE_RATE_LIMIT_PREFIX + PHONE_HASH,
+                1800L);
+        order.verify(memberMapper).existsActiveByPhone("01012345678");
+        verify(phoneVerificationStore, never()).issue(anyString(), anyString(), anyString());
         verify(smsSender, never()).send(anyString(), anyString());
     }
 

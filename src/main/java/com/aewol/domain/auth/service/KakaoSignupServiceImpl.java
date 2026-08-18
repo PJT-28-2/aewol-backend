@@ -62,14 +62,14 @@ public class KakaoSignupServiceImpl implements KakaoSignupService {
         if (normalizedPhone == null || !normalizedPhone.matches("^010\\d{8}$")) {
             throw new BusinessException("올바른 휴대전화 번호를 입력해주세요.");
         }
-        if (memberMapper.existsActiveByPhone(normalizedPhone)) {
-            throw BusinessException.conflict("이미 사용 중인 전화번호입니다.");
-        }
-
         String tokenHash = subjectHash(request.getRegistrationToken());
         String phoneHash = subjectHash(normalizedPhone);
         enforceRateLimit(TOKEN_RATE_LIMIT_PREFIX + tokenHash);
         enforceRateLimit(PHONE_RATE_LIMIT_PREFIX + phoneHash);
+
+        if (memberMapper.existsActiveByPhone(normalizedPhone)) {
+            throw BusinessException.conflict("이미 사용 중인 전화번호입니다.");
+        }
 
         KakaoPhoneVerificationStore.IssuedVerification issued =
                 phoneVerificationStore.issue(
