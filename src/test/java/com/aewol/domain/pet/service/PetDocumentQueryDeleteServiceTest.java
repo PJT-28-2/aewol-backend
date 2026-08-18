@@ -4,7 +4,6 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
 import com.aewol.common.exception.BusinessException;
-import com.aewol.common.util.FileUtil;
 import com.aewol.common.storage.FileStorage;
 import com.aewol.domain.pet.dto.PetDocumentResponse;
 import com.aewol.domain.pet.dto.PetRegistrationResponse;
@@ -27,16 +26,14 @@ import org.springframework.http.HttpStatus;
 class PetDocumentQueryDeleteServiceTest {
 
     @Mock PetMapper petMapper;
-    @Mock PetDocumentMapper petDocumentMapper;
-    @Mock FileUtil fileUtil;
-    @Mock FileStorage fileStorage;
+    @Mock PetDocumentMapper petDocumentMapper;    @Mock FileStorage fileStorage;
     @Mock PetRegistrationService petRegistrationService;
 
     private PetServiceImpl service;
 
     @BeforeEach
     void setUp() {
-        service = new PetServiceImpl(petMapper, petDocumentMapper, fileUtil, fileStorage, petRegistrationService);
+        service = new PetServiceImpl(petMapper, petDocumentMapper, fileStorage, petRegistrationService);
         lenient().when(fileStorage.signedUrl(anyString()))
                 .thenAnswer(invocation -> "signed:" + invocation.getArgument(0));
     }
@@ -45,8 +42,8 @@ class PetDocumentQueryDeleteServiceTest {
     void should_returnDocuments_when_ownerRequestsList() {
         givenOwner();
         when(petDocumentMapper.findByPetId("pet-1")).thenReturn(List.of(
-                document("2", "/uploads/pet-documents/new.pdf", LocalDate.of(2026, 8, 7)),
-                document("1", "/uploads/pet-documents/old.png", LocalDate.of(2026, 8, 1))));
+                document("2", "pet-documents/new.pdf", LocalDate.of(2026, 8, 7)),
+                document("1", "pet-documents/old.png", LocalDate.of(2026, 8, 1))));
 
         List<PetDocumentResponse> result = service.getPetDocuments("member-1", "pet-1");
 
@@ -54,7 +51,7 @@ class PetDocumentQueryDeleteServiceTest {
         assertEquals("2", result.get(0).getDocId());
         assertEquals("vaccination-certificate.pdf", result.get(0).getDocName());
         assertEquals("2026-08-07", result.get(0).getIssuedDate());
-        assertEquals("signed:/uploads/pet-documents/new.pdf", result.get(0).getFileUrl());
+        assertEquals("signed:pet-documents/new.pdf", result.get(0).getFileUrl());
         assertEquals("2026-08-07T10:00:00", result.get(0).getCreatedAt());
         verify(petDocumentMapper).findByPetId("pet-1");
     }
@@ -93,27 +90,27 @@ class PetDocumentQueryDeleteServiceTest {
     void should_deleteRecordAndFile_when_ownerDeletesDocument() throws IOException {
         givenOwner();
         when(petDocumentMapper.findByIdAndPetIdForUpdate("doc-1", "pet-1"))
-                .thenReturn(document("doc-1", "/uploads/pet-documents/file.pdf", null));
+                .thenReturn(document("doc-1", "pet-documents/file.pdf", null));
         when(petDocumentMapper.deleteByIdAndPetId("doc-1", "pet-1")).thenReturn(1);
 
         service.deletePetDocument("member-1", "pet-1", "doc-1");
 
         verify(petDocumentMapper).deleteByIdAndPetId("doc-1", "pet-1");
-        verify(fileUtil).delete("/uploads/pet-documents/file.pdf");
+        verify(fileStorage).delete("pet-documents/file.pdf");
     }
 
     @Test
     void should_keepDeleteResult_when_fileCleanupFailsAfterDatabaseDelete() throws IOException {
         givenOwner();
         when(petDocumentMapper.findByIdAndPetIdForUpdate("doc-1", "pet-1"))
-                .thenReturn(document("doc-1", "/uploads/pet-documents/file.pdf", null));
+                .thenReturn(document("doc-1", "pet-documents/file.pdf", null));
         when(petDocumentMapper.deleteByIdAndPetId("doc-1", "pet-1")).thenReturn(1);
-        doThrow(new IOException("disk error"))
-                .when(fileUtil).delete("/uploads/pet-documents/file.pdf");
+        doThrow(new BusinessException(HttpStatus.INTERNAL_SERVER_ERROR, "파일을 저장하지 못했어요. 잠시 후 다시 시도해 주세요."))
+                .when(fileStorage).delete("pet-documents/file.pdf");
 
         assertDoesNotThrow(() -> service.deletePetDocument("member-1", "pet-1", "doc-1"));
 
-        verify(fileUtil).delete("/uploads/pet-documents/file.pdf");
+        verify(fileStorage).delete("pet-documents/file.pdf");
     }
 
     @Test
@@ -126,7 +123,7 @@ class PetDocumentQueryDeleteServiceTest {
 
         assertEquals(HttpStatus.NOT_FOUND, exception.getStatus());
         verify(petDocumentMapper, never()).deleteByIdAndPetId(anyString(), anyString());
-        verifyNoInteractions(fileUtil);
+        verifyNoInteractions(fileStorage);
     }
 
     @Test
@@ -137,7 +134,7 @@ class PetDocumentQueryDeleteServiceTest {
                 () -> service.deletePetDocument("member-2", "pet-1", "doc-1"));
 
         assertEquals(HttpStatus.FORBIDDEN, exception.getStatus());
-        verifyNoInteractions(petDocumentMapper, fileUtil);
+        verifyNoInteractions(petDocumentMapper, fileStorage);
     }
 
     @Test
@@ -148,7 +145,7 @@ class PetDocumentQueryDeleteServiceTest {
                 () -> service.deletePetDocument("member-1", "pet-404", "doc-1"));
 
         assertEquals(HttpStatus.NOT_FOUND, exception.getStatus());
-        verifyNoInteractions(petDocumentMapper, fileUtil);
+        verifyNoInteractions(petDocumentMapper, fileStorage);
     }
 
     private void givenOwner() {
@@ -178,7 +175,7 @@ class PetDocumentQueryDeleteServiceTest {
     void should_returnDocumentResponse_when_docTypeIsNotRegistration() {
         givenOwner();
         when(petDocumentMapper.findByIdAndPetId("doc-1", "pet-1"))
-                .thenReturn(document("doc-1", "/uploads/pet-documents/file.pdf", LocalDate.of(2026, 8, 7)));
+                .thenReturn(document("doc-1", "pet-documents/file.pdf", LocalDate.of(2026, 8, 7)));
 
         Object result = service.getPetDocument("member-1", "pet-1", "doc-1");
 

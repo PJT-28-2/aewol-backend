@@ -1,6 +1,7 @@
 package com.aewol.common.storage;
 
 import com.aewol.common.exception.BusinessException;
+import org.springframework.http.HttpStatus;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Files;
@@ -9,15 +10,21 @@ import java.nio.file.Paths;
 import java.util.UUID;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Component;
 
 /**
  * 서버 로컬 디스크에 저장하는 기본 구현.
  *
  * <p>AWS 자격증명이 없는 팀원도 개발할 수 있도록 이쪽이 기본값이다.
+ *
+ * <p>prod에서는 {@link S3FileStorage}가 대신 등록된다. 프로파일을 나열하지 않고
+ * "prod가 아닐 때"로 적은 것은, 프로파일이 늘어날 때 어느 쪽에도 걸리지 않아 빈이
+ * 사라지거나 양쪽에 걸려 중복되는 사고를 막기 위해서다.
  */
 @Slf4j
 @Component
+@Profile("!prod")
 public class LocalFileStorage implements FileStorage {
 
     private final Path root;
@@ -41,7 +48,8 @@ public class LocalFileStorage implements FileStorage {
             return key;
         } catch (IOException e) {
             log.error("[FILE_STORE_FAILED] 저장 실패 - key: {}, {}바이트", key, content.length, e);
-            throw new BusinessException("파일을 저장하지 못했어요. 잠시 후 다시 시도해 주세요.");
+            throw new BusinessException(HttpStatus.INTERNAL_SERVER_ERROR,
+                    "파일을 저장하지 못했어요. 잠시 후 다시 시도해 주세요.");
         }
     }
 

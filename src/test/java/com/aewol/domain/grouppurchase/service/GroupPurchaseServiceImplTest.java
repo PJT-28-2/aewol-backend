@@ -1,10 +1,10 @@
 package com.aewol.domain.grouppurchase.service;
 
+import com.aewol.common.storage.FileStorage;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
 import com.aewol.common.exception.BusinessException;
-import com.aewol.common.util.FileUtil;
 import com.aewol.domain.grouppurchase.dto.GroupPurchaseCancelResponse;
 import com.aewol.domain.grouppurchase.dto.GroupPurchaseCreateRequest;
 import com.aewol.domain.grouppurchase.dto.GroupPurchaseImageUploadResponse;
@@ -42,7 +42,7 @@ import org.springframework.web.multipart.MultipartFile;
 class GroupPurchaseServiceImplTest {
 
     @Mock GroupPurchaseMapper groupPurchaseMapper;
-    @Mock FileUtil fileUtil;
+    @Mock FileStorage fileStorage;
     @Mock WalletMapper walletMapper;
     @Mock TransactionMapper transactionMapper;
     @Mock SimplePasswordVerificationService simplePasswordVerificationService;
@@ -62,12 +62,15 @@ class GroupPurchaseServiceImplTest {
     void should_returnImageUrl_when_uploadSucceeds() throws IOException {
         GroupPurchaseServiceImpl service = service();
         MultipartFile image = new MockMultipartFile("image", "product.png", "image/png", "content".getBytes());
-        when(fileUtil.upload(image, "group-purchase")).thenReturn("/uploads/group-purchase/product.png");
+        when(fileStorage.store(any(), eq("group-purchase"), eq("png")))
+                .thenReturn("group-purchase/product.png");
 
         GroupPurchaseImageUploadResponse result = service.uploadImage(image);
 
-        assertEquals("/uploads/group-purchase/product.png", result.getImageUrl());
-        verify(fileUtil).upload(image, "group-purchase");
+        // 업로드 응답은 저장 키를 그대로 돌려준다. 클라이언트는 이 값을 화면에 쓰지 않고
+        // 등록 요청의 image 필드로 되돌려 보낸다.
+        assertEquals("group-purchase/product.png", result.getImageUrl());
+        verify(fileStorage).store(any(), eq("group-purchase"), eq("png"));
     }
 
     @Test
@@ -80,7 +83,7 @@ class GroupPurchaseServiceImplTest {
                 () -> service.uploadImage(image));
 
         assertEquals("업로드할 이미지가 없습니다.", exception.getMessage());
-        verifyNoInteractions(fileUtil);
+        verifyNoInteractions(fileStorage);
     }
 
     @Test
@@ -93,20 +96,21 @@ class GroupPurchaseServiceImplTest {
                 () -> service.uploadImage(image));
 
         assertEquals("이미지 파일(jpg, jpeg, png, webp)만 업로드할 수 있습니다.", exception.getMessage());
-        verifyNoInteractions(fileUtil);
+        verifyNoInteractions(fileStorage);
     }
 
     @Test
-    @DisplayName("파일 저장 중 IO 오류가 발생하면 예외가 발생한다")
-    void should_throwException_when_fileStorageFails() throws IOException {
+    @DisplayName("파일 저장에 실패하면 저장소가 던진 예외가 그대로 전달된다")
+    void should_throwException_when_fileStorageFails() {
         GroupPurchaseServiceImpl service = service();
         MultipartFile image = new MockMultipartFile("image", "product.jpg", "image/jpeg", "content".getBytes());
-        when(fileUtil.upload(image, "group-purchase")).thenThrow(new IOException("disk full"));
+        when(fileStorage.store(any(), eq("group-purchase"), eq("jpg")))
+                .thenThrow(new BusinessException("파일을 저장하지 못했어요. 잠시 후 다시 시도해 주세요."));
 
         BusinessException exception = assertThrows(BusinessException.class,
                 () -> service.uploadImage(image));
 
-        assertEquals("이미지 업로드에 실패했습니다.", exception.getMessage());
+        assertEquals("파일을 저장하지 못했어요. 잠시 후 다시 시도해 주세요.", exception.getMessage());
     }
 
     @Test
@@ -774,6 +778,7 @@ class GroupPurchaseServiceImplTest {
 
         when(groupPurchaseMapper.findById("1")).thenReturn(gpRow, updatedGpRow);
         when(groupPurchaseMapper.findParticipant("1", "member-1")).thenReturn(null, savedParticipantRow);
+        when(simplePasswordVerificationService.verify("member-1", PASSWORD)).thenReturn(true);
 
         Map<String, Object> wallet = new HashMap<>();
         wallet.put("wallet_id", "wallet-1");
@@ -842,6 +847,7 @@ class GroupPurchaseServiceImplTest {
         when(groupPurchaseMapper.findById("1")).thenReturn(gpRow, updatedGpRow);
         when(groupPurchaseMapper.findParticipant("1", "member-1")).thenReturn(null, savedParticipantRow);
         when(groupPurchaseMapper.updateQuantity("1", 8)).thenReturn(1);
+        when(simplePasswordVerificationService.verify("member-1", PASSWORD)).thenReturn(true);
 
         service.join("member-1", "1", 8, joinRequest());
 
@@ -867,6 +873,7 @@ class GroupPurchaseServiceImplTest {
         when(groupPurchaseMapper.findById("1")).thenReturn(gpRow, updatedGpRow);
         when(groupPurchaseMapper.findParticipant("1", "member-1")).thenReturn(null, savedParticipantRow);
         when(groupPurchaseMapper.updateQuantity("1", 8)).thenReturn(1);
+        when(simplePasswordVerificationService.verify("member-1", PASSWORD)).thenReturn(true);
 
         service.join("member-1", "1", 8, joinRequest());
 
@@ -888,6 +895,7 @@ class GroupPurchaseServiceImplTest {
         when(groupPurchaseMapper.findById("1")).thenReturn(gpRow, updatedGpRow);
         when(groupPurchaseMapper.findParticipant("1", "member-1")).thenReturn(null, savedParticipantRow);
         when(groupPurchaseMapper.updateQuantity("1", 1)).thenReturn(1);
+        when(simplePasswordVerificationService.verify("member-1", PASSWORD)).thenReturn(true);
 
         GroupPurchaseJoinResponse result = service.join("member-1", "1", 1, joinRequest());
 
@@ -919,6 +927,7 @@ class GroupPurchaseServiceImplTest {
         }).when(transactionMapper).insert(anyMap());
         // 목표 수량 초과 또는 마감으로 조건부 UPDATE의 WHERE 절을 만족하는 행이 없는 상황(영향 행 수 0)을 재현한다.
         when(groupPurchaseMapper.updateQuantity("1", 5)).thenReturn(0);
+        when(simplePasswordVerificationService.verify("member-1", PASSWORD)).thenReturn(true);
 
         BusinessException exception = assertThrows(BusinessException.class,
                 () -> service.join("member-1", "1", 5, joinRequest()));
@@ -949,6 +958,7 @@ class GroupPurchaseServiceImplTest {
         // status = 'CANCELLED'는 updateQuantity의 WHERE 절에서 제외되므로,
         // 마감 전·목표 미달 상태여도 조건부 UPDATE의 영향 행 수는 0이어야 한다.
         when(groupPurchaseMapper.updateQuantity("1", 1)).thenReturn(0);
+        when(simplePasswordVerificationService.verify("member-1", PASSWORD)).thenReturn(true);
 
         BusinessException exception = assertThrows(BusinessException.class,
                 () -> service.join("member-1", "1", 1, joinRequest()));
@@ -968,6 +978,7 @@ class GroupPurchaseServiceImplTest {
         wallet.put("wallet_id", "wallet-1");
         wallet.put("balance", new BigDecimal("10000"));
         when(walletMapper.findByMemberId("member-1")).thenReturn(wallet);
+        when(simplePasswordVerificationService.verify("member-1", PASSWORD)).thenReturn(true);
 
         BusinessException exception = assertThrows(BusinessException.class,
                 () -> service.join("member-1", "1", 2, joinRequest()));
@@ -993,6 +1004,7 @@ class GroupPurchaseServiceImplTest {
         wallet.put("balance", new BigDecimal("100000"));
         when(walletMapper.findByMemberId("member-1")).thenReturn(wallet);
         when(walletMapper.deductBalance("wallet-1", new BigDecimal("50000"))).thenReturn(0);
+        when(simplePasswordVerificationService.verify("member-1", PASSWORD)).thenReturn(true);
 
         BusinessException exception = assertThrows(BusinessException.class,
                 () -> service.join("member-1", "1", 2, joinRequest()));
@@ -1054,12 +1066,33 @@ class GroupPurchaseServiceImplTest {
 
         doThrow(new DuplicateKeyException("Duplicate entry for key 'uq_gpp_gp_member'"))
                 .when(groupPurchaseMapper).insertParticipant(anyMap());
+        when(simplePasswordVerificationService.verify("member-1", PASSWORD)).thenReturn(true);
 
         BusinessException exception = assertThrows(BusinessException.class,
                 () -> service.join("member-1", "1", 2, joinRequest()));
 
         assertEquals("이미 참여한 공동구매입니다.", exception.getMessage());
         verify(groupPurchaseMapper, never()).updateQuantity(any(), anyInt());
+    }
+
+    @Test
+    @DisplayName("간편 비밀번호가 일치하지 않으면 결제 없이 참여를 거절한다")
+    void should_throwException_when_passwordMismatch_onJoin() {
+        GroupPurchaseServiceImpl service = service();
+        when(groupPurchaseMapper.findById("1")).thenReturn(savedRow());
+        when(groupPurchaseMapper.findParticipant("1", "member-1")).thenReturn(null);
+        when(simplePasswordVerificationService.verify("member-1", "000000")).thenReturn(false);
+
+        GroupPurchaseJoinRequest request = joinRequest();
+        ReflectionTestUtils.setField(request, "password", "000000");
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.join("member-1", "1", 2, request));
+
+        assertEquals("간편 비밀번호가 일치하지 않습니다.", exception.getMessage());
+        verify(groupPurchaseMapper, never()).insertParticipant(any());
+        verify(groupPurchaseMapper, never()).updateQuantity(any(), anyInt());
+        verifyNoInteractions(walletMapper);
     }
 
     @Test
@@ -1385,6 +1418,7 @@ class GroupPurchaseServiceImplTest {
 
     private GroupPurchaseJoinRequest joinRequest() {
         GroupPurchaseJoinRequest request = new GroupPurchaseJoinRequest();
+        ReflectionTestUtils.setField(request, "password", PASSWORD);
         ReflectionTestUtils.setField(request, "recipientName", "김애월");
         ReflectionTestUtils.setField(request, "recipientPhone", "010-1234-5678");
         ReflectionTestUtils.setField(request, "zipCode", "16856");
@@ -1473,7 +1507,10 @@ class GroupPurchaseServiceImplTest {
     }
 
     private GroupPurchaseServiceImpl service() {
-        return new GroupPurchaseServiceImpl(groupPurchaseMapper, fileUtil, walletMapper, transactionMapper,
+        // 조회 응답은 저장 키를 signedUrl로 감싸 내려준다. 여기서는 키를 그대로
+        // 돌려주어 각 테스트가 저장값 자체를 검증하도록 둔다.
+        lenient().when(fileStorage.signedUrl(anyString())).thenAnswer(i -> i.getArgument(0));
+        return new GroupPurchaseServiceImpl(groupPurchaseMapper, fileStorage, walletMapper, transactionMapper,
                 simplePasswordVerificationService);
     }
 }

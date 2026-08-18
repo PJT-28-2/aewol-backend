@@ -18,11 +18,6 @@
         VALUES (#{memberId}, COALESCE(#{walletType}, 'MAIN'), COALESCE(#{balance}, 0))
     </insert>
 
-    <update id="updateBalance">
-        UPDATE wallet SET balance = #{balance}, updated_at = NOW()
-        WHERE wallet_id = #{walletId}
-    </update>
-
     <update id="addBalance">
         UPDATE wallet SET balance = balance + #{amount}, updated_at = NOW()
         WHERE wallet_id = #{walletId}
