@@ -34,10 +34,25 @@ docker-compose up -d          # mysql/redis/ocr만 (앱은 IDE에서 실행)
 
 ## 배포 절차
 
+환경변수는 리포지토리나 GitHub Secrets가 아니라 **SSM Parameter Store**에 두고, EC2가
+직접 받아 간다. 배포 워크플로는 명령만 전달하며 시크릿 값을 알지 못한다.
+
+```bash
+APP_IMAGE=<계정>.dkr.ecr.ap-northeast-2.amazonaws.com/aewol-backend:<sha> \
+OCR_IMAGE=<계정>.dkr.ecr.ap-northeast-2.amazonaws.com/aewol-ocr:<sha> \
+  /opt/aewol/scripts/fetch-env.sh
+```
+
 ```bash
 docker compose --env-file .env.prod -f docker-compose.prod.yml pull
 docker compose --env-file .env.prod -f docker-compose.prod.yml up -d
 ```
+
+`fetch-env.sh`는 `/aewol/prod` 경로의 파라미터를 `.env.prod`로 내려받고 권한을 600으로
+좁힌다. 받은 항목이 비정상적으로 적으면(권한 부족·경로 오타) 실패로 끝난다 — 값이 거의
+없는 `.env.prod`로 기동해 원인 모를 재시작 루프에 빠지는 것을 막기 위해서다.
+
+이미지 태그는 배포마다 달라지므로 SSM에 두지 않고 호출 시점에 넘긴다.
 
 기동 순서는 compose가 보장한다.
 
@@ -81,9 +96,30 @@ mysql (healthy) → migrate (정상 종료) → app
   QR 기능 자체가 켜지지 않는다.
 - Toss 결제 SDK, 카카오 OAuth 리다이렉트도 https를 요구한다.
 
-`app` 컨테이너는 `127.0.0.1:8080`에만 바인딩되어 있으므로, 앞단에 리버스 프록시(Nginx 또는
-ALB)를 두고 인증서를 붙인다. WebSocket(`/ws`, SockJS)을 쓰므로 프록시에 `Upgrade`·
-`Connection` 헤더 전달 설정이 필요하다.
+### 구성
+
+CloudFront가 정적 파일과 API를 모두 받아 처리한다. EC2 앞에 리버스 프록시를 두지 않는다.
+
+```
+사용자 ──HTTPS──▶ CloudFront
+                    ├── /api/*  ──HTTP──▶ EC2:8080
+                    └── /*      ────────▶ S3 (정적)
+```
+
+Nginx 설정도 인증서 갱신도 없고 ALB 비용도 들지 않는다. 대신 **CloudFront→EC2 구간이
+HTTP**이므로, 인바운드 8080은 CloudFront 관리형 접두사 목록
+(`com.amazonaws.global.cloudfront.origin-facing`)에서만 허용해야 한다. 이 제한이 사실상
+유일한 접근 통제다.
+
+운영 서비스라면 오리진도 HTTPS로 가야 한다. 시연 규모에서 보안그룹 제한으로 충분하다고
+판단한 트레이드오프다.
+
+`/ws` 경로는 프록시하지 않는다. 실시간 알림이 아직 구현되어 있지 않아(프론트에 연결
+호출부가 없고 백엔드에도 발행부가 없다) 동작하지 않는 경로에 설정만 늘어나기 때문이다.
+기능 구현 시 함께 추가한다.
+
+커스텀 도메인 없이 CloudFront 기본 도메인(`*.cloudfront.net`)을 쓰면 인증서가 자동으로
+제공되므로 ACM 발급도 필요 없다.
 
 ## 인스턴스 사양
 
