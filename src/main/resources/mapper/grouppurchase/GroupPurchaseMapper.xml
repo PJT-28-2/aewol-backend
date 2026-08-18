@@ -130,7 +130,7 @@
 
     <!-- 게시글은 관리자만 작성하므로, 마이페이지는 참여글(group_purchase_participant)만 조회한다.
          작성글 조회는 별도의 관리자 전용 엔드포인트에서 처리한다(이 쿼리 범위 밖).
-         status 필터는 저장 코드가 아니라 GroupPurchaseServiceImpl#toMyStatus와 동일한 계산 규칙(4분리:
+         status 필터는 저장 코드가 아니라 GroupPurchaseServiceImpl#computeStatus와 동일한 계산 규칙(4분리:
          OPEN/COMPLETED/FAILED/CANCELLED)으로 판정한다. -->
     <select id="findMyGroupPurchases" resultType="map">
         SELECT gp.* FROM group_purchase gp

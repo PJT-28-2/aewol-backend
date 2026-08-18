@@ -4,6 +4,7 @@ import com.aewol.common.exception.BusinessException;
 import com.aewol.common.storage.FileStorage;
 import com.aewol.domain.grouppurchase.dto.GroupPurchaseCancelParticipantResponse;
 import com.aewol.domain.grouppurchase.dto.GroupPurchaseCancelResponse;
+import com.aewol.domain.grouppurchase.dto.GroupPurchaseCategory;
 import com.aewol.domain.grouppurchase.dto.GroupPurchaseCreateRequest;
 import com.aewol.domain.grouppurchase.dto.GroupPurchaseImageUploadResponse;
 import com.aewol.domain.grouppurchase.dto.GroupPurchaseJoinRequest;
@@ -462,7 +463,8 @@ public class GroupPurchaseServiceImpl implements GroupPurchaseService {
     }
 
     private static String toTxnCategory(String groupPurchaseCategory) {
-        if ("사료".equals(groupPurchaseCategory) || "간식".equals(groupPurchaseCategory)) {
+        if (GroupPurchaseCategory.FOOD.equals(groupPurchaseCategory)
+                || GroupPurchaseCategory.SNACK.equals(groupPurchaseCategory)) {
             return "FOOD";
         }
         return "ETC";
