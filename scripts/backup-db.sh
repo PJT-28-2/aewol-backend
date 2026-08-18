@@ -20,8 +20,19 @@ LOCAL_RETENTION_DAYS="${LOCAL_RETENTION_DAYS:-3}"
 log() { echo "[$(date '+%F %T')] $*"; }
 
 [ -f "$ENV_FILE" ] || { log "환경변수 파일이 없습니다: $ENV_FILE"; exit 1; }
-# shellcheck disable=SC1090
-set -a; . "$ENV_FILE"; set +a
+
+# .env 파일을 그대로 source하면 값에 &, ;, $() 같은 셸 메타문자가 있을 때 셸 코드로
+# 실행돼 버린다(예: JDBC URL의 "?a=1&b=2"가 백그라운드 실행으로 쪼개짐). 이 파일은
+# SSM Parameter Store에서 받아온 값이라 내용을 통제할 수 없으므로, 셸 파싱 없이
+# KEY=VALUE만 읽어 export한다.
+set -a
+while IFS='=' read -r key value; do
+    [ -z "$key" ] && continue
+    case "$key" in \#*) continue ;; esac
+    printf -v "$key" '%s' "$value"
+    export "$key"
+done < "$ENV_FILE"
+set +a
 
 : "${DB_NAME:?DB_NAME이 필요합니다}"
 : "${DB_USERNAME:?DB_USERNAME이 필요합니다}"
