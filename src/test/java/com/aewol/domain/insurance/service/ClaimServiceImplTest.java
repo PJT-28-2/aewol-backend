@@ -26,6 +26,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.verify;
@@ -61,9 +62,9 @@ class ClaimServiceImplTest {
 
     @Test
     @DisplayName("createClaim은 OCR 결과를 extractedData로 저장하고 hospitalName 등은 null로 초기화한다")
-    void should_createDraftClaim_withNullFieldsAndExtractedData(@TempDir Path tempDir) {
+    void should_createDraftClaim_withNullFieldsAndExtractedData() {
         service = new ClaimServiceImpl(insuranceMapper, paddleOcrClient, fileStorage);
-        ReflectionTestUtils.setField(service, "uploadDir", tempDir.toString());
+        when(fileStorage.store(any(), eq("receipts"), eq("jpg"))).thenReturn("receipts/x.jpg");
 
         when(paddleOcrClient.extractReceiptData(any(), anyString()))
                 .thenReturn("{\"hospital_name\":\"애월동물병원\"}");

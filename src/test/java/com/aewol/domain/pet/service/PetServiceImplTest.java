@@ -10,7 +10,6 @@ import com.aewol.domain.pet.dto.PetCreateRequest;
 import com.aewol.domain.pet.dto.PetResponse;
 import com.aewol.domain.pet.mapper.PetMapper;
 import com.aewol.domain.pet.mapper.PetDocumentMapper;
-import com.aewol.common.util.FileUtil;
 import java.util.HashMap;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
@@ -23,13 +22,11 @@ import org.springframework.http.HttpStatus;
 class PetServiceImplTest {
 
     @Mock PetMapper petMapper;
-    @Mock PetDocumentMapper petDocumentMapper;
-    @Mock FileUtil fileUtil;
-    @Mock FileStorage fileStorage;
+    @Mock PetDocumentMapper petDocumentMapper;    @Mock FileStorage fileStorage;
     @Mock PetRegistrationService petRegistrationService;
 
     private PetServiceImpl service() {
-        return new PetServiceImpl(petMapper, petDocumentMapper, fileUtil, fileStorage, petRegistrationService);
+        return new PetServiceImpl(petMapper, petDocumentMapper, fileStorage, petRegistrationService);
     }
 
     @Test

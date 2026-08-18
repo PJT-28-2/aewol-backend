@@ -2,7 +2,6 @@ package com.aewol.domain.inquiry.service;
 
 import com.aewol.common.exception.BusinessException;
 import com.aewol.common.storage.FileStorage;
-import com.aewol.common.util.FileUtil;
 import com.aewol.domain.inquiry.dto.InquiryCreateResponse;
 import com.aewol.domain.inquiry.dto.InquiryDetailResponse;
 import com.aewol.domain.inquiry.dto.InquiryListItemResponse;
@@ -46,7 +45,6 @@ public class InquiryServiceImpl implements InquiryService {
     );
 
     private final InquiryMapper inquiryMapper;
-    private final FileUtil fileUtil;
     private final FileStorage fileStorage;
 
     @Override
@@ -102,7 +100,8 @@ public class InquiryServiceImpl implements InquiryService {
                 MultipartFile file = files.get(i);
                 String fileUrl;
                 try {
-                    fileUrl = fileUtil.upload(file, ATTACHMENT_SUB_DIR, storageExtensions.get(i));
+                    fileUrl = fileStorage.store(file.getBytes(), ATTACHMENT_SUB_DIR,
+                            storageExtensions.get(i));
                 } catch (IOException e) {
                     throw new BusinessException(HttpStatus.INTERNAL_SERVER_ERROR, "첨부파일 저장에 실패했어요");
                 }
@@ -200,9 +199,11 @@ public class InquiryServiceImpl implements InquiryService {
     }
 
     private void deleteQuietly(String fileUrl) {
+        // 첨부 정리는 부가 작업이라 실패해도 본 작업을 깨뜨려선 안 된다. FileStorage
+        // 구현체들이 스스로 실패를 삼키지만 인터페이스가 보장하는 계약은 아니다.
         try {
-            fileUtil.delete(fileUrl);
-        } catch (IOException e) {
+            fileStorage.delete(fileUrl);
+        } catch (RuntimeException e) {
             log.warn("문의 첨부파일 삭제 실패 - fileUrl: {}", fileUrl, e);
         }
     }

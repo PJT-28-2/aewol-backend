@@ -83,15 +83,12 @@ class UploadResourceSecurityTest {
     }
 
     @Test
-    @DisplayName("공동구매 상품 이미지는 명시된 공개 경로에서 계속 제공한다")
-    void should_servePublicGroupPurchaseImage() throws Exception {
-        String body = mockMvc.perform(get("/uploads/group-purchase/public.png")
+    @DisplayName("공동구매 상품 이미지도 더 이상 /uploads 경로로 직접 조회할 수 없다")
+    void should_notServeGroupPurchaseImageDirectly() throws Exception {
+        // 저장소를 S3로 옮기면서(#203) 로컬 디스크를 정적 서빙하던 유일한 예외를 없앴다.
+        // 공동구매 이미지도 다른 업로드 파일과 같이 서명 URL로만 조회한다.
+        mockMvc.perform(get("/uploads/group-purchase/public.png")
                         .with(user("member-1").roles("USER")))
-                .andExpect(status().isOk())
-                .andReturn()
-                .getResponse()
-                .getContentAsString(StandardCharsets.UTF_8);
-
-        assertEquals("public", body);
+                .andExpect(status().isNotFound());
     }
 }
