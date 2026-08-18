@@ -778,6 +778,7 @@ class GroupPurchaseServiceImplTest {
 
         when(groupPurchaseMapper.findById("1")).thenReturn(gpRow, updatedGpRow);
         when(groupPurchaseMapper.findParticipant("1", "member-1")).thenReturn(null, savedParticipantRow);
+        when(simplePasswordVerificationService.verify("member-1", PASSWORD)).thenReturn(true);
 
         Map<String, Object> wallet = new HashMap<>();
         wallet.put("wallet_id", "wallet-1");
@@ -846,6 +847,7 @@ class GroupPurchaseServiceImplTest {
         when(groupPurchaseMapper.findById("1")).thenReturn(gpRow, updatedGpRow);
         when(groupPurchaseMapper.findParticipant("1", "member-1")).thenReturn(null, savedParticipantRow);
         when(groupPurchaseMapper.updateQuantity("1", 8)).thenReturn(1);
+        when(simplePasswordVerificationService.verify("member-1", PASSWORD)).thenReturn(true);
 
         service.join("member-1", "1", 8, joinRequest());
 
@@ -871,6 +873,7 @@ class GroupPurchaseServiceImplTest {
         when(groupPurchaseMapper.findById("1")).thenReturn(gpRow, updatedGpRow);
         when(groupPurchaseMapper.findParticipant("1", "member-1")).thenReturn(null, savedParticipantRow);
         when(groupPurchaseMapper.updateQuantity("1", 8)).thenReturn(1);
+        when(simplePasswordVerificationService.verify("member-1", PASSWORD)).thenReturn(true);
 
         service.join("member-1", "1", 8, joinRequest());
 
@@ -892,6 +895,7 @@ class GroupPurchaseServiceImplTest {
         when(groupPurchaseMapper.findById("1")).thenReturn(gpRow, updatedGpRow);
         when(groupPurchaseMapper.findParticipant("1", "member-1")).thenReturn(null, savedParticipantRow);
         when(groupPurchaseMapper.updateQuantity("1", 1)).thenReturn(1);
+        when(simplePasswordVerificationService.verify("member-1", PASSWORD)).thenReturn(true);
 
         GroupPurchaseJoinResponse result = service.join("member-1", "1", 1, joinRequest());
 
@@ -923,6 +927,7 @@ class GroupPurchaseServiceImplTest {
         }).when(transactionMapper).insert(anyMap());
         // 목표 수량 초과 또는 마감으로 조건부 UPDATE의 WHERE 절을 만족하는 행이 없는 상황(영향 행 수 0)을 재현한다.
         when(groupPurchaseMapper.updateQuantity("1", 5)).thenReturn(0);
+        when(simplePasswordVerificationService.verify("member-1", PASSWORD)).thenReturn(true);
 
         BusinessException exception = assertThrows(BusinessException.class,
                 () -> service.join("member-1", "1", 5, joinRequest()));
@@ -953,6 +958,7 @@ class GroupPurchaseServiceImplTest {
         // status = 'CANCELLED'는 updateQuantity의 WHERE 절에서 제외되므로,
         // 마감 전·목표 미달 상태여도 조건부 UPDATE의 영향 행 수는 0이어야 한다.
         when(groupPurchaseMapper.updateQuantity("1", 1)).thenReturn(0);
+        when(simplePasswordVerificationService.verify("member-1", PASSWORD)).thenReturn(true);
 
         BusinessException exception = assertThrows(BusinessException.class,
                 () -> service.join("member-1", "1", 1, joinRequest()));
@@ -972,6 +978,7 @@ class GroupPurchaseServiceImplTest {
         wallet.put("wallet_id", "wallet-1");
         wallet.put("balance", new BigDecimal("10000"));
         when(walletMapper.findByMemberId("member-1")).thenReturn(wallet);
+        when(simplePasswordVerificationService.verify("member-1", PASSWORD)).thenReturn(true);
 
         BusinessException exception = assertThrows(BusinessException.class,
                 () -> service.join("member-1", "1", 2, joinRequest()));
@@ -997,6 +1004,7 @@ class GroupPurchaseServiceImplTest {
         wallet.put("balance", new BigDecimal("100000"));
         when(walletMapper.findByMemberId("member-1")).thenReturn(wallet);
         when(walletMapper.deductBalance("wallet-1", new BigDecimal("50000"))).thenReturn(0);
+        when(simplePasswordVerificationService.verify("member-1", PASSWORD)).thenReturn(true);
 
         BusinessException exception = assertThrows(BusinessException.class,
                 () -> service.join("member-1", "1", 2, joinRequest()));
@@ -1058,12 +1066,33 @@ class GroupPurchaseServiceImplTest {
 
         doThrow(new DuplicateKeyException("Duplicate entry for key 'uq_gpp_gp_member'"))
                 .when(groupPurchaseMapper).insertParticipant(anyMap());
+        when(simplePasswordVerificationService.verify("member-1", PASSWORD)).thenReturn(true);
 
         BusinessException exception = assertThrows(BusinessException.class,
                 () -> service.join("member-1", "1", 2, joinRequest()));
 
         assertEquals("이미 참여한 공동구매입니다.", exception.getMessage());
         verify(groupPurchaseMapper, never()).updateQuantity(any(), anyInt());
+    }
+
+    @Test
+    @DisplayName("간편 비밀번호가 일치하지 않으면 결제 없이 참여를 거절한다")
+    void should_throwException_when_passwordMismatch_onJoin() {
+        GroupPurchaseServiceImpl service = service();
+        when(groupPurchaseMapper.findById("1")).thenReturn(savedRow());
+        when(groupPurchaseMapper.findParticipant("1", "member-1")).thenReturn(null);
+        when(simplePasswordVerificationService.verify("member-1", "000000")).thenReturn(false);
+
+        GroupPurchaseJoinRequest request = joinRequest();
+        ReflectionTestUtils.setField(request, "password", "000000");
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.join("member-1", "1", 2, request));
+
+        assertEquals("간편 비밀번호가 일치하지 않습니다.", exception.getMessage());
+        verify(groupPurchaseMapper, never()).insertParticipant(any());
+        verify(groupPurchaseMapper, never()).updateQuantity(any(), anyInt());
+        verifyNoInteractions(walletMapper);
     }
 
     @Test
@@ -1389,6 +1418,7 @@ class GroupPurchaseServiceImplTest {
 
     private GroupPurchaseJoinRequest joinRequest() {
         GroupPurchaseJoinRequest request = new GroupPurchaseJoinRequest();
+        ReflectionTestUtils.setField(request, "password", PASSWORD);
         ReflectionTestUtils.setField(request, "recipientName", "김애월");
         ReflectionTestUtils.setField(request, "recipientPhone", "010-1234-5678");
         ReflectionTestUtils.setField(request, "zipCode", "16856");
