@@ -93,8 +93,12 @@ external:
     service-key: ${ANIMAL_HOSPITAL_SERVICE_KEY:}
 
 # File
-# S3 전환(#198) 전까지는 컨테이너 볼륨 경로를 사용한다.
 file:
+  # 업로드 파일은 S3에 저장한다(#198). 버킷 이름은 필수다.
+  s3:
+    bucket: ${S3_BUCKET}
+    region: ${S3_REGION:ap-northeast-2}
+  # FileUtil(레거시 경로)이 아직 로컬 디스크를 쓴다. 통합 전까지 유지한다.
   upload-dir: ${FILE_UPLOAD_DIR:/app/uploads}
 
 # Logging
