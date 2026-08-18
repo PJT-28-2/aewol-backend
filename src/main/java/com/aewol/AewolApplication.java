@@ -44,8 +44,10 @@ public class AewolApplication {
 
         // 멀티파트(파일 업로드) 요청 처리를 위한 설정. Spring Boot가 아니므로
         // application.yml의 spring.servlet.multipart.* 값은 자동 반영되지 않아 여기서 직접 설정한다.
+        // 1:1 문의 첨부파일이 파일당 최대 10MB, 최대 3개까지 허용되어(api_명세서.md) 전체 요청
+        // 크기가 10MB를 넘을 수 있다 — application.yml의 max-request-size(35MB)와 값을 맞춘다.
         long maxFileSize = 10L * 1024 * 1024;   // application.yml: max-file-size
-        long maxRequestSize = 10L * 1024 * 1024; // application.yml: max-request-size
+        long maxRequestSize = 35L * 1024 * 1024; // application.yml: max-request-size
         servletWrapper.setMultipartConfigElement(new MultipartConfigElement(
                 System.getProperty("java.io.tmpdir"), maxFileSize, maxRequestSize, 0));
 
