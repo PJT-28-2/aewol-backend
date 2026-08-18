@@ -1,7 +1,7 @@
 package com.aewol.domain.grouppurchase.service;
 
 import com.aewol.common.exception.BusinessException;
-import com.aewol.common.util.FileUtil;
+import com.aewol.common.storage.FileStorage;
 import com.aewol.domain.grouppurchase.dto.GroupPurchaseCancelParticipantResponse;
 import com.aewol.domain.grouppurchase.dto.GroupPurchaseCancelResponse;
 import com.aewol.domain.grouppurchase.dto.GroupPurchaseCreateRequest;
@@ -46,7 +46,7 @@ public class GroupPurchaseServiceImpl implements GroupPurchaseService {
     private static final Set<String> LIST_STATUS_VALUES = Set.of("OPEN", "COMPLETED", "FAILED");
 
     private final GroupPurchaseMapper groupPurchaseMapper;
-    private final FileUtil fileUtil;
+    private final FileStorage fileStorage;
     private final WalletMapper walletMapper;
     private final TransactionMapper transactionMapper;
     private final SimplePasswordVerificationService simplePasswordVerificationService;
@@ -478,9 +478,11 @@ public class GroupPurchaseServiceImpl implements GroupPurchaseService {
         }
 
         try {
-            String imageUrl = fileUtil.upload(image, "group-purchase");
+            // 저장 키를 그대로 돌려준다. 클라이언트는 이 값을 화면에 쓰지 않고 등록 요청의
+            // image 필드로 되돌려 보낸다. 화면에 보일 주소는 조회 시점에 signedUrl로 만든다.
+            String key = fileStorage.store(image.getBytes(), "group-purchase", extension);
             return GroupPurchaseImageUploadResponse.builder()
-                    .imageUrl(imageUrl)
+                    .imageUrl(key)
                     .build();
         } catch (IOException e) {
             throw new BusinessException("이미지 업로드에 실패했습니다.");
@@ -497,7 +499,7 @@ public class GroupPurchaseServiceImpl implements GroupPurchaseService {
                 .memberId(String.valueOf(gp.get("member_id")))
                 .productName((String) gp.get("product_name"))
                 .category((String) gp.get("category"))
-                .image((String) gp.get("image"))
+                .image(fileStorage.signedUrl((String) gp.get("image")))
                 .unitPrice(toDecimal(gp.get("unit_price")))
                 .groupPrice(toDecimal(gp.get("group_price")))
                 .deliveryMethod((String) gp.get("delivery_method"))
