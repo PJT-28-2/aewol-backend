@@ -19,7 +19,7 @@ docker-compose up -d          # mysql/redis/ocr만 (앱은 IDE에서 실행)
 | 앱 실행 | IDE에서 `AewolApplication` | 컨테이너 |
 | DB 주소 | `localhost:3307` | `mysql:3306` |
 | 마이그레이션 | `./gradlew flywayMigrate` | `migrate` 컨테이너 (`MigrateMain`) |
-| 파일 저장 | `./uploads` | `/app/uploads` 볼륨 → 추후 S3(#198) |
+| 파일 저장 | `./uploads` | S3 (`FileStorage` 경로), 그 외는 `/app/uploads` 볼륨 |
 
 ## 이미지 빌드는 CI에서만 한다
 
@@ -105,3 +105,28 @@ DB가 컨테이너 볼륨(EBS)에 있어 인스턴스를 잃으면 함께 사라
 
 - `mysqldump` → S3 정기 백업 (배포 직전에도 1회)
 - EBS 스냅샷
+
+## 파일 저장소 (S3)
+
+`prod` 프로파일에서는 `FileStorage` 구현체가 `S3FileStorage`로 바뀐다. 로컬·테스트는
+`LocalFileStorage`가 그대로 쓰이므로 **팀원은 AWS 계정 없이 개발할 수 있다.**
+
+필요한 환경변수는 `S3_BUCKET`(필수), `S3_REGION`(기본 `ap-northeast-2`) 두 개다.
+자격증명은 설정하지 않는다 — EC2 인스턴스 프로파일(IAM Role)을 기본 제공자 체인이 찾는다.
+
+버킷 설정:
+
+- 퍼블릭 액세스 **전면 차단**. 조회는 presigned URL로만 한다
+- 브라우저가 presigned URL로 직접 받아가므로 **버킷 CORS 설정**이 필요하다
+- **수명주기 규칙으로 불완전 멀티파트 업로드를 7일 후 삭제**한다.
+  실패한 업로드 조각은 목록에 보이지 않으면서 저장 요금만 계속 발생한다
+- 버저닝은 사용하지 않는다. 켠다면 비현행 버전 만료 규칙을 반드시 함께 건다
+
+### ⚠️ 아직 남은 작업
+
+`FileUtil`(레거시 경로)은 여전히 로컬 디스크에 저장한다. 공동구매 이미지, 1:1 문의 첨부,
+반려동물 서류가 여기에 해당한다. 특히 문의 첨부와 반려동물 서류는 **쓰기는 `FileUtil`,
+읽기는 `FileStorage.signedUrl()`** 로 갈라져 있어, 운영에서는 디스크에 쓰고 S3에서 읽는
+상태가 된다.
+
+**`FileUtil` 통합이 끝나기 전에는 운영 배포를 하면 안 된다.**
