@@ -14,7 +14,6 @@ public interface WalletMapper {
     Map<String, Object> findByMemberId(@Param("memberId") String memberId);
     Map<String, Object> findById(@Param("walletId") String walletId);
     void insert(Map<String, Object> wallet);
-    void updateBalance(@Param("walletId") String walletId, @Param("balance") BigDecimal balance);
     int addBalance(@Param("walletId") String walletId, @Param("amount") BigDecimal amount);
 
     /**

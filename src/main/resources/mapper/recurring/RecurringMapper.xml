@@ -3,11 +3,6 @@
 <mapper namespace="com.aewol.domain.recurring.mapper.RecurringMapper">
     <!-- V4/V17: payment_day는 매월 결제 희망일(1~31), 없는 날짜는 서비스에서 말일 처리 -->
 
-    <select id="findById" resultType="map">
-        SELECT * FROM recurring_payment
-        WHERE recurring_id = #{recurringId} AND is_active = 1
-    </select>
-
     <select id="findByIdForUpdate" resultType="map">
         SELECT * FROM recurring_payment
         WHERE recurring_id = #{recurringId}
