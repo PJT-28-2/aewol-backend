@@ -149,6 +149,56 @@ java -Dspring.profiles.active=local -jar build/libs/aewol-backend-0.0.1-SNAPSHOT
 
 또는 IDE에서 `AewolApplication.java`의 main 메서드를 직접 실행합니다. 이 경우 VM 옵션에 `-Dspring.profiles.active=local`을 추가합니다.
 
+### 한글이 깨져 보일 때
+
+MySQL은 접속할 때 클라이언트가 요청한 문자셋을 그대로 받아준다. 그래서 문자셋을
+지정하지 않은 DB 클라이언트로 붙으면 세션이 latin1로 떨어지고, 그 상태로 INSERT하면
+한글이 `?`나 `ê¹€ì• ì›`처럼 저장된다. 애플리케이션은 JDBC URL에
+`characterEncoding=UTF-8`이 있어 영향을 받지 않는다.
+
+`docker-compose.yml`의 `--init-connect`가 접속 직후 세션 문자셋을 다시 덮어써서 이를
+막는다. **다만 이것은 MySQL 서버 기동 옵션이라, 컨테이너를 다시 만들어야 적용된다.**
+예전에 만든 컨테이너를 계속 쓰고 있다면 설정이 반영되지 않은 상태다.
+
+```bash
+docker exec aewol-mysql mysql -uaewol -paewol1234 -e "SHOW VARIABLES LIKE 'init_connect'"
+```
+
+값이 비어 있으면 컨테이너를 다시 만든다. 데이터 볼륨은 유지된다.
+
+```bash
+docker-compose up -d --force-recreate mysql
+```
+
+이미 깨진 채로 저장된 행은 이 설정으로 복구되지 않는다. 원래 바이트가 유실됐기
+때문이다. 아래로 깨진 행이 남아 있는지 확인한다.
+
+```bash
+docker exec aewol-mysql mysql -uaewol -paewol1234 aewol -e "SELECT member_id, name FROM member WHERE HEX(name) REGEXP '^([0-9A-F][0-9A-F])*(C3..|C2[89].|EFBFBD)'"
+```
+
+깨진 행의 원래 바이트는 남아 있지 않으므로, 삭제부터 하지 말고 먼저 정상 백업에서
+복원한다. 백업이 없는 회원 입력값은 사용자에게 다시 입력받아야 한다. 지원사업 데이터는
+`GOV24_API_KEY`를 설정한 뒤 아래 관리자 동기화 API로 다시 가져온다.
+
+> **주의:** `./gradlew flywayClean`은 특정 테이블만 비우는 명령이 아니라 DB의 전체
+> 스키마와 데이터를 삭제한다. 공유·스테이징·운영 DB의 복구 절차로 절대 사용하지 않는다.
+> 로컬 일회용 DB를 통째로 초기화하려는 경우에도 필요한 데이터의 백업과 삭제 범위를
+> 먼저 확인한다.
+
+### 지원사업 목록이 비어 있을 때
+
+정부24 지원사업 27건은 `V36__seed_gov24_support_programs.sql`에 들어 있으므로
+`./gradlew flywayMigrate`만 돌리면 채워진다. 그보다 앞선 시점에 DB를 만들었다면
+마이그레이션을 다시 돌린다.
+
+최신 데이터가 필요하면 `GOV24_API_KEY`를 설정한 뒤 동기화를 직접 실행한다. 이때
+시드로 넣은 행은 `source_service_id` 기준으로 갱신되므로 중복이 생기지 않는다.
+
+```bash
+curl -X POST http://localhost:8080/api/admin/support/sync -H "Authorization: Bearer {관리자 토큰}"
+```
+
 ---
 
 ## 브랜치 전략
