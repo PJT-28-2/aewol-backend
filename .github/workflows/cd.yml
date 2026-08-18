@@ -49,6 +49,27 @@ jobs:
         id: meta
         run: echo "tag=$(git rev-parse --short=12 HEAD)" >> "$GITHUB_OUTPUT"
 
+      # (임시) OIDC AssumeRoleWithWebIdentity가 "Not authorized"로 거부되는 원인을
+      # 찾기 위한 디버그 스텝. 실제로 발급되는 토큰의 클레임을 눈으로 확인한 뒤 제거한다.
+      # sub/aud는 시크릿이 아니라 AWS로도 평문 전송되는 값이라 로그에 남아도 안전하다.
+      - name: "(임시) OIDC 토큰 클레임 출력"
+        run: |
+          set -euo pipefail
+          RESP=$(curl -sS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=sts.amazonaws.com")
+          JWT=$(echo "$RESP" | jq -r '.value')
+          if [ "$JWT" = "null" ] || [ -z "$JWT" ]; then
+            echo "토큰 발급 자체가 실패했습니다. 응답: $RESP" >&2
+            exit 1
+          fi
+          PAYLOAD=$(echo "$JWT" | cut -d '.' -f2 | tr '_-' '/+')
+          case $(( ${#PAYLOAD} % 4 )) in
+            2) PAYLOAD="${PAYLOAD}==" ;;
+            3) PAYLOAD="${PAYLOAD}=" ;;
+          esac
+          echo "===== 실제 발급된 OIDC 토큰 클레임 ====="
+          echo "$PAYLOAD" | base64 -d | jq '{sub, aud, repository, repository_owner, ref, environment, job_workflow_ref}'
+
       - uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ env.ROLE_ARN }}
