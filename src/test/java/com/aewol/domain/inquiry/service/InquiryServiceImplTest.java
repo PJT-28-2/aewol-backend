@@ -5,7 +5,6 @@ import static org.mockito.Mockito.*;
 
 import com.aewol.common.exception.BusinessException;
 import com.aewol.common.storage.FileStorage;
-import com.aewol.common.util.FileUtil;
 import com.aewol.domain.inquiry.dto.InquiryCreateResponse;
 import com.aewol.domain.inquiry.dto.InquiryDetailResponse;
 import com.aewol.domain.inquiry.dto.InquiryListResponse;
@@ -26,9 +25,7 @@ import org.springframework.web.multipart.MultipartFile;
 @ExtendWith(MockitoExtension.class)
 class InquiryServiceImplTest {
 
-    @Mock InquiryMapper inquiryMapper;
-    @Mock FileUtil fileUtil;
-    @Mock FileStorage fileStorage;
+    @Mock InquiryMapper inquiryMapper;    @Mock FileStorage fileStorage;
     @InjectMocks InquiryServiceImpl service;
 
     private static final String MEMBER_ID = "9001";
@@ -50,7 +47,7 @@ class InquiryServiceImplTest {
         assertTrue(result.getInquiryNumber().matches("AEW-\\d{8}-0025"));
         verify(inquiryMapper).updateInquiryNumber("25", result.getInquiryNumber());
         verify(inquiryMapper, never()).insertAttachment(any());
-        verifyNoInteractions(fileUtil);
+        verifyNoInteractions(fileStorage);
     }
 
     @Test
@@ -61,13 +58,13 @@ class InquiryServiceImplTest {
             arg.put("inquiryId", 25L);
             return null;
         }).when(inquiryMapper).insert(any());
-        when(fileUtil.upload(any(), eq("inquiries"), eq("jpg"))).thenReturn("/uploads/inquiries/a.jpg");
+        when(fileStorage.store(any(), eq("inquiries"), eq("jpg"))).thenReturn("inquiries/a.jpg");
 
         MockMultipartFile file = new MockMultipartFile("attachments", "image1.jpg", "image/jpeg", new byte[]{1, 2, 3});
 
         service.createInquiry(MEMBER_ID, "보험", "제목", "내용", "user@example.com", List.of(file));
 
-        verify(fileUtil).upload(any(), eq("inquiries"), eq("jpg"));
+        verify(fileStorage).store(any(), eq("inquiries"), eq("jpg"));
         verify(inquiryMapper).insertAttachment(any());
     }
 
@@ -119,13 +116,14 @@ class InquiryServiceImplTest {
         }).when(inquiryMapper).insert(any());
         MockMultipartFile first = new MockMultipartFile("attachments", "a.jpg", "image/jpeg", new byte[]{1});
         MockMultipartFile second = new MockMultipartFile("attachments", "b.png", "image/png", new byte[]{1});
-        when(fileUtil.upload(any(), eq("inquiries"), eq("jpg"))).thenReturn("/uploads/inquiries/a.jpg");
-        when(fileUtil.upload(any(), eq("inquiries"), eq("png"))).thenThrow(new IOException("disk full"));
+        when(fileStorage.store(any(), eq("inquiries"), eq("jpg"))).thenReturn("inquiries/a.jpg");
+        when(fileStorage.store(any(), eq("inquiries"), eq("png")))
+                .thenThrow(new BusinessException("파일을 저장하지 못했어요. 잠시 후 다시 시도해 주세요."));
 
         assertThrows(BusinessException.class,
                 () -> service.createInquiry(MEMBER_ID, "기타", "제목", "내용", "user@example.com", List.of(first, second)));
 
-        verify(fileUtil).delete("/uploads/inquiries/a.jpg");
+        verify(fileStorage).delete("inquiries/a.jpg");
     }
 
     @Test
@@ -163,9 +161,9 @@ class InquiryServiceImplTest {
         row.put("answer", "확인해주세요");
         when(inquiryMapper.findByIdAndMemberId(INQUIRY_ID, MEMBER_ID)).thenReturn(row);
         Map<String, Object> attachment = new HashMap<>();
-        attachment.put("file_url", "/uploads/inquiries/a.jpg");
+        attachment.put("file_url", "inquiries/a.jpg");
         when(inquiryMapper.findAttachmentsByInquiryId(INQUIRY_ID)).thenReturn(List.of(attachment));
-        when(fileStorage.signedUrl("/uploads/inquiries/a.jpg")).thenReturn("signed:inquiries/a.jpg");
+        when(fileStorage.signedUrl("inquiries/a.jpg")).thenReturn("signed:inquiries/a.jpg");
 
         InquiryDetailResponse result = service.getInquiry(MEMBER_ID, INQUIRY_ID);
 
