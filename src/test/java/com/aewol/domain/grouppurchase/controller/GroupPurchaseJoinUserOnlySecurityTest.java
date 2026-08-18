@@ -42,6 +42,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 class GroupPurchaseJoinUserOnlySecurityTest {
 
     private static final String VALID_JOIN_REQUEST_BODY = "{"
+            + "\"password\":\"123456\","
             + "\"recipientName\":\"김애월\","
             + "\"recipientPhone\":\"010-1234-5678\","
             + "\"zipCode\":\"16856\","

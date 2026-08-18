@@ -86,8 +86,11 @@ services:
     environment:
       SPRING_PROFILES_ACTIVE: prod
     ports:
-      # 리버스 프록시(Nginx/ALB)만 접근하면 되므로 루프백에만 바인딩한다.
-      - "127.0.0.1:8080:8080"
+      # CloudFront가 이 포트로 직접 붙는다(오리진). 앞단에 리버스 프록시를 두지 않아
+      # 인증서 갱신과 Nginx 설정이 필요 없는 대신, 접근 제한은 전적으로 보안그룹이 맡는다.
+      # 인바운드 8080은 CloudFront 관리형 접두사 목록
+      # (com.amazonaws.global.cloudfront.origin-facing)에서만 허용할 것.
+      - "8080:8080"
     volumes:
       - uploads:/app/uploads
 

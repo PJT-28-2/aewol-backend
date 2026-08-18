@@ -4,6 +4,7 @@ import com.aewol.common.exception.BusinessException;
 import com.aewol.common.storage.FileStorage;
 import com.aewol.domain.grouppurchase.dto.GroupPurchaseCancelParticipantResponse;
 import com.aewol.domain.grouppurchase.dto.GroupPurchaseCancelResponse;
+import com.aewol.domain.grouppurchase.dto.GroupPurchaseCategory;
 import com.aewol.domain.grouppurchase.dto.GroupPurchaseCreateRequest;
 import com.aewol.domain.grouppurchase.dto.GroupPurchaseImageUploadResponse;
 import com.aewol.domain.grouppurchase.dto.GroupPurchaseJoinRequest;
@@ -192,6 +193,11 @@ public class GroupPurchaseServiceImpl implements GroupPurchaseService {
         }
         if (groupPurchaseMapper.findParticipant(gpId, memberId) != null) {
             throw BusinessException.conflict("이미 참여한 공동구매입니다.");
+        }
+        // leave()/cancel()과 동일하게, 화면의 간편 비밀번호 사전 확인 결과를 신뢰하지 않고
+        // 실제 지갑 차감(결제) 직전에 다시 검증한다.
+        if (!simplePasswordVerificationService.verify(memberId, request.getPassword())) {
+            throw new BusinessException("간편 비밀번호가 일치하지 않습니다.");
         }
 
         BigDecimal groupPrice = toDecimal(gp.get("group_price"));
@@ -457,7 +463,8 @@ public class GroupPurchaseServiceImpl implements GroupPurchaseService {
     }
 
     private static String toTxnCategory(String groupPurchaseCategory) {
-        if ("사료".equals(groupPurchaseCategory) || "간식".equals(groupPurchaseCategory)) {
+        if (GroupPurchaseCategory.FOOD.equals(groupPurchaseCategory)
+                || GroupPurchaseCategory.SNACK.equals(groupPurchaseCategory)) {
             return "FOOD";
         }
         return "ETC";

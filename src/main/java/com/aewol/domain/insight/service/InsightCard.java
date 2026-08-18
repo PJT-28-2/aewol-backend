@@ -20,6 +20,13 @@ public class InsightCard {
     private final String facts;
     /** LLM 호출이 실패하거나 꺼져 있을 때 쓰는 문구. */
     private final String fallbackBody;
+    /**
+     * 지금 추세가 이어지면 어떻게 되는지 한 줄. 전부 자바에서 계산한다.
+     *
+     * <p>관측 기간이 짧아 추정이 의미 없을 때는 null 로 둔다. 본문과 중복되지 않도록
+     * LLM 프롬프트에는 넣지 않고 응답의 별도 필드로만 전달한다.
+     */
+    private final String projection;
     private final String ctaLabel;
     private final String ctaPath;
     /** 재료가 그대로면 다시 생성하지 않기 위한 지문. */

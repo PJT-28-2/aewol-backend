@@ -9,7 +9,6 @@ import com.aewol.domain.inquiry.dto.InquiryCreateResponse;
 import com.aewol.domain.inquiry.dto.InquiryDetailResponse;
 import com.aewol.domain.inquiry.dto.InquiryListResponse;
 import com.aewol.domain.inquiry.mapper.InquiryMapper;
-import java.io.IOException;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -25,7 +24,8 @@ import org.springframework.web.multipart.MultipartFile;
 @ExtendWith(MockitoExtension.class)
 class InquiryServiceImplTest {
 
-    @Mock InquiryMapper inquiryMapper;    @Mock FileStorage fileStorage;
+    @Mock InquiryMapper inquiryMapper;
+    @Mock FileStorage fileStorage;
     @InjectMocks InquiryServiceImpl service;
 
     private static final String MEMBER_ID = "9001";
@@ -52,7 +52,7 @@ class InquiryServiceImplTest {
 
     @Test
     @DisplayName("첨부파일이 있으면 업로드 후 첨부 테이블에 각각 저장한다")
-    void should_uploadAndInsertAttachments_whenFilesGiven() throws IOException {
+    void should_uploadAndInsertAttachments_whenFilesGiven() {
         doAnswer(invocation -> {
             Map<String, Object> arg = invocation.getArgument(0);
             arg.put("inquiryId", 25L);
@@ -108,7 +108,7 @@ class InquiryServiceImplTest {
 
     @Test
     @DisplayName("두 번째 파일 업로드가 실패하면 첫 번째 파일도 삭제하고 예외를 던진다")
-    void should_deleteUploadedFiles_when_laterFileUploadFails() throws IOException {
+    void should_deleteUploadedFiles_when_laterFileUploadFails() {
         doAnswer(invocation -> {
             Map<String, Object> arg = invocation.getArgument(0);
             arg.put("inquiryId", 25L);
