@@ -29,7 +29,7 @@ import org.springframework.jdbc.support.GeneratedKeyHolder;
 import org.springframework.jdbc.support.KeyHolder;
 
 /**
- * findMyGroupPurchases의 status 필터 SQL이 GroupPurchaseServiceImpl#toMyStatus와
+ * findMyGroupPurchases의 status 필터 SQL이 GroupPurchaseServiceImpl#computeStatus와
  * 동일한 기준(4분리: OPEN/COMPLETED/FAILED/CANCELLED)으로 판정하는지, 그리고 게시글은
  * 관리자만 작성하므로 참여글(group_purchase_participant)만 반환하는지 실제 H2 DB에 대해 검증한다.
  * GroupPurchaseServiceImplTest는 매퍼를 mock으로 대체하므로 이 SQL 자체는 그쪽 테스트로 잡히지 않는다.

@@ -1,6 +1,7 @@
 package com.aewol.batch;
 
 import com.aewol.common.exception.BusinessException;
+import com.aewol.domain.grouppurchase.dto.GroupPurchaseCategory;
 import com.aewol.domain.grouppurchase.mapper.GroupPurchaseMapper;
 import com.aewol.domain.transaction.mapper.TransactionMapper;
 import com.aewol.domain.wallet.mapper.WalletMapper;
@@ -89,7 +90,8 @@ public class GroupPurchaseRefundExecutor {
 
     /** GroupPurchaseServiceImpl#toTxnCategory와 동일한 분류 — 배치를 독립 트랜잭션으로 분리하며 함께 옮겨온 소규모 로직이라 중복을 그대로 둔다. */
     private static String toTxnCategory(String groupPurchaseCategory) {
-        if ("사료".equals(groupPurchaseCategory) || "간식".equals(groupPurchaseCategory)) {
+        if (GroupPurchaseCategory.FOOD.equals(groupPurchaseCategory)
+                || GroupPurchaseCategory.SNACK.equals(groupPurchaseCategory)) {
             return "FOOD";
         }
         return "ETC";
