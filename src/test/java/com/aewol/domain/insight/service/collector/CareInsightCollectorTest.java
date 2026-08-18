@@ -74,6 +74,24 @@ class CareInsightCollectorTest {
     }
 
     @Test
+    @DisplayName("오늘 포함 7일과 그 전 7일을 경계값대로 나눈다")
+    void should_countExactlySevenDays_atWeekBoundaries() {
+        List<ShareActivityResponse> logs = new ArrayList<>();
+        logs.addAll(logs(0, 1));
+        logs.addAll(logs(6, 1));
+        logs.addAll(logs(7, 1));
+        logs.addAll(logs(13, 1));
+        logs.addAll(logs(14, 5));
+        given(logs);
+
+        InsightCard card = collector.collect("m1", null);
+
+        assertNotNull(card);
+        assertTrue(card.getProjection().contains("최근 7일 2건"), card.getProjection());
+        assertTrue(card.getProjection().contains("같은 속도입니다"), card.getProjection());
+    }
+
+    @Test
     @DisplayName("그 전 주에 기록이 없으면 증감 대신 건수만 말한다")
     void should_reportCountOnly_when_previousWeekEmpty() {
         given(new ArrayList<>(logs(2, 4)));

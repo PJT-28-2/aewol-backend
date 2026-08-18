@@ -23,25 +23,12 @@ public class InsightCard {
     /**
      * 지금 추세가 이어지면 어떻게 되는지 한 줄. 전부 자바에서 계산한다.
      *
-     * <p>관측 기간이 짧아 추정이 의미 없을 때는 null 로 둔다. 이 값이 없으면
-     * 프롬프트에도 넣지 않으므로 모델이 예측을 지어낼 근거 자체가 없다.
+     * <p>관측 기간이 짧아 추정이 의미 없을 때는 null 로 둔다. 본문과 중복되지 않도록
+     * LLM 프롬프트에는 넣지 않고 응답의 별도 필드로만 전달한다.
      */
     private final String projection;
     private final String ctaLabel;
     private final String ctaPath;
     /** 재료가 그대로면 다시 생성하지 않기 위한 지문. */
     private final String digest;
-
-    /**
-     * 모델에게 넘길 사실 묶음. 예측이 있으면 사실과 구분해 덧붙인다.
-     *
-     * <p>예측도 자바가 계산한 값이라 모델 입장에서는 다른 사실과 다를 바 없다.
-     * 다만 라벨을 붙여 두어야 모델이 둘째 문장에 그것을 쓸 수 있다.
-     */
-    public String promptFacts() {
-        if (projection == null || projection.isBlank()) {
-            return facts;
-        }
-        return facts + "\n\n예측(이미 계산된 값이다. 그대로 쓰고 다시 계산하지 마라):\n- " + projection;
-    }
 }

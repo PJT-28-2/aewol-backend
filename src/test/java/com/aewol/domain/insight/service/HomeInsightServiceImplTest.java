@@ -79,6 +79,31 @@ class HomeInsightServiceImplTest {
         assertEquals("N", captor.getValue().get("fallback"));
     }
 
+    @Test
+    @DisplayName("예측은 LLM 본문 재료에서 빼고 별도 응답 필드로만 전달한다")
+    void should_exposeProjectionSeparately_withoutSendingItToLlm() {
+        when(homeInsightMapper.findFreshByMemberId("m1")).thenReturn(List.of());
+        when(openAiChatClient.complete(anyString(), anyString())).thenReturn("모델 본문");
+        InsightCard card = InsightCard.builder()
+                .type(InsightCardType.SPENDING)
+                .headline("이번 달 지출 100,000원")
+                .facts("총 지출: 100,000원")
+                .fallbackBody("대체 문구")
+                .projection("이 속도면 이달 말 약 310,000원")
+                .ctaLabel("내역 보기")
+                .ctaPath("/wallet")
+                .digest("d1")
+                .build();
+
+        List<HomeInsightResponse> cards =
+                service(List.of(collector(InsightCardType.SPENDING, card)), true).getCards("m1", null);
+
+        ArgumentCaptor<String> factsCaptor = ArgumentCaptor.forClass(String.class);
+        verify(openAiChatClient).complete(anyString(), factsCaptor.capture());
+        assertEquals("총 지출: 100,000원", factsCaptor.getValue());
+        assertEquals("이 속도면 이달 말 약 310,000원", cards.get(0).getProjection());
+    }
+
     // 외부 호출이 실패해도 홈 화면은 떠야 한다. 카드가 사라지거나 빈 문구가 되면
     // 사용자에게는 앱이 고장 난 것으로 보인다.
     @Test

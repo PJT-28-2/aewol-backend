@@ -73,8 +73,9 @@ public class CareInsightCollector implements InsightCardCollector {
                     .orElse(contributions.get(0));
 
             LocalDate today = LocalDate.now();
-            long thisWeek = countSince(logs, today.minusDays(7));
-            long lastWeek = countBetween(logs, today.minusDays(14), today.minusDays(7));
+            // 오늘 포함 최근 7일은 [today-6, today], 그 전 7일은 [today-13, today-7]이다.
+            long thisWeek = countSince(logs, today.minusDays(6));
+            long lastWeek = countBetween(logs, today.minusDays(13), today.minusDays(6));
             String projection = weeklyTrend(thisWeek, lastWeek);
 
             return InsightCard.builder()

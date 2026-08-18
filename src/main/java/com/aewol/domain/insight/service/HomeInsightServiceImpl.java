@@ -114,7 +114,9 @@ public class HomeInsightServiceImpl implements HomeInsightService {
     }
 
     private HomeInsightResponse generateAndStore(String memberId, InsightCard card) {
-        String body = openAiChatClient.complete(systemPrompt(), card.promptFacts());
+        // 예측은 응답의 projection 필드에서만 보여준다. 프롬프트에 섞으면 모델 본문과
+        // 별도 전망 영역에 같은 내용이 중복될 수 있다.
+        String body = openAiChatClient.complete(systemPrompt(), card.getFacts());
         boolean fallback = body == null;
         if (fallback) {
             body = card.getFallbackBody();
