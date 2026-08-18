@@ -46,3 +46,5 @@ uploads/
 # --- AGENT ---
 CLAUDE.md
 AGENT.md
+# --- 운영 배포 ---
+.env.prod
