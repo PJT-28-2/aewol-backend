@@ -1,6 +1,7 @@
 package com.aewol.common.storage;
 
 import com.aewol.common.exception.BusinessException;
+import org.springframework.http.HttpStatus;
 import java.io.InputStream;
 import java.time.Duration;
 import java.time.Instant;
@@ -97,7 +98,8 @@ public class S3FileStorage implements FileStorage {
             return key;
         } catch (SdkException e) {
             log.error("[FILE_STORE_FAILED] S3 저장 실패 - key: {}, {}바이트", key, content.length, e);
-            throw new BusinessException("파일을 저장하지 못했어요. 잠시 후 다시 시도해 주세요.");
+            throw new BusinessException(HttpStatus.INTERNAL_SERVER_ERROR,
+                    "파일을 저장하지 못했어요. 잠시 후 다시 시도해 주세요.");
         }
     }
 
