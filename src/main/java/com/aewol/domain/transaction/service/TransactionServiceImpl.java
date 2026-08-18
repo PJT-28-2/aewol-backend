@@ -15,6 +15,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.LocalDateTime;
 import java.time.YearMonth;
 import java.time.format.DateTimeParseException;
@@ -41,6 +42,7 @@ public class TransactionServiceImpl implements TransactionService {
     @Override
     @Transactional
     public TransactionResponse processPayment(String memberId, PaymentRequest request) {
+        validatePaymentRequest(request);
         PaymentRecordCommand command = PaymentRecordCommand.builder()
                 .memberId(memberId)
                 .merchantName(request.getMerchantName())
@@ -49,6 +51,30 @@ public class TransactionServiceImpl implements TransactionService {
                 .memo(request.getMemo())
                 .build();
         return recordPayment(command);
+    }
+
+    private void validatePaymentRequest(PaymentRequest request) {
+        if (request == null) {
+            throw new BusinessException("결제 정보를 입력해 주세요.");
+        }
+        String merchantName = request.getMerchantName();
+        if (merchantName == null || merchantName.isBlank()) {
+            throw new BusinessException("가맹점명을 입력해 주세요.");
+        }
+        if (merchantName.length() > 100) {
+            throw new BusinessException("가맹점명은 100자 이하만 입력할 수 있습니다.");
+        }
+        BigDecimal amount = request.getAmount();
+        if (amount == null || amount.compareTo(BigDecimal.ONE) < 0) {
+            throw new BusinessException("결제 금액은 1원 이상이어야 합니다.");
+        }
+        try {
+            if (amount.setScale(0, RoundingMode.UNNECESSARY).precision() > 13) {
+                throw new BusinessException("결제 금액은 정수부 13자리 이하만 입력할 수 있습니다.");
+            }
+        } catch (ArithmeticException exception) {
+            throw new BusinessException("결제 금액은 1원 단위여야 합니다.");
+        }
     }
 
     private TransactionResponse recordPayment(PaymentRecordCommand command) {
