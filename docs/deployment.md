@@ -1,7 +1,30 @@
 # 배포 가이드
 
-EC2 한 대에 Docker Compose로 MySQL·Redis·OCR·애플리케이션을 함께 띄우는 구성이다.
-관련 이슈: #196(컨테이너화), #198(S3 전환)
+EC2 한 대에 Docker Compose로 MySQL·Redis·OCR·애플리케이션을 함께 띄우고, CloudFront가
+정적 파일과 API를 모두 받는 구성이다.
+관련 이슈: #196(컨테이너화), #198(S3 전환), #203(FileUtil 통합), #205(인프라 구성)
+
+## 실제 구성 (ap-northeast-2)
+
+| 리소스 | 값 |
+| --- | --- |
+| EC2 | `i-0b63ce3e8f7d98f9d` (m7i-flex.large, 8GB) |
+| 탄력적 IP | `43.200.225.176` |
+| 오리진 DNS | `ec2-43-200-225-176.ap-northeast-2.compute.amazonaws.com` |
+| CloudFront | `E2AXIIBUB4L66H` / `d2wzfpczojllq5.cloudfront.net` |
+| 정적 호스팅 버킷 | `aewol-prod-596617418243-ap-northeast-2-an` |
+| 업로드 파일 버킷 | `aewol-uploads-prods-596617418243-ap-northeast-2-an` |
+| DB 백업 버킷 | `aewol-old-backup-596617418243-ap-northeast-2-an` |
+| ECR | `596617418243.dkr.ecr.ap-northeast-2.amazonaws.com/aewol-backend`, `.../aewol-ocr` |
+| EC2 역할 | `aewol-ec2-role` |
+| SSM 경로 | `/aewol/prod/*` |
+
+커스텀 도메인 없이 CloudFront 기본 도메인을 쓴다. HTTPS가 자동으로 제공되어 ACM 발급이
+필요 없고, QR 스캔(`getUserMedia`)·Toss·카카오 OAuth 요건을 모두 만족한다.
+
+**m7i-flex.large를 고른 이유는 OCR이다.** 추론 시 700MB에서 1GB를 쓰는데 MySQL·Redis·앱까지
+합치면 4GB로는 여유가 없다. flex 계열은 기준 성능 40퍼센트 지속에 버스트가 가능해, 짧고 굵게
+CPU를 쓰는 OCR 패턴에 맞는다. 상시 구동이 아니라 필요할 때만 켜서 비용을 통제한다.
 
 ## 로컬 개발은 달라지지 않는다
 
@@ -29,8 +52,13 @@ docker-compose up -d          # mysql/redis/ocr만 (앱은 IDE에서 실행)
    `application-local.yml`의 실제 시크릿이 이미지에 실려 레지스트리로 새어나간다.
    CI 체크아웃에는 그 파일이 애초에 없다. (`.dockerignore`와 Dockerfile의 검증 단계가
    이중 방어선이지만, 구조적으로 막는 쪽이 우선이다.)
-2. OCR 이미지는 `onnxruntime`·`opencv` 설치에 메모리를 크게 써서 작은 EC2에서는
-   빌드가 실패한다.
+2. OCR 이미지는 `onnxruntime`·`opencv` 설치에 메모리를 크게 쓴다. 작은 인스턴스에서는
+   빌드가 실패한다(m7i-flex.large의 8GB에서는 문제없이 된다).
+
+> **예외**: 최초 부트스트랩 1회는 EC2에서 직접 빌드했다. ECR·OIDC 설정을 뒤로 미뤄
+> 검증 대상을 줄이기 위해서다. 시크릿 유출 위험은 없다 — `git archive`로 만든 소스에는
+> 추적 파일만 들어가므로 gitignore된 `application-local.yml`이 구조적으로 포함될 수 없다.
+> CD(#206)가 붙으면 원칙대로 CI 빌드에서 ECR push로 돌아간다.
 
 ## 배포 절차
 
@@ -129,18 +157,14 @@ OCR 추론 중 OOM으로 컨테이너가 죽는다.
 
 ## 보안 주의
 
-- 보안그룹은 80·443·22만 연다. DB·Redis·OCR은 호스트 포트를 열지 않는다.
+- 보안그룹 인바운드는 두 개뿐이다. 22번은 관리자 IP, 8080번은 CloudFront 관리형 접두사
+  목록(`com.amazonaws.global.cloudfront.origin-facing`)에서만 허용한다.
+  80·443은 쓰지 않는다(CloudFront가 8080으로 붙는다).
+- DB·Redis·OCR은 호스트 포트를 열지 않는다.
 - docker의 포트 매핑은 iptables를 직접 조작해 호스트 방화벽(ufw 등)을 우회한다.
   compose에서 `ports`를 추가할 때는 이 점을 염두에 둔다.
 - Redis에 인증이 걸려 있지 않다. compose 네트워크 밖으로 노출하게 된다면
   `requirepass` 설정이 반드시 선행되어야 한다.
-
-## 백업
-
-DB가 컨테이너 볼륨(EBS)에 있어 인스턴스를 잃으면 함께 사라진다. 최소한 아래는 확보한다.
-
-- `mysqldump` → S3 정기 백업 (배포 직전에도 1회)
-- EBS 스냅샷
 
 ## 파일 저장소 (S3)
 
@@ -202,6 +226,13 @@ MySQL을 RDS로 분리하지 않고 애플리케이션과 같은 EC2에 컨테�
 
 `scripts/backup-db.sh`가 컨테이너의 MySQL을 덤프해 S3로 올린다.
 
+Amazon Linux 2023에는 cron이 기본 설치되어 있지 않다.
+
+```bash
+sudo dnf install -y cronie
+sudo systemctl enable --now crond
+```
+
 ```bash
 sudo crontab -e
 # 매일 04:00
@@ -209,10 +240,16 @@ sudo crontab -e
 ```
 
 - 필요 환경변수: `.env.prod`의 `DB_NAME` / `DB_USERNAME` / `DB_PASSWORD` / `BACKUP_BUCKET`
-- 필요 권한: EC2 인스턴스 프로파일에 백업 버킷 `s3:PutObject`
+- 필요 권한: 백업 버킷에 `s3:PutObject`, `s3:GetObject`, `s3:ListBucket`.
+  처음에는 최소 권한 취지로 쓰기만 줬는데, **복구를 인스턴스에서 수행하므로 읽기가 필요하다.**
+  인스턴스는 이미 같은 데이터를 라이브로 들고 있어 읽기 권한이 노출을 늘리지 않는 반면,
+  장애 상황에서 별도 자격증명을 찾는 마찰은 실제 비용이다.
+  `ListBucket`은 버킷 ARN에, 객체 권한은 `/*` ARN에 붙여야 한다
 - S3 키 형식: `db-backup/YYYY/MM/aewol-YYYYMMDDTHHMMSS.sql.gz`
 - 원격 보관 기간은 **S3 수명주기 규칙**으로 관리한다 (스크립트는 호스트 디스크만 정리)
 - 배포 직전에도 1회 수행한다 (CD 워크플로 스텝)
+- **인스턴스를 중지하면 cron도 멈춘다.** 비용 절감을 위해 껐다 켜는 운영이라면,
+  끄기 전에 수동으로 한 번 돌린다
 
 ### 복구
 
@@ -222,12 +259,37 @@ sudo crontab -e
 aws s3 cp s3://<버킷>/db-backup/2026/08/aewol-20260818T040000.sql.gz .
 ```
 
+운영 DB를 덮어쓰지 않도록 **검증용 데이터베이스에 복원**한다. 덤프에 `CREATE DATABASE`나
+`USE` 문이 없어 아무 DB에나 적재할 수 있다.
+
 ```bash
-gunzip -c aewol-20260818T040000.sql.gz | docker exec -i -e MYSQL_PWD="$DB_PASSWORD" aewol-mysql-prod mysql --user="$DB_USERNAME" --default-character-set=utf8mb4 "$DB_NAME"
+docker exec -e MYSQL_PWD="$PW" aewol-mysql-prod mysql -u root -e "CREATE DATABASE aewol_restore_test CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
 ```
 
-복원 후 **한글 데이터를 조회해 문자셋을 반드시 확인한다.** `?`로 보이면 덤프나 복원 중
-문자셋이 어긋난 것이므로 그 백업은 쓸 수 없다.
+```bash
+gunzip -c aewol-20260818T040000.sql.gz | docker exec -i -e MYSQL_PWD="$PW" aewol-mysql-prod mysql -u root --default-character-set=utf8mb4 aewol_restore_test
+```
+
+#### 문자셋 검증
+
+복원 후 **한글이 온전한지 반드시 확인한다.** 이 프로젝트는 문자셋 불일치로 한글이 `?`로
+저장된 이력이 있다(#126).
+
+주의할 점이 하나 있다. **조회 클라이언트에 `--default-character-set=utf8mb4`를 빼면
+데이터가 멀쩡해도 `?`로 보인다.** 실제로 이 함정에 걸려 백업이 손상된 줄 알았던 적이 있다.
+표시 방식과 무관하게 판정하려면 운영 DB와 복원본을 **HEX로 비교**한다.
+
+```bash
+docker exec -e MYSQL_PWD="$PW" aewol-mysql-prod mysql -u root --default-character-set=utf8mb4 -e "SELECT bank_code, HEX(bank_name) AS live FROM aewol.bank_master ORDER BY bank_code LIMIT 3; SELECT bank_code, HEX(bank_name) AS restored FROM aewol_restore_test.bank_master ORDER BY bank_code LIMIT 3;"
+```
+
+두 HEX가 일치하면 백업은 바이트 단위로 온전하다. 검증이 끝나면 정리한다.
+
+```bash
+docker exec -e MYSQL_PWD="$PW" aewol-mysql-prod mysql -u root -e "DROP DATABASE aewol_restore_test;"
+```
+
+2026-08-19 기준 이 절차로 검증을 마쳤다 — 테이블 54개 복원, HEX 일치.
 
 ### EBS 스냅샷
 
