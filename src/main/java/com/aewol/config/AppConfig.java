@@ -45,4 +45,13 @@ public class AppConfig {
     )
     static class TestProperties {
     }
+
+    @Configuration
+    @Profile("prod")
+    @PropertySource(
+        value = "classpath:application-prod.yml",
+        factory = YamlPropertySourceFactory.class
+    )
+    static class ProdProperties {
+    }
 }
