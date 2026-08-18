@@ -41,6 +41,7 @@ public class TransactionServiceImpl implements TransactionService {
     @Override
     @Transactional
     public TransactionResponse processPayment(String memberId, PaymentRequest request) {
+        validatePaymentRequest(request);
         PaymentRecordCommand command = PaymentRecordCommand.builder()
                 .memberId(memberId)
                 .merchantName(request.getMerchantName())
@@ -49,6 +50,29 @@ public class TransactionServiceImpl implements TransactionService {
                 .memo(request.getMemo())
                 .build();
         return recordPayment(command);
+    }
+
+    private void validatePaymentRequest(PaymentRequest request) {
+        if (request == null) {
+            throw new BusinessException("결제 정보를 입력해 주세요.");
+        }
+        String merchantName = request.getMerchantName();
+        if (merchantName == null || merchantName.isBlank()) {
+            throw new BusinessException(PaymentRequest.MERCHANT_NAME_REQUIRED_MESSAGE);
+        }
+        if (merchantName.length() > PaymentRequest.MAX_MERCHANT_NAME_LENGTH) {
+            throw new BusinessException(PaymentRequest.MERCHANT_NAME_LENGTH_MESSAGE);
+        }
+        BigDecimal amount = request.getAmount();
+        if (amount == null || amount.compareTo(PaymentRequest.MIN_AMOUNT) < 0) {
+            throw new BusinessException(PaymentRequest.AMOUNT_MIN_MESSAGE);
+        }
+        if (amount.stripTrailingZeros().scale() > 0) {
+            throw new BusinessException(PaymentRequest.AMOUNT_INTEGER_MESSAGE);
+        }
+        if (amount.compareTo(PaymentRequest.MAX_AMOUNT) > 0) {
+            throw new BusinessException(PaymentRequest.AMOUNT_MAX_MESSAGE);
+        }
     }
 
     private TransactionResponse recordPayment(PaymentRecordCommand command) {
