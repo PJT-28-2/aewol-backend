@@ -19,7 +19,7 @@ public class GroupPurchaseCreateRequest {
     private String productName;
 
     @NotBlank
-    @Pattern(regexp = GroupPurchaseCategory.PATTERN, message = "카테고리는 사료, 간식, 용품, 기타 중 하나여야 합니다.")
+    @Pattern(regexp = GroupPurchaseCategory.PATTERN, message = GroupPurchaseCategory.INVALID_MESSAGE)
     private String category;
 
     private String image;

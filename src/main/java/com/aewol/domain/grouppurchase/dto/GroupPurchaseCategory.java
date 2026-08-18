@@ -14,6 +14,9 @@ public final class GroupPurchaseCategory {
 
     public static final String PATTERN = FOOD + "|" + SNACK + "|" + SUPPLY + "|" + ETC;
 
+    public static final String INVALID_MESSAGE =
+            "카테고리는 " + FOOD + ", " + SNACK + ", " + SUPPLY + ", " + ETC + " 중 하나여야 합니다.";
+
     private GroupPurchaseCategory() {
     }
 }
