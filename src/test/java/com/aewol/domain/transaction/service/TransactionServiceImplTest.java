@@ -35,6 +35,56 @@ class TransactionServiceImplTest {
     @Mock PetMapper petMapper;
 
     @Test
+    @DisplayName("음수 결제 금액은 지갑 조회 전에 거절한다")
+    void should_rejectPaymentBeforeWalletLookup_when_amountIsNegative() {
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service().processPayment("member-1", paymentRequest("애월동물병원", new BigDecimal("-1000"))));
+
+        assertEquals("결제 금액은 1원 이상이어야 합니다.", exception.getMessage());
+        verifyNoInteractions(walletMapper, transactionMapper, autoTaggingService, petMapper);
+    }
+
+    @Test
+    @DisplayName("0원 결제는 지갑 조회 전에 거절한다")
+    void should_rejectPaymentBeforeWalletLookup_when_amountIsZero() {
+        assertThrows(BusinessException.class,
+                () -> service().processPayment("member-1", paymentRequest("애월동물병원", BigDecimal.ZERO)));
+
+        verifyNoInteractions(walletMapper, transactionMapper, autoTaggingService, petMapper);
+    }
+
+    @Test
+    @DisplayName("소수 결제 금액은 지갑 조회 전에 거절한다")
+    void should_rejectPaymentBeforeWalletLookup_when_amountHasFraction() {
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service().processPayment("member-1", paymentRequest("애월동물병원", new BigDecimal("1000.5"))));
+
+        assertEquals("결제 금액은 1원 단위여야 합니다.", exception.getMessage());
+        verifyNoInteractions(walletMapper, transactionMapper, autoTaggingService, petMapper);
+    }
+
+    @Test
+    @DisplayName("정수부 13자리를 초과한 결제 금액은 지갑 조회 전에 거절한다")
+    void should_rejectPaymentBeforeWalletLookup_when_amountExceedsDatabaseRange() {
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service().processPayment("member-1",
+                        paymentRequest("애월동물병원", new BigDecimal("10000000000000"))));
+
+        assertEquals("결제 금액은 정수부 13자리 이하만 입력할 수 있습니다.", exception.getMessage());
+        verifyNoInteractions(walletMapper, transactionMapper, autoTaggingService, petMapper);
+    }
+
+    @Test
+    @DisplayName("100자를 초과한 가맹점명은 지갑 조회 전에 거절한다")
+    void should_rejectPaymentBeforeWalletLookup_when_merchantNameIsTooLong() {
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service().processPayment("member-1", paymentRequest("가".repeat(101), BigDecimal.ONE)));
+
+        assertEquals("가맹점명은 100자 이하만 입력할 수 있습니다.", exception.getMessage());
+        verifyNoInteractions(walletMapper, transactionMapper, autoTaggingService, petMapper);
+    }
+
+    @Test
     @DisplayName("반려동물을 선택해 결제하면 거래에 반려동물 태그를 직접 저장한다")
     void should_savePetId_when_paymentHasSelectedPet() {
         TransactionServiceImpl service = new TransactionServiceImpl(
@@ -309,6 +359,13 @@ class TransactionServiceImplTest {
 
     private TransactionServiceImpl service() {
         return new TransactionServiceImpl(transactionMapper, walletMapper, autoTaggingService, petMapper);
+    }
+
+    private static PaymentRequest paymentRequest(String merchantName, BigDecimal amount) {
+        PaymentRequest request = new PaymentRequest();
+        ReflectionTestUtils.setField(request, "merchantName", merchantName);
+        ReflectionTestUtils.setField(request, "amount", amount);
+        return request;
     }
 
     private static Map<String, Object> transaction(String walletId, String petId) {
