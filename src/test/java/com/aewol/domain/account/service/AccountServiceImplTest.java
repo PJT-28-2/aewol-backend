@@ -3,11 +3,14 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 import com.aewol.common.exception.BusinessException;
 import com.aewol.common.util.AccountNumberCrypto;
+import com.aewol.common.util.RedisRateLimiter;
 import com.aewol.domain.account.dto.AccountPrimaryRequest;
 import com.aewol.domain.account.dto.AccountRegisterRequest;
 import com.aewol.domain.account.dto.AccountResponse;
 import com.aewol.domain.account.dto.DepositConfirmRequest;
 import com.aewol.domain.account.dto.DepositConfirmResponse;
+import com.aewol.domain.account.dto.DepositVerificationRequest;
+import com.aewol.domain.account.dto.DepositVerificationResponse;
 import com.aewol.domain.account.mapper.AccountMapper;
 import com.aewol.domain.account.mapper.AccountVerificationMapper;
 import com.aewol.external.codef.CodefClient;
@@ -23,6 +26,7 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.core.env.Environment;
+import org.springframework.core.env.Profiles;
 @ExtendWith(MockitoExtension.class)
 class AccountServiceImplTest {
     @Mock AccountMapper accountMapper;
@@ -30,6 +34,7 @@ class AccountServiceImplTest {
     @Mock CodefClient codefClient;
     @Mock Environment environment;
     @Mock AccountNumberCrypto accountNumberCrypto;
+    @Mock RedisRateLimiter redisRateLimiter;
     @InjectMocks AccountServiceImpl service;
     private static final String MEMBER_ID = "9001";
 private static final String ACCOUNT_ID = "1";
@@ -45,6 +50,36 @@ private static final String ACCOUNT_ID = "1";
     void setUpCrypto() {
         lenient().when(accountNumberCrypto.decrypt(anyString())).thenAnswer(inv -> inv.getArgument(0));
         lenient().when(accountNumberCrypto.hash(anyString())).thenAnswer(inv -> "hash-" + inv.getArgument(0));
+    }
+
+    @Test
+    @DisplayName("dev 프로파일에서는 1원 인증 응답에 테스트용 입금자명이 포함된다 - 로그 접근 없이도 공유 dev 서버에서 계좌 연동 테스트가 가능해야 한다")
+    void should_includeDepositorNameForTest_when_devProfile() {
+        when(redisRateLimiter.incrementWithExpiry(anyString(), anyLong())).thenReturn(1L);
+        when(codefClient.requestAccountTransferAuth("004", "1234567890")).thenReturn(CORRECT_CODE);
+        when(accountNumberCrypto.encrypt("1234567890")).thenReturn("encrypted-1234567890");
+        when(environment.acceptsProfiles(any(Profiles.class)))
+                .thenAnswer(inv -> inv.<Profiles>getArgument(0).matches("dev"::equals));
+
+        DepositVerificationResponse response = service.requestDepositVerification(
+                MEMBER_ID, new DepositVerificationRequest("004", "1234567890"));
+
+        assertEquals(CORRECT_CODE, response.getDepositorNameForTest());
+    }
+
+    @Test
+    @DisplayName("prod 프로파일에서는 1원 인증 응답에 테스트용 입금자명을 내려주지 않는다")
+    void should_notIncludeDepositorNameForTest_when_prodProfile() {
+        when(redisRateLimiter.incrementWithExpiry(anyString(), anyLong())).thenReturn(1L);
+        when(codefClient.requestAccountTransferAuth("004", "1234567890")).thenReturn(CORRECT_CODE);
+        when(accountNumberCrypto.encrypt("1234567890")).thenReturn("encrypted-1234567890");
+        when(environment.acceptsProfiles(any(Profiles.class)))
+                .thenAnswer(inv -> inv.<Profiles>getArgument(0).matches("prod"::equals));
+
+        DepositVerificationResponse response = service.requestDepositVerification(
+                MEMBER_ID, new DepositVerificationRequest("004", "1234567890"));
+
+        assertNull(response.getDepositorNameForTest());
     }
 
     @Test
