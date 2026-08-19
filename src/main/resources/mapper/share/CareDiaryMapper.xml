@@ -37,6 +37,7 @@
                m.name             AS authorName,
                d.diary_date       AS diaryDate,
                d.content          AS content,
+               d.version          AS version,
                d.created_at       AS createdAt,
                d.updated_at       AS updatedAt
         FROM care_diary d
@@ -57,12 +58,23 @@
         ORDER BY diary_id, sort_order, image_id
     </select>
 
+    <!--
+        version을 보내면 그 값이 그대로일 때만 수정된다. 영향 행이 0이면 그 사이 다른
+        곳에서 저장했다는 뜻이라 서비스가 409로 돌려보낸다.
+
+        version이 null이면 조건을 걸지 않는다. 아직 값을 보내지 않는 클라이언트가 남아
+        있어도 동작하게 하기 위한 것이고, 이때는 예전처럼 나중 저장이 이긴다.
+    -->
     <update id="update">
         UPDATE care_diary
            SET diary_date = #{diaryDate},
-               content = #{content}
+               content = #{content},
+               version = version + 1
         WHERE diary_id = #{diaryId}
           AND deleted_at IS NULL
+        <if test="version != null">
+          AND version = #{version}
+        </if>
     </update>
 
     <update id="softDelete">
