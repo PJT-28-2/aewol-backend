@@ -95,14 +95,15 @@ public class AccountServiceImpl implements AccountService {
     // verify-deposit -> confirm을 통과시킬 수 있어 1원 인증의 본인 확인 효력이
     // 무효화된다(CodeRabbit 지적, 2026-08-06). local/test 프로필에서만 값을 채운다.
     //
-    // dev도 포함한다(2026-08-19 추가) — dev 프로파일에서도 CODEF는 여전히 데모/샌드박스
-    // (development.codef.io)만 바라보고 있어서 실제 돈이 오가지 않는 건 local/test와
-    // 같다. 그런데 이 값이 local/test에서만 내려가다 보니, 공유 dev 서버로 계좌 연동을
-    // 테스트하는 팀원은 서버 로그 열람 권한이 없으면(게다가 dev 로그는 CodefClient가
-    // 마스킹만 남겨서 로그를 봐도 소용없었다) 1원 인증을 끝까지 진행할 방법이 없었다.
-    // 운영(prod)에서만 계속 막는다.
+    // dev는 포함하지 않는다(2026-08-19 재검토, PR #236 리뷰) — 한때 dev도 포함시켰으나,
+    // 이 값은 CodefClient처럼 로그에만 남는 게 아니라 API 응답 바디에 그대로 실려 나간다.
+    // 로그 노출은 로그 열람 권한이 있는 사람으로 범위가 제한되지만, API 응답 노출은
+    // dev 서버 API를 호출할 수 있는 누구에게나(공유 dev 서버라면 QA, 외주 인력 등 포함)
+    // 1원 인증 정답을 그대로 알려주는 셈이라 blast radius가 훨씬 크다. 공유 dev 서버에서
+    // 로그 열람 권한 없이 계좌 연동을 끝까지 테스트하는 문제는 이 값을 API로 내려주는
+    // 방식이 아니라 별도의 로그 접근 권한 부여 등 인프라/운영 차원에서 풀어야 한다.
     private boolean isTestExposureAllowed() {
-        return environment.acceptsProfiles(Profiles.of("local", "test", "dev"));
+        return environment.acceptsProfiles(Profiles.of("local", "test"));
     }
 
     /**

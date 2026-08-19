@@ -230,10 +230,13 @@ public class CodefClient {
         // 입금 확인 없이 인증을 통과시킬 수 있다(CodeRabbit 지적, 2026-08-07).
         // [TEST] 접두사만으로는 로그 레벨/환경을 제한하지 못하므로, local/test/dev
         // 프로필에서만 실제 값을 남기고 운영에서는 계좌 식별 정보(마스킹)만 남긴다.
-        // dev 포함 범위는 AccountServiceImpl.isTestExposureAllowed()와 맞춘다
-        // (2026-08-19) — dev도 CODEF 데모 서버만 쓰기 때문에 local/test와 위험도가
-        // 같고, 이 로그가 공유 dev 서버에서 계좌 연동을 테스트하는 팀원의 마지막
-        // 확인 수단이 될 수 있다.
+        //
+        // dev는 여기(로그)만 포함하고 AccountServiceImpl.isTestExposureAllowed()의
+        // API 응답 노출 범위에는 포함하지 않는다(2026-08-19, PR #236 리뷰) — 로그는
+        // 로그 열람 권한이 있는 사람으로 접근이 제한되지만 API 응답은 dev 서버 API를
+        // 호출할 수 있는 누구에게나 노출되어 위험도가 다르다. dev도 CODEF 데모 서버만
+        // 쓰기 때문에 값 자체는 안전하고, 이 로그가 공유 dev 서버에서 로그 열람 권한이
+        // 있는 팀원이 계좌 연동을 테스트하는 마지막 확인 수단이 된다.
         if (environment.acceptsProfiles(Profiles.of("local", "test", "dev"))) {
             log.info("[TEST] 1원인증 입금자명 = {}", authCode);
         } else {

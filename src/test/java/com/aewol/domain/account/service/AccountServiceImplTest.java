@@ -22,6 +22,8 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -53,13 +55,13 @@ private static final String ACCOUNT_ID = "1";
     }
 
     @Test
-    @DisplayName("dev 프로파일에서는 1원 인증 응답에 테스트용 입금자명이 포함된다 - 로그 접근 없이도 공유 dev 서버에서 계좌 연동 테스트가 가능해야 한다")
-    void should_includeDepositorNameForTest_when_devProfile() {
+    @DisplayName("local 프로파일에서는 1원 인증 응답에 테스트용 입금자명이 포함된다")
+    void should_includeDepositorNameForTest_when_localProfile() {
         when(redisRateLimiter.incrementWithExpiry(anyString(), anyLong())).thenReturn(1L);
         when(codefClient.requestAccountTransferAuth("004", "1234567890")).thenReturn(CORRECT_CODE);
         when(accountNumberCrypto.encrypt("1234567890")).thenReturn("encrypted-1234567890");
         when(environment.acceptsProfiles(any(Profiles.class)))
-                .thenAnswer(inv -> inv.<Profiles>getArgument(0).matches("dev"::equals));
+                .thenAnswer(inv -> inv.<Profiles>getArgument(0).matches("local"::equals));
 
         DepositVerificationResponse response = service.requestDepositVerification(
                 MEMBER_ID, new DepositVerificationRequest("004", "1234567890"));
@@ -67,14 +69,15 @@ private static final String ACCOUNT_ID = "1";
         assertEquals(CORRECT_CODE, response.getDepositorNameForTest());
     }
 
-    @Test
-    @DisplayName("prod 프로파일에서는 1원 인증 응답에 테스트용 입금자명을 내려주지 않는다")
-    void should_notIncludeDepositorNameForTest_when_prodProfile() {
+    @ParameterizedTest
+    @ValueSource(strings = {"dev", "prod"})
+    @DisplayName("dev/prod 프로파일에서는 1원 인증 응답에 테스트용 입금자명을 내려주지 않는다 - dev도 API 응답 노출 범위에서는 제외한다(2026-08-19, PR #236 리뷰)")
+    void should_notIncludeDepositorNameForTest_when_devOrProdProfile(String profile) {
         when(redisRateLimiter.incrementWithExpiry(anyString(), anyLong())).thenReturn(1L);
         when(codefClient.requestAccountTransferAuth("004", "1234567890")).thenReturn(CORRECT_CODE);
         when(accountNumberCrypto.encrypt("1234567890")).thenReturn("encrypted-1234567890");
         when(environment.acceptsProfiles(any(Profiles.class)))
-                .thenAnswer(inv -> inv.<Profiles>getArgument(0).matches("prod"::equals));
+                .thenAnswer(inv -> inv.<Profiles>getArgument(0).matches(profile::equals));
 
         DepositVerificationResponse response = service.requestDepositVerification(
                 MEMBER_ID, new DepositVerificationRequest("004", "1234567890"));
