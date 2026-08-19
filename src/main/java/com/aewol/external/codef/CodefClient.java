@@ -228,9 +228,13 @@ public class CodefClient {
 
         // 운영 로그에 실제 인증 값(authCode)을 남기면, 로그 열람 권한만 있어도 실제
         // 입금 확인 없이 인증을 통과시킬 수 있다(CodeRabbit 지적, 2026-08-07).
-        // [TEST] 접두사만으로는 로그 레벨/환경을 제한하지 못하므로, local/test
+        // [TEST] 접두사만으로는 로그 레벨/환경을 제한하지 못하므로, local/test/dev
         // 프로필에서만 실제 값을 남기고 운영에서는 계좌 식별 정보(마스킹)만 남긴다.
-        if (environment.acceptsProfiles(Profiles.of("local", "test"))) {
+        // dev 포함 범위는 AccountServiceImpl.isTestExposureAllowed()와 맞춘다
+        // (2026-08-19) — dev도 CODEF 데모 서버만 쓰기 때문에 local/test와 위험도가
+        // 같고, 이 로그가 공유 dev 서버에서 계좌 연동을 테스트하는 팀원의 마지막
+        // 확인 수단이 될 수 있다.
+        if (environment.acceptsProfiles(Profiles.of("local", "test", "dev"))) {
             log.info("[TEST] 1원인증 입금자명 = {}", authCode);
         } else {
             log.info("1원인증 요청 완료 - bankCode: {}, account: {}", bankCode, maskAccountNumber(accountNumber));
