@@ -20,7 +20,7 @@ public class SignupRequest {
     private String password;
     @NotBlank @Size(max = 20)
     private String name;
-    @Size(max = 20)
+    @NotBlank @Pattern(regexp = "^010\\d{8}$")
     private String phone;
     @NotBlank @Size(max = 10)
     private String zipCode;
