@@ -1,4 +1,4 @@
-package com.aewol.domain.grouppurchase.dto;
+package com.aewol.domain.grouppurchase.service;
 
 /** 공동구매 참여자(group_purchase_participant.payment_status) 상태 값의 단일 출처. */
 public final class GroupPurchaseParticipantStatus {

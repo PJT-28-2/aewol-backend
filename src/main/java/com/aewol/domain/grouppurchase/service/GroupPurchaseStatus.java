@@ -1,4 +1,4 @@
-package com.aewol.domain.grouppurchase.dto;
+package com.aewol.domain.grouppurchase.service;
 
 /**
  * 공동구매 게시글 상태 값의 단일 출처. OPEN/CANCELLED만 group_purchase.status 컬럼에 저장되고,
