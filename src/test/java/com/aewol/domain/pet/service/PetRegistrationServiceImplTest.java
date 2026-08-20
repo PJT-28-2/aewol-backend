@@ -180,6 +180,44 @@ class PetRegistrationServiceImplTest {
     }
 
     @Test
+    void should_reuseStoredOwnerInfo_when_reVerifyingWithoutInput() {
+        // 재연동: 이름/생년월일을 입력하지 않아도 이전 검증 때 저장된 소유자 정보로 APMS를 호출해야 한다.
+        when(petMapper.findById("pet-1")).thenReturn(pet("member-1"));
+        when(petDocumentMapper.findByPetIdAndTypeForUpdate("pet-1", "REGISTRATION"))
+                .thenReturn(map("doc_id", 31L));
+        when(petRegistrationMapper.findByPetIdAndDocId("pet-1", "31")).thenReturn(map(
+                "doc_id", 31L, "pet_id", "pet-1", "reg_number", "410000012345678", "name", "몽이",
+                "owner_name", "홍길동", "owner_birth", "19900101",
+                "last_synced_at", LocalDateTime.of(2026, 8, 14, 11, 0, 0)));
+        when(apmsClient.verifyRegistration("410000012345678", "홍길동", "19900101")).thenReturn(registration());
+        when(petRegistrationMapper.findByRegNumber("410000012345678")).thenReturn(map("pet_id", "pet-1"));
+        when(petRegistrationMapper.update(any())).thenReturn(1);
+        when(petMapper.updateRegistrationNumber("pet-1", "member-1", "410000012345678")).thenReturn(1);
+
+        PetRegistrationResponse response = service.verify(
+                "member-1", "pet-1", request("410000012345678", null, null));
+
+        assertTrue(response.isVerified());
+        verify(apmsClient).verifyRegistration("410000012345678", "홍길동", "19900101");
+        verify(petRegistrationMapper).update(argThat(row ->
+                "홍길동".equals(row.get("ownerName")) && "19900101".equals(row.get("ownerBirth"))));
+    }
+
+    @Test
+    void should_throwBadRequest_when_reVerifyingWithoutInputAndNoStoredOwnerInfo() {
+        when(petMapper.findById("pet-1")).thenReturn(pet("member-1"));
+        when(petDocumentMapper.findByPetIdAndTypeForUpdate("pet-1", "REGISTRATION"))
+                .thenReturn(map("doc_id", 31L));
+        when(petRegistrationMapper.findByPetIdAndDocId("pet-1", "31")).thenReturn(map("doc_id", 31L));
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.verify("member-1", "pet-1", request("410000012345678", null, null)));
+
+        assertEquals(HttpStatus.BAD_REQUEST, exception.getStatus());
+        verifyNoInteractions(apmsClient);
+    }
+
+    @Test
     void should_throwForbidden_when_nonOwnerVerifies() {
         when(petMapper.findById("pet-1")).thenReturn(pet("owner-1"));
 
