@@ -11,7 +11,7 @@ import java.util.Map;
 public interface GroupPurchaseMapper {
     List<Map<String, Object>> findList(@Param("status") String status, @Param("keyword") String keyword,
                                         @Param("category") String category, @Param("limit") int limit,
-                                        @Param("offset") int offset);
+                                        @Param("offset") int offset, @Param("sort") String sort);
     Map<String, Object> findById(@Param("gpId") String gpId);
     void insert(Map<String, Object> groupPurchase);
     int updateQuantity(@Param("gpId") String gpId, @Param("quantity") int quantity);

@@ -15,6 +15,7 @@ import org.springframework.web.multipart.MultipartFile;
 
 public interface GroupPurchaseService {
     GroupPurchaseListResponse list(String memberId, String status, String keyword, String category, int page, int size);
+    GroupPurchaseListResponse list(String memberId, String status, String keyword, String category, int page, int size, String sort);
     GroupPurchaseResponse create(String memberId, GroupPurchaseCreateRequest request);
     GroupPurchaseResponse getDetail(String memberId, String gpId);
     GroupPurchaseStatusResponse getStatus(String memberId, String gpId);

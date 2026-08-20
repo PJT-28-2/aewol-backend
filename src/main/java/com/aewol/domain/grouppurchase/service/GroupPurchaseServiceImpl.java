@@ -70,12 +70,17 @@ public class GroupPurchaseServiceImpl implements GroupPurchaseService {
 
     @Override
     public GroupPurchaseListResponse list(String memberId, String status, String keyword, String category, int page, int size) {
+        return list(memberId, status, keyword, category, page, size, null);
+    }
+
+    @Override
+    public GroupPurchaseListResponse list(String memberId, String status, String keyword, String category, int page, int size, String sort) {
         int safePage = Math.max(page, 0);
         int safeSize = size <= 0 ? 10 : size;
         String dbStatus = validateListStatus(status);
 
         List<Map<String, Object>> rows = groupPurchaseMapper.findList(
-                dbStatus, keyword, category, safeSize + 1, safePage * safeSize);
+                dbStatus, keyword, category, safeSize + 1, safePage * safeSize, sort);
 
         boolean hasNext = rows.size() > safeSize;
         List<Map<String, Object>> pageRows = hasNext ? rows.subList(0, safeSize) : rows;

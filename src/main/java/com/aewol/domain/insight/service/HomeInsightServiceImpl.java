@@ -148,6 +148,8 @@ public class HomeInsightServiceImpl implements HomeInsightService {
                 .ctaLabel(card.getCtaLabel())
                 .ctaPath(card.getCtaPath())
                 .fallback(fallback)
+                .recommendedProducts(card.getRecommendedProducts())
+                .categoryBreakdown(card.getCategoryBreakdown())
                 .build();
     }
 
@@ -184,6 +186,10 @@ public class HomeInsightServiceImpl implements HomeInsightService {
                 .ctaPath(card.getCtaPath())
                 .fallback("Y".equals(String.valueOf(cached.get("fallback"))))
                 .generatedAt(generatedAt == null ? null : String.valueOf(generatedAt))
+                // 추천 상품도 헤드라인/전망과 같은 이유로 캐시하지 않는다. 공동구매 진행 상태는
+                // 어제와 다를 수 있어 매번 새로 조회한다.
+                .recommendedProducts(card.getRecommendedProducts())
+                .categoryBreakdown(card.getCategoryBreakdown())
                 .build();
     }
 

@@ -60,11 +60,21 @@
 
              필터가 없는 전체 탭은 두 그룹이 섞여 있어 CASE가 필요하다. 이 경로는 여전히
              풀스캔이며 별도 과제다. -->
+        <!-- sort='DEADLINE_ASC'은 홈 인사이트의 '이 카테고리 공동구매 추천'처럼 마감이
+             임박한 것부터 보여주고 싶을 때만 쓴다. 기본 목록 화면(GroupPurchaseListView)은
+             이 값을 넘기지 않으므로 기존 최신 등록순 그대로다. -->
         ORDER BY
             <if test="status == null or status == ''">
             CASE WHEN current_quantity &lt; target_quantity AND deadline &gt;= NOW() THEN 0 ELSE 1 END,
             </if>
-            created_at DESC
+            <choose>
+                <when test="sort == 'DEADLINE_ASC'">
+                    deadline ASC
+                </when>
+                <otherwise>
+                    created_at DESC
+                </otherwise>
+            </choose>
         LIMIT #{limit} OFFSET #{offset}
     </select>
 
