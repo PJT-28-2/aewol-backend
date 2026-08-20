@@ -234,10 +234,18 @@ public class PetRegistrationServiceImpl implements PetRegistrationService {
 
     private static String normalizeNeutered(String value) {
         if (value == null) return null;
-        String upper = value.trim().toUpperCase(Locale.ROOT);
+        String trimmed = value.trim();
+        String upper = trimmed.toUpperCase(Locale.ROOT);
         if (upper.equals("O") || upper.equals("Y")) return "Y";
         if (upper.equals("X") || upper.equals("N")) return "N";
-        return upper;
+        // APMS는 neuterYn에 "중성"/"미중성" 같은 한글 값을 준다. pet_registration.neutered가
+        // CHAR(1)이라 알 수 없는 값을 그대로 저장하면 truncation 에러가 나므로, 인식 못한
+        // 값은 저장하지 않고 null로 둔다.
+        if (trimmed.contains("중성")) {
+            boolean negated = trimmed.contains("미") || trimmed.contains("안") || trimmed.contains("비");
+            return negated ? "N" : "Y";
+        }
+        return upper.length() == 1 ? upper : null;
     }
 
     private static String digits(String value) {
