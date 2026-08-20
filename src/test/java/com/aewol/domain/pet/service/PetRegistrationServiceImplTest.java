@@ -113,6 +113,50 @@ class PetRegistrationServiceImplTest {
     }
 
     @Test
+    void should_keepSingleCharNeutered_when_apmsReturnsUnrecognizedSingleChar() {
+        when(petMapper.findById("pet-1")).thenReturn(pet("member-1"));
+        Map<String, Object> unknownCodeRegistration = registration();
+        unknownCodeRegistration.put("neuterYn", "Z");
+        when(apmsClient.verifyRegistration("410000012345678", "홍길동", null)).thenReturn(unknownCodeRegistration);
+        when(petDocumentMapper.findByPetIdAndTypeForUpdate("pet-1", "REGISTRATION")).thenReturn(null);
+        doAnswer(invocation -> {
+            invocation.<Map<String, Object>>getArgument(0).put("docId", 31L);
+            return null;
+        }).when(petDocumentMapper).insert(any());
+        when(petMapper.updateRegistrationNumber("pet-1", "member-1", "410000012345678")).thenReturn(1);
+        when(petRegistrationMapper.findByPetIdAndDocId("pet-1", "31")).thenReturn(map(
+                "doc_id", 31L, "pet_id", "pet-1", "reg_number", "410000012345678", "name", "몽이",
+                "last_synced_at", LocalDateTime.of(2026, 8, 14, 11, 0, 0)));
+
+        service.verify("member-1", "pet-1", request("410000012345678", "홍길동", null));
+
+        // pet_registration.neutered가 CHAR(1)이라 한 글자는 그대로 저장해도 truncation이 나지 않는다.
+        verify(petRegistrationMapper).insert(argThat(row -> "Z".equals(row.get("neutered"))));
+    }
+
+    @Test
+    void should_dropNeutered_when_apmsReturnsUnrecognizedMultiCharValue() {
+        when(petMapper.findById("pet-1")).thenReturn(pet("member-1"));
+        Map<String, Object> unknownValueRegistration = registration();
+        unknownValueRegistration.put("neuterYn", "미상");
+        when(apmsClient.verifyRegistration("410000012345678", "홍길동", null)).thenReturn(unknownValueRegistration);
+        when(petDocumentMapper.findByPetIdAndTypeForUpdate("pet-1", "REGISTRATION")).thenReturn(null);
+        doAnswer(invocation -> {
+            invocation.<Map<String, Object>>getArgument(0).put("docId", 31L);
+            return null;
+        }).when(petDocumentMapper).insert(any());
+        when(petMapper.updateRegistrationNumber("pet-1", "member-1", "410000012345678")).thenReturn(1);
+        when(petRegistrationMapper.findByPetIdAndDocId("pet-1", "31")).thenReturn(map(
+                "doc_id", 31L, "pet_id", "pet-1", "reg_number", "410000012345678", "name", "몽이",
+                "last_synced_at", LocalDateTime.of(2026, 8, 14, 11, 0, 0)));
+
+        service.verify("member-1", "pet-1", request("410000012345678", "홍길동", null));
+
+        // 2글자 이상인데 "중성"을 포함하지 않는 값은 CHAR(1) truncation을 막기 위해 저장하지 않고 null로 둔다.
+        verify(petRegistrationMapper).insert(argThat(row -> row.get("neutered") == null));
+    }
+
+    @Test
     void should_updateRegistration_when_petWasAlreadyVerified() {
         PetRegistrationVerifyRequest request = request("410000012345678", "홍길동", null);
         when(petMapper.findById("pet-1")).thenReturn(pet("member-1"));
