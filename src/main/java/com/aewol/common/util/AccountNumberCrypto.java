@@ -67,6 +67,20 @@ public class AccountNumberCrypto {
             throw new IllegalStateException(propertyName + " 설정이 비어 있어요. "
                     + "`openssl rand -base64 32` 로 키를 생성해서 채워주세요.");
         }
+        // 값이 아직 ${...} 모양이면 플레이스홀더가 치환되지 않은 것이다. 이 경우 base64
+        // 디코딩은 '$'(0x24)에서 실패하는데, 그 메시지("올바른 base64 문자열이 아니에요")로는
+        // 원인을 짚을 수 없다. 실제로는 값이 잘못된 게 아니라 환경변수가 없는 상태다.
+        //
+        // 2026-08-13에 이 설정이 추가돼서, 그 전에 만든 application-local.yml에는 항목
+        // 자체가 없다. 예제 파일만 보고 있으면 눈치채기 어렵다.
+        String trimmed = base64Value.trim();
+        if (trimmed.startsWith("${") && trimmed.endsWith("}")) {
+            String variable = trimmed.substring(2, trimmed.length() - 1).split(":", 2)[0];
+            throw new IllegalStateException(propertyName + " 값이 치환되지 않았어요. "
+                    + "환경변수 " + variable + " 를 설정하거나, application-local.yml에 값을 직접 넣어주세요. "
+                    + "(`openssl rand -base64 32` 로 생성) "
+                    + "application-local.yml.example 을 다시 비교해 보면 빠진 항목을 찾을 수 있어요.");
+        }
         byte[] decoded;
         try {
             decoded = Base64.getDecoder().decode(base64Value);
