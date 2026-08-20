@@ -56,7 +56,10 @@
              결과 순서가 같고, 대신 (deadline, created_at DESC) 인덱스가 정렬을 그대로 제공할 수 있다.
 
              빼지 않으면 NOW()가 든 계산식이라 어떤 인덱스도 순서를 줄 수 없어 20만 행을
-             전부 정렬한다(측정: 101ms -> 2.7ms, V39 기준).
+             전부 정렬한다(V39 당시 created_at 단일 인덱스 기준 측정치는 101ms -> 2.7ms.
+             deadline 기준으로 바뀐 이 인덱스도 20만 행 시드 데이터로 재확인함: OPEN/FAILED는
+             idx_gp_deadline_created range 스캔, COMPLETED는 그 인덱스의 전체 스캔으로 정렬을
+             그대로 제공하고 셋 다 Using filesort가 없다).
 
              필터가 없는 전체 탭은 두 그룹이 섞여 있어 CASE가 필요하다. 이 경로는 여전히
              풀스캔이며 별도 과제다. -->
@@ -191,7 +194,16 @@
         <if test="status == 'CANCELLED'">
             AND gp.status = 'CANCELLED'
         </if>
-        <!-- findList와 동일한 기준: 마감이 임박한(deadline 오름차순) 순으로, 마감이 같으면 최신 등록순. -->
+        <!-- findList와 동일한 기준: 마감이 임박한(deadline 오름차순) 순으로, 마감이 같으면 최신 등록순.
+
+             findList와 달리 idx_gp_deadline_created의 혜택을 못 받는다 — 이 쿼리는 join의 드라이빙
+             테이블이 gp가 아니라 gpp(member_id로 먼저 좁힘)라, 정렬 컬럼이 있는 gp 쪽 인덱스로는
+             조인 결과에 순서를 줄 수 없다(EXPLAIN 확인: Using temporary; Using filesort, 상태 필터
+             유무 무관). 다만 이 필터링 결과는 이미 회원 한 명의 참여 건수로 좁혀진 소량이라
+             filesort 비용이 findList의 전체 목록 정렬과는 비교가 안 되게 작다 — 20만 행 중 특정
+             회원 참여 5,000건으로 측정해도 체감 지연은 없었다. 별도 인덱스로 해결하려면 join
+             순서 자체를 gp 우선으로 강제해야 하는데, 그러려면 gp 쪽에서 먼저 필터링할 조건이
+             없어 실익이 없다. -->
         ORDER BY gp.deadline ASC, gp.created_at DESC
     </select>
 
