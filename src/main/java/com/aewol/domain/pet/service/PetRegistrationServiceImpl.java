@@ -242,8 +242,7 @@ public class PetRegistrationServiceImpl implements PetRegistrationService {
         // CHAR(1)이라 알 수 없는 값을 그대로 저장하면 truncation 에러가 나므로, 인식 못한
         // 값은 저장하지 않고 null로 둔다.
         if (trimmed.contains("중성")) {
-            boolean negated = trimmed.contains("미") || trimmed.contains("안") || trimmed.contains("비");
-            return negated ? "N" : "Y";
+            return trimmed.contains("미") ? "N" : "Y";
         }
         return upper.length() == 1 ? upper : null;
     }
