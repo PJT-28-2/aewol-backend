@@ -22,6 +22,7 @@ public class GroupPurchaseListItemResponse {
     @Getter(AccessLevel.NONE)
     private String dDay;
     private String badgeText;
+    @JsonProperty("isParticipating")
     private Boolean isParticipating;
     private LocalDateTime createdAt;
 

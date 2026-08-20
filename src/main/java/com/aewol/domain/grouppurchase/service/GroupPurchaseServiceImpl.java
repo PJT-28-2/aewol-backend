@@ -79,9 +79,10 @@ public class GroupPurchaseServiceImpl implements GroupPurchaseService {
 
         boolean hasNext = rows.size() > safeSize;
         List<Map<String, Object>> pageRows = hasNext ? rows.subList(0, safeSize) : rows;
+        Set<String> participatingGpIds = findParticipatingGpIds(memberId, pageRows);
 
         List<GroupPurchaseListItemResponse> items = pageRows.stream()
-                .map(gp -> toListItemResponse(gp, memberId))
+                .map(gp -> toListItemResponse(gp, participatingGpIds.contains(String.valueOf(gp.get("gp_id")))))
                 .collect(Collectors.toList());
 
         return GroupPurchaseListResponse.builder()
@@ -524,7 +525,26 @@ public class GroupPurchaseServiceImpl implements GroupPurchaseService {
                 .build();
     }
 
-    private GroupPurchaseListItemResponse toListItemResponse(Map<String, Object> gp, String memberId) {
+    /**
+     * 목록 한 페이지의 참여 여부를 한 번에 조회한다. 비로그인이거나 빈 페이지면 쿼리하지 않는다.
+     */
+    private Set<String> findParticipatingGpIds(String memberId, List<Map<String, Object>> pageRows) {
+        if (memberId == null || pageRows.isEmpty()) {
+            return Collections.emptySet();
+        }
+        List<String> gpIds = pageRows.stream()
+                .map(gp -> String.valueOf(gp.get("gp_id")))
+                .collect(Collectors.toList());
+        List<Long> participating = groupPurchaseMapper.findParticipatingGpIds(memberId, gpIds);
+        if (participating == null || participating.isEmpty()) {
+            return Collections.emptySet();
+        }
+        return participating.stream()
+                .map(String::valueOf)
+                .collect(Collectors.toSet());
+    }
+
+    private GroupPurchaseListItemResponse toListItemResponse(Map<String, Object> gp, boolean isParticipating) {
         LocalDateTime deadline = toLocalDateTime(gp.get("deadline"));
         Integer currentQuantity = toInt(gp.get("current_quantity"));
         Integer targetQuantity = toInt(gp.get("target_quantity"));
@@ -532,8 +552,6 @@ public class GroupPurchaseServiceImpl implements GroupPurchaseService {
         BigDecimal groupPrice = toDecimal(gp.get("group_price"));
         // findList SQL이 status != 'CANCELLED'를 무조건 적용하므로 이 목록에는 취소된 게시글이 없다.
         boolean cancelled = GroupPurchaseStatus.CANCELLED.equals(gp.get("status"));
-        String gpId = String.valueOf(gp.get("gp_id"));
-        boolean isParticipating = memberId != null && groupPurchaseMapper.findParticipant(gpId, memberId) != null;
         return GroupPurchaseListItemResponse.builder()
                 .id(toLong(gp.get("gp_id")))
                 .memberId(toLong(gp.get("member_id")))
