@@ -83,6 +83,24 @@ class AuthControllerPasswordResetTest {
     }
 
     @Test
+    void resetRequestMailFailureReturnsStandardServiceUnavailableResponse() throws Exception {
+        when(authService.sendPasswordResetVerificationCode(any()))
+                .thenThrow(new BusinessException(HttpStatus.SERVICE_UNAVAILABLE,
+                        "인증 이메일을 발송할 수 없습니다. 잠시 후 다시 시도해주세요."));
+
+        JsonNode json = json(mockMvc.perform(post("/api/auth/password/reset-request")
+                        .contentType("application/json")
+                        .content("{\"email\":\"user@example.com\"}"))
+                .andExpect(status().isServiceUnavailable())
+                .andReturn());
+
+        assertEquals(503, json.get("status").asInt());
+        assertEquals("인증 이메일을 발송할 수 없습니다. 잠시 후 다시 시도해주세요.",
+                json.get("message").asText());
+        assertTrue(json.get("result").isNull());
+    }
+
+    @Test
     void resetVerifyReturnsResetTokenContract() throws Exception {
         when(authService.verifyPasswordResetCode(any()))
                 .thenReturn(new PasswordResetVerifyResponse("opaque-token"));
