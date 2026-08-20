@@ -113,7 +113,7 @@ class PetRegistrationServiceImplTest {
     }
 
     @Test
-    void should_keepSingleCharNeutered_when_apmsReturnsUnrecognizedSingleChar() {
+    void should_dropNeutered_when_apmsReturnsUnrecognizedSingleChar() {
         when(petMapper.findById("pet-1")).thenReturn(pet("member-1"));
         Map<String, Object> unknownCodeRegistration = registration();
         unknownCodeRegistration.put("neuterYn", "Z");
@@ -130,8 +130,9 @@ class PetRegistrationServiceImplTest {
 
         service.verify("member-1", "pet-1", request("410000012345678", "홍길동", null));
 
-        // pet_registration.neutered가 CHAR(1)이라 한 글자는 그대로 저장해도 truncation이 나지 않는다.
-        verify(petRegistrationMapper).insert(argThat(row -> "Z".equals(row.get("neutered"))));
+        // 1글자라 truncation은 안 나더라도, 프론트가 "Y" 아닌 값을 전부 "중성화 안함"으로
+        // 표시하므로 인식 못한 값은 길이와 무관하게 저장하지 않고 null로 둔다.
+        verify(petRegistrationMapper).insert(argThat(row -> row.get("neutered") == null));
     }
 
     @Test
