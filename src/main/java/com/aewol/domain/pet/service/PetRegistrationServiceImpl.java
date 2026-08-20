@@ -9,6 +9,7 @@ import com.aewol.domain.pet.mapper.PetMapper;
 import com.aewol.domain.pet.mapper.PetRegistrationMapper;
 import com.aewol.external.apms.ApmsClient;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -23,6 +24,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class PetRegistrationServiceImpl implements PetRegistrationService {
@@ -244,7 +246,9 @@ public class PetRegistrationServiceImpl implements PetRegistrationService {
         if (trimmed.contains("중성")) {
             return trimmed.contains("미") ? "N" : "Y";
         }
-        return upper.length() == 1 ? upper : null;
+        if (upper.length() == 1) return upper;
+        log.warn("APMS neuterYn 값을 인식하지 못해 저장하지 않습니다 - value: {}", value);
+        return null;
     }
 
     private static String digits(String value) {
