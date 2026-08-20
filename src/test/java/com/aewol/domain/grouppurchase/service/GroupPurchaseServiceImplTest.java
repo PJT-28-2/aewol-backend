@@ -584,12 +584,13 @@ class GroupPurchaseServiceImplTest {
         LocalDateTime deadline = LocalDateTime.now().plusDays(5);
         when(groupPurchaseMapper.findList(isNull(), isNull(), isNull(), eq(11), eq(0)))
                 .thenReturn(List.of(listRow(1L, "OPEN", deadline, 30000, 25000)));
-        when(groupPurchaseMapper.findParticipant("1", "member-1"))
-                .thenReturn(participantRow(10523L, "1", "member-1", 1));
+        when(groupPurchaseMapper.findParticipatingGpIds(eq("member-1"), eq(List.of("1"))))
+                .thenReturn(List.of(1L));
 
         GroupPurchaseListResponse result = service.list("member-1", null, null, null, 0, 10);
 
         assertTrue(result.getItems().get(0).getIsParticipating());
+        verify(groupPurchaseMapper, never()).findParticipant(any(), any());
     }
 
     @Test
@@ -603,6 +604,43 @@ class GroupPurchaseServiceImplTest {
         GroupPurchaseListResponse result = service.list(null, null, null, null, 0, 10);
 
         assertFalse(result.getItems().get(0).getIsParticipating());
+        verify(groupPurchaseMapper, never()).findParticipant(any(), any());
+        verify(groupPurchaseMapper, never()).findParticipatingGpIds(any(), any());
+    }
+
+    @Test
+    @DisplayName("목록 여러 건의 참여 여부는 findParticipatingGpIds 한 번으로 조회한다")
+    void should_queryParticipatingIdsOnce_when_listingMultipleItems() {
+        GroupPurchaseServiceImpl service = service();
+        LocalDateTime deadline = LocalDateTime.now().plusDays(5);
+        when(groupPurchaseMapper.findList(isNull(), isNull(), isNull(), eq(11), eq(0)))
+                .thenReturn(List.of(
+                        listRow(1L, "OPEN", deadline, 30000, 25000),
+                        listRow(2L, "OPEN", deadline, 30000, 25000),
+                        listRow(3L, "OPEN", deadline, 30000, 25000)));
+        when(groupPurchaseMapper.findParticipatingGpIds(eq("member-1"), eq(List.of("1", "2", "3"))))
+                .thenReturn(List.of(2L));
+
+        GroupPurchaseListResponse result = service.list("member-1", null, null, null, 0, 10);
+
+        assertFalse(result.getItems().get(0).getIsParticipating());
+        assertTrue(result.getItems().get(1).getIsParticipating());
+        assertFalse(result.getItems().get(2).getIsParticipating());
+        verify(groupPurchaseMapper, times(1)).findParticipatingGpIds(eq("member-1"), eq(List.of("1", "2", "3")));
+        verify(groupPurchaseMapper, never()).findParticipant(any(), any());
+    }
+
+    @Test
+    @DisplayName("로그인 상태라도 목록이 비면 참여 여부 조회를 생략한다")
+    void should_skipParticipatingQuery_when_loggedInListIsEmpty() {
+        GroupPurchaseServiceImpl service = service();
+        when(groupPurchaseMapper.findList(isNull(), isNull(), isNull(), eq(11), eq(0)))
+                .thenReturn(List.of());
+
+        GroupPurchaseListResponse result = service.list("member-1", null, null, null, 0, 10);
+
+        assertTrue(result.getItems().isEmpty());
+        verify(groupPurchaseMapper, never()).findParticipatingGpIds(any(), any());
         verify(groupPurchaseMapper, never()).findParticipant(any(), any());
     }
 

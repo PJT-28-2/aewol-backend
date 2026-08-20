@@ -147,6 +147,20 @@
         WHERE gp_id = #{gpId} AND member_id = #{memberId} AND payment_status != 'CANCELLED'
     </select>
 
+    <!-- 목록 카드의 isParticipating만 필요하므로 참여 row 전체가 아니라 gp_id만 가져온다.
+         항목마다 findParticipant를 치면 페이지 크기만큼 N+1이 되므로, 현재 페이지 gp_id만 IN으로 한 번에 조회한다.
+         CANCELLED는 findParticipant와 같이 현재 참여가 아니다. gpIds가 비면 호출하지 않는다. -->
+    <select id="findParticipatingGpIds" resultType="long">
+        SELECT gp_id
+        FROM group_purchase_participant
+        WHERE member_id = #{memberId}
+          AND payment_status != 'CANCELLED'
+          AND gp_id IN
+          <foreach collection="gpIds" item="gpId" open="(" separator="," close=")">
+              #{gpId}
+          </foreach>
+    </select>
+
     <!-- 참여 취소는 row를 삭제하지 않고 CANCELLED로 남겨 취소 이력을 보존한다(V18: active_member_id
          생성 컬럼 + 부분 유니크 인덱스가 취소 후 재참여를 허용한다). 동시 중복 취소 요청은 영향받은
          행이 0인 것으로 감지해 거절한다(이미 CANCELLED인 행은 WHERE 조건에서 걸러짐). -->
