@@ -49,9 +49,21 @@
             </if>
         </where>
         <!-- 진행중(마감 전이고 목표 미달)인 게시글을 먼저, 마감된(목표 달성/미달) 게시글을 뒤로 묶어서
-             각 그룹 안에서는 최신 등록순으로 보여준다. -->
+             각 그룹 안에서는 최신 등록순으로 보여준다.
+
+             상태 필터가 걸린 경우에는 이 CASE가 항상 같은 값이다. WHERE가 이미 한쪽으로
+             좁혀놓기 때문이다(OPEN이면 0, COMPLETED·FAILED면 1). 그래서 정렬에서 빼도
+             결과 순서가 같고, 대신 created_at 인덱스가 정렬을 그대로 제공할 수 있다.
+
+             빼지 않으면 NOW()가 든 계산식이라 어떤 인덱스도 순서를 줄 수 없어 20만 행을
+             전부 정렬한다(측정: 101ms -> 2.7ms).
+
+             필터가 없는 전체 탭은 두 그룹이 섞여 있어 CASE가 필요하다. 이 경로는 여전히
+             풀스캔이며 별도 과제다. -->
         ORDER BY
+            <if test="status == null or status == ''">
             CASE WHEN current_quantity &lt; target_quantity AND deadline &gt;= NOW() THEN 0 ELSE 1 END,
+            </if>
             created_at DESC
         LIMIT #{limit} OFFSET #{offset}
     </select>
