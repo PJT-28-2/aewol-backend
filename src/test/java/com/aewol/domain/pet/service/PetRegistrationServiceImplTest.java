@@ -71,6 +71,48 @@ class PetRegistrationServiceImplTest {
     }
 
     @Test
+    void should_normalizeNeuteredToY_when_apmsReturnsKoreanNeuteredValue() {
+        when(petMapper.findById("pet-1")).thenReturn(pet("member-1"));
+        Map<String, Object> neuteredRegistration = registration();
+        neuteredRegistration.put("neuterYn", "중성");
+        when(apmsClient.verifyRegistration("410000012345678", "홍길동", null)).thenReturn(neuteredRegistration);
+        when(petDocumentMapper.findByPetIdAndTypeForUpdate("pet-1", "REGISTRATION")).thenReturn(null);
+        doAnswer(invocation -> {
+            invocation.<Map<String, Object>>getArgument(0).put("docId", 31L);
+            return null;
+        }).when(petDocumentMapper).insert(any());
+        when(petMapper.updateRegistrationNumber("pet-1", "member-1", "410000012345678")).thenReturn(1);
+        when(petRegistrationMapper.findByPetIdAndDocId("pet-1", "31")).thenReturn(map(
+                "doc_id", 31L, "pet_id", "pet-1", "reg_number", "410000012345678", "name", "몽이",
+                "last_synced_at", LocalDateTime.of(2026, 8, 14, 11, 0, 0)));
+
+        service.verify("member-1", "pet-1", request("410000012345678", "홍길동", null));
+
+        verify(petRegistrationMapper).insert(argThat(row -> "Y".equals(row.get("neutered"))));
+    }
+
+    @Test
+    void should_normalizeNeuteredToN_when_apmsReturnsKoreanNotNeuteredValue() {
+        when(petMapper.findById("pet-1")).thenReturn(pet("member-1"));
+        Map<String, Object> notNeuteredRegistration = registration();
+        notNeuteredRegistration.put("neuterYn", "미중성");
+        when(apmsClient.verifyRegistration("410000012345678", "홍길동", null)).thenReturn(notNeuteredRegistration);
+        when(petDocumentMapper.findByPetIdAndTypeForUpdate("pet-1", "REGISTRATION")).thenReturn(null);
+        doAnswer(invocation -> {
+            invocation.<Map<String, Object>>getArgument(0).put("docId", 31L);
+            return null;
+        }).when(petDocumentMapper).insert(any());
+        when(petMapper.updateRegistrationNumber("pet-1", "member-1", "410000012345678")).thenReturn(1);
+        when(petRegistrationMapper.findByPetIdAndDocId("pet-1", "31")).thenReturn(map(
+                "doc_id", 31L, "pet_id", "pet-1", "reg_number", "410000012345678", "name", "몽이",
+                "last_synced_at", LocalDateTime.of(2026, 8, 14, 11, 0, 0)));
+
+        service.verify("member-1", "pet-1", request("410000012345678", "홍길동", null));
+
+        verify(petRegistrationMapper).insert(argThat(row -> "N".equals(row.get("neutered"))));
+    }
+
+    @Test
     void should_updateRegistration_when_petWasAlreadyVerified() {
         PetRegistrationVerifyRequest request = request("410000012345678", "홍길동", null);
         when(petMapper.findById("pet-1")).thenReturn(pet("member-1"));
