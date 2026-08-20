@@ -256,12 +256,12 @@ public class PetRegistrationServiceImpl implements PetRegistrationService {
         if (upper.equals("O") || upper.equals("Y")) return "Y";
         if (upper.equals("X") || upper.equals("N")) return "N";
         // APMS는 neuterYn에 "중성"/"미중성" 같은 한글 값을 준다. pet_registration.neutered가
-        // CHAR(1)이라 알 수 없는 값을 그대로 저장하면 truncation 에러가 나므로, 인식 못한
-        // 값은 저장하지 않고 null로 둔다.
+        // CHAR(1)이라 알 수 없는 값을 그대로 저장하면 truncation 에러가 나고, 프론트는 "Y"가
+        // 아닌 값을 전부 "중성화 안함"으로 표시하므로 인식 못한 값(길이 무관)을 그대로 저장하면
+        // 잘못된 정보가 노출된다. 그래서 인식한 Y/N 값만 저장하고 나머지는 로그 후 null 처리한다.
         if (trimmed.contains("중성")) {
             return trimmed.contains("미") ? "N" : "Y";
         }
-        if (upper.length() == 1) return upper;
         log.warn("APMS neuterYn 값을 인식하지 못해 저장하지 않습니다 - value: {}", value);
         return null;
     }
