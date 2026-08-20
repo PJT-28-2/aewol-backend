@@ -54,6 +54,7 @@ public class SecurityConfig {
                         .accessDeniedHandler(jwtAccessDeniedHandler()))
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> {
+                        auth.requestMatchers(HttpMethod.POST, "/api/auth/logout").authenticated();
                         auth.requestMatchers("/api/auth/**").permitAll();
                         if (swaggerEnabled) {
                             // springfox의 UI는 /swagger-resources 로 스펙 위치를 먼저 조회한다
