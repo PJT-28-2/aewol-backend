@@ -143,7 +143,9 @@ public class PetRegistrationServiceImpl implements PetRegistrationService {
 
         // fk_petreg_doc가 pet_document.doc_id를 참조하므로, pet_document를 지우기 전에
         // 자식 행인 pet_registration을 먼저 지워야 한다.
-        petRegistrationMapper.deleteByPetIdAndDocId(petId, docId);
+        if (petRegistrationMapper.deleteByPetIdAndDocId(petId, docId) != 1) {
+            throw BusinessException.notFound("동물등록정보를 찾을 수 없습니다.");
+        }
         petMapper.updateRegistrationNumber(petId, memberId, null);
     }
 
