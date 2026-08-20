@@ -32,4 +32,8 @@
             apr_gbn_nm = #{aprGbnNm}, reg_tm = #{regTm}, apr_tm = #{aprTm}, last_synced_at = NOW()
         WHERE doc_id = #{docId} AND pet_id = #{petId}
     </update>
+
+    <delete id="deleteByPetIdAndDocId">
+        DELETE FROM pet_registration WHERE pet_id = #{petId} AND doc_id = #{docId}
+    </delete>
 </mapper>
