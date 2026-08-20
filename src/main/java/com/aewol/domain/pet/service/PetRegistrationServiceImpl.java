@@ -132,6 +132,21 @@ public class PetRegistrationServiceImpl implements PetRegistrationService {
         return toResponse(registration);
     }
 
+    @Override
+    @Transactional
+    public void cancel(String memberId, String petId, String docId) {
+        Map<String, Object> pet = petMapper.findById(petId);
+        if (pet == null) throw BusinessException.notFound("반려동물을 찾을 수 없습니다.");
+        if (!Objects.equals(memberId, String.valueOf(pet.get("member_id")))) {
+            throw BusinessException.forbidden("대표 보호자만 이 작업을 할 수 있습니다.");
+        }
+
+        // fk_petreg_doc가 pet_document.doc_id를 참조하므로, pet_document를 지우기 전에
+        // 자식 행인 pet_registration을 먼저 지워야 한다.
+        petRegistrationMapper.deleteByPetIdAndDocId(petId, docId);
+        petMapper.updateRegistrationNumber(petId, memberId, null);
+    }
+
     /** pet_registration 테이블 행(DB 네이티브 컬럼)을 응답으로 매핑한다. verify()/getDetail() 공용. */
     private PetRegistrationResponse toResponse(Map<String, Object> registration) {
         return PetRegistrationResponse.builder()

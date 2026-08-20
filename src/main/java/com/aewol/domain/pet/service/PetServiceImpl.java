@@ -195,6 +195,11 @@ public class PetServiceImpl implements PetService {
         if (document == null) {
             throw BusinessException.notFound("문서를 찾을 수 없습니다.");
         }
+        // REGISTRATION은 pet_registration이 fk_petreg_doc로 이 문서를 참조하고 있어서,
+        // 그 행을 먼저 지우지 않으면 pet_document 삭제가 FK 제약 위반으로 실패한다.
+        if (REGISTRATION.equals(value(document, "doc_type", "docType"))) {
+            petRegistrationService.cancel(memberId, petId, docId);
+        }
         if (petDocumentMapper.deleteByIdAndPetId(docId, petId) != 1) {
             throw BusinessException.notFound("문서를 찾을 수 없습니다.");
         }
