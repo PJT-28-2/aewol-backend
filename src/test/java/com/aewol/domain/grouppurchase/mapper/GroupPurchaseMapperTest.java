@@ -247,6 +247,21 @@ class GroupPurchaseMapperTest {
     }
 
     @Test
+    @DisplayName("findParticipatingGpIds는 현재 페이지 중 CANCELLED가 아닌 참여 gp_id만 반환한다")
+    void should_returnOnlyActiveParticipatingGpIds() {
+        long joined = insertGroupPurchase(99L, "OPEN", 1, 10, LocalDateTime.now().plusDays(5));
+        long cancelled = insertGroupPurchase(99L, "OPEN", 1, 10, LocalDateTime.now().plusDays(5));
+        long other = insertGroupPurchase(99L, "OPEN", 1, 10, LocalDateTime.now().plusDays(5));
+        insertParticipant(joined, 1L, "PAID");
+        insertParticipant(cancelled, 1L, "CANCELLED");
+
+        List<Long> result = findParticipatingGpIds(1L, List.of(joined, cancelled, other));
+
+        assertEquals(1, result.size());
+        assertEquals(joined, result.get(0));
+    }
+
+    @Test
     @DisplayName("진행중(마감 전, 목표 미달) 상태면 참여 취소로 수량이 감소한다")
     void should_decreaseQuantity_when_waitingState() {
         long gpId = insertGroupPurchase(99L, "OPEN", 3, 10, LocalDateTime.now().plusDays(5));
@@ -490,6 +505,14 @@ class GroupPurchaseMapperTest {
     private Map<String, Object> findParticipant(long gpId, long memberId) {
         try (SqlSession session = sqlSessionFactory.openSession(true)) {
             return session.getMapper(GroupPurchaseMapper.class).findParticipant(String.valueOf(gpId), String.valueOf(memberId));
+        }
+    }
+
+    private List<Long> findParticipatingGpIds(long memberId, List<Long> gpIds) {
+        List<String> ids = gpIds.stream().map(String::valueOf).toList();
+        try (SqlSession session = sqlSessionFactory.openSession(true)) {
+            return session.getMapper(GroupPurchaseMapper.class)
+                    .findParticipatingGpIds(String.valueOf(memberId), ids);
         }
     }
 
