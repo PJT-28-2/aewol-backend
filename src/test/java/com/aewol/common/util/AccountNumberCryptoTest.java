@@ -8,7 +8,9 @@ import java.util.Base64;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class AccountNumberCryptoTest {
 
@@ -104,5 +106,34 @@ class AccountNumberCryptoTest {
         byte[] key = new byte[byteLength];
         new SecureRandom().nextBytes(key);
         return Base64.getEncoder().encodeToString(key);
+    }
+
+    // 환경변수가 없으면 ${...} 문자열이 그대로 들어온다. base64 오류로만 알려주면
+    // 값이 잘못된 줄 알고 키를 다시 만드는데, 실제로는 설정이 빠진 것이다.
+    @Test
+    void should_nameTheMissingEnvVariable_when_placeholderNotResolved() {
+        IllegalStateException e = assertThrows(IllegalStateException.class,
+                () -> new AccountNumberCrypto("${ACCOUNT_ENCRYPTION_KEY}", randomKey()));
+
+        assertTrue(e.getMessage().contains("ACCOUNT_ENCRYPTION_KEY"), e.getMessage());
+        assertTrue(e.getMessage().contains("application-local.yml"), e.getMessage());
+    }
+
+    @Test
+    void should_stripDefaultValue_when_placeholderHasFallback() {
+        IllegalStateException e = assertThrows(IllegalStateException.class,
+                () -> new AccountNumberCrypto("${ACCOUNT_ENCRYPTION_KEY:}", randomKey()));
+
+        assertTrue(e.getMessage().contains("ACCOUNT_ENCRYPTION_KEY"), e.getMessage());
+        assertFalse(e.getMessage().contains("ACCOUNT_ENCRYPTION_KEY:"), e.getMessage());
+    }
+
+    // 진짜로 형식이 깨진 값은 기존 메시지를 그대로 써야 한다.
+    @Test
+    void should_keepBase64Message_when_valueIsNotPlaceholder() {
+        IllegalStateException e = assertThrows(IllegalStateException.class,
+                () -> new AccountNumberCrypto("not-base64!!", randomKey()));
+
+        assertTrue(e.getMessage().contains("base64"), e.getMessage());
     }
 }
