@@ -302,11 +302,24 @@ class PetRegistrationServiceImplTest {
     @Test
     void should_deleteRegistrationAndClearRegNumber_when_ownerCancels() {
         when(petMapper.findById("pet-1")).thenReturn(pet("member-1"));
+        when(petRegistrationMapper.deleteByPetIdAndDocId("pet-1", "doc-1")).thenReturn(1);
 
         service.cancel("member-1", "pet-1", "doc-1");
 
         verify(petRegistrationMapper).deleteByPetIdAndDocId("pet-1", "doc-1");
         verify(petMapper).updateRegistrationNumber("pet-1", "member-1", null);
+    }
+
+    @Test
+    void should_throwNotFound_when_registrationAlreadyGone_onCancel() {
+        when(petMapper.findById("pet-1")).thenReturn(pet("member-1"));
+        when(petRegistrationMapper.deleteByPetIdAndDocId("pet-1", "doc-1")).thenReturn(0);
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.cancel("member-1", "pet-1", "doc-1"));
+
+        assertEquals(HttpStatus.NOT_FOUND, exception.getStatus());
+        verify(petMapper, never()).updateRegistrationNumber(anyString(), anyString(), any());
     }
 
     @Test
