@@ -49,6 +49,30 @@ class DonationServiceImplTest {
     }
 
     @Test
+    @DisplayName("운영에서는 [시연] 캠페인을 목록과 기부 대상에서 뺀다")
+    void should_hideDemoCampaigns_when_flagDisabled() {
+        DonationServiceImpl service = service();
+        ReflectionTestUtils.setField(service, "showDemoCampaigns", false);
+        when(donationMapper.findPotByMemberId("member-1"))
+                .thenReturn(map("wallet_id", "pot-1", "balance", new BigDecimal("12400")));
+        when(donationMapper.findSettings("member-1")).thenReturn(settings(true, "1000", false));
+        when(donationMapper.findMonthlySaved("pot-1")).thenReturn(BigDecimal.ZERO);
+        when(donationMapper.findActiveCampaigns("member-1")).thenReturn(List.of(
+                map("id", "demo-1", "organization", "시연", "title", "[시연] 유기동물 구조·입양 활동 지원",
+                        "category", "유기동물", "targetAmount", new BigDecimal("1"),
+                        "raised", BigDecimal.ZERO, "participants", 0,
+                        "endsAt", LocalDateTime.now().plusDays(8), "preferred", 0),
+                map("id", "campaign-1", "organization", "테스트 보호소", "title", "난방비 지원",
+                        "category", "유기동물", "targetAmount", new BigDecimal("3000000"),
+                        "raised", new BigDecimal("2046000"), "participants", 312,
+                        "endsAt", LocalDateTime.now().plusDays(8), "preferred", 1)));
+
+        var overview = service.getOverview("member-1");
+        assertEquals(1, overview.getCampaigns().size());
+        assertEquals("난방비 지원", overview.getCampaigns().get(0).getTitle());
+    }
+
+    @Test
     @DisplayName("저금통이 없으면 빈 기부 내역을 반환한다")
     void should_returnEmptyHistory_when_potNotFound() {
         DonationServiceImpl service = service();

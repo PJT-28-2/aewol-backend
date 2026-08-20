@@ -10,6 +10,7 @@ import com.aewol.domain.auth.dto.SignupRequest;
 import com.aewol.domain.auth.dto.SignupResponse;
 import com.aewol.domain.auth.service.AuthService;
 import com.aewol.domain.auth.service.AccountFindService;
+import com.aewol.domain.auth.support.KakaoRegistrationCookie;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.nio.charset.StandardCharsets;
@@ -32,7 +33,7 @@ class AuthControllerEmailVerificationTest {
 
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final AuthService authService = mock(AuthService.class);
-    private final AuthController controller = new AuthController(authService, mock(AccountFindService.class));
+    private final AuthController controller = new AuthController(authService, mock(AccountFindService.class), new KakaoRegistrationCookie(false));
 
     @Test
     void sendCodeResponseUsesResultContract() throws Exception {

@@ -14,6 +14,7 @@ import com.aewol.domain.auth.dto.AccountFindResultResponse;
 import com.aewol.domain.auth.dto.AccountFindSendCodeResponse;
 import com.aewol.domain.auth.service.AccountFindService;
 import com.aewol.domain.auth.service.AuthService;
+import com.aewol.domain.auth.support.KakaoRegistrationCookie;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.nio.charset.StandardCharsets;
@@ -37,7 +38,7 @@ class AuthControllerAccountFindTest {
         LocalValidatorFactoryBean validator = new LocalValidatorFactoryBean();
         validator.afterPropertiesSet();
         mockMvc = MockMvcBuilders.standaloneSetup(
-                        new AuthController(mock(AuthService.class), accountFindService))
+                        new AuthController(mock(AuthService.class), accountFindService, new KakaoRegistrationCookie(false)))
                 .setControllerAdvice(new GlobalExceptionHandler())
                 .setValidator(validator)
                 .build();

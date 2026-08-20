@@ -34,7 +34,7 @@ spring:
 
 # JWT
 jwt:
-  secret: ${JWT_SECRET:aewol-dev-secret-key-for-jwt-token-generation-minimum-256-bits-required}
+  secret: ${JWT_SECRET}
   access-token-expiry: 1800000
   refresh-token-expiry: 604800000
 

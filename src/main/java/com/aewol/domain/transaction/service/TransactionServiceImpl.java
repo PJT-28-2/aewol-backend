@@ -82,6 +82,7 @@ public class TransactionServiceImpl implements TransactionService {
         }
 
         String walletId = String.valueOf(wallet.get("wallet_id"));
+        assertOwnedPet(command.getMemberId(), command.getPetId());
 
         // 자동 태깅
         String category = autoTaggingService.categorize(command.getMerchantName());
@@ -184,14 +185,20 @@ public class TransactionServiceImpl implements TransactionService {
         if (!"PAYMENT".equals(transaction.getTxnType())) {
             throw new BusinessException("결제 거래만 태그를 수정할 수 있습니다.");
         }
-        if (request.getPetId() != null
-                && petMapper.findByIdAndMemberId(request.getPetId(), memberId) == null) {
-            throw BusinessException.notFound("반려동물을 찾을 수 없습니다.");
-        }
+        assertOwnedPet(memberId, request.getPetId());
         if (transactionMapper.updateTag(txnId, request.getCategory(), request.getPetId()) == 0) {
             throw BusinessException.notFound("거래를 찾을 수 없습니다.");
         }
         return getTransaction(memberId, txnId);
+    }
+
+    private void assertOwnedPet(String memberId, String petId) {
+        if (petId == null || petId.isBlank()) {
+            return;
+        }
+        if (petMapper.findByIdAndMemberId(petId, memberId) == null) {
+            throw BusinessException.notFound("반려동물을 찾을 수 없습니다.");
+        }
     }
 
     private String normalizeTransactionType(String type) {
