@@ -180,6 +180,68 @@ class PetRegistrationServiceImplTest {
     }
 
     @Test
+    void should_notLookUpStoredOwnerInfo_when_requestProvidesOwnerInformation() {
+        PetRegistrationVerifyRequest request = request("410000012345678", "홍길동", null);
+        when(petMapper.findById("pet-1")).thenReturn(pet("member-1"));
+        when(apmsClient.verifyRegistration("410000012345678", "홍길동", null)).thenReturn(registration());
+        when(petDocumentMapper.findByPetIdAndTypeForUpdate("pet-1", "REGISTRATION"))
+                .thenReturn(map("doc_id", 31L));
+        when(petRegistrationMapper.findByRegNumber("410000012345678"))
+                .thenReturn(map("pet_id", "pet-1"));
+        when(petRegistrationMapper.update(any())).thenReturn(1);
+        when(petMapper.updateRegistrationNumber("pet-1", "member-1", "410000012345678")).thenReturn(1);
+        when(petRegistrationMapper.findByPetIdAndDocId("pet-1", "31")).thenReturn(map(
+                "doc_id", 31L, "pet_id", "pet-1", "reg_number", "410000012345678", "name", "몽이",
+                "last_synced_at", LocalDateTime.of(2026, 8, 14, 11, 0, 0)));
+
+        service.verify("member-1", "pet-1", request);
+
+        // 요청에 소유자 정보가 있으면 재연동 fallback 조회가 돌지 않아야 한다 — 각 메서드는
+        // 원래 흐름(insert/update 판단 1회, 최종 응답 재조회 1회)에서만 호출되는 게 맞다.
+        // 조건문이 나중에 리팩터링되어 fallback이 잘못 같이 돌면 호출 횟수가 2번으로 늘어난다.
+        verify(petDocumentMapper, times(1)).findByPetIdAndTypeForUpdate("pet-1", "REGISTRATION");
+        verify(petRegistrationMapper, times(1)).findByPetIdAndDocId("pet-1", "31");
+    }
+
+    @Test
+    void should_reuseStoredOwnerInfo_when_reVerifyingWithoutInput() {
+        // 재연동: 이름/생년월일을 입력하지 않아도 이전 검증 때 저장된 소유자 정보로 APMS를 호출해야 한다.
+        when(petMapper.findById("pet-1")).thenReturn(pet("member-1"));
+        when(petDocumentMapper.findByPetIdAndTypeForUpdate("pet-1", "REGISTRATION"))
+                .thenReturn(map("doc_id", 31L));
+        when(petRegistrationMapper.findByPetIdAndDocId("pet-1", "31")).thenReturn(map(
+                "doc_id", 31L, "pet_id", "pet-1", "reg_number", "410000012345678", "name", "몽이",
+                "owner_name", "홍길동", "owner_birth", "19900101",
+                "last_synced_at", LocalDateTime.of(2026, 8, 14, 11, 0, 0)));
+        when(apmsClient.verifyRegistration("410000012345678", "홍길동", "19900101")).thenReturn(registration());
+        when(petRegistrationMapper.findByRegNumber("410000012345678")).thenReturn(map("pet_id", "pet-1"));
+        when(petRegistrationMapper.update(any())).thenReturn(1);
+        when(petMapper.updateRegistrationNumber("pet-1", "member-1", "410000012345678")).thenReturn(1);
+
+        PetRegistrationResponse response = service.verify(
+                "member-1", "pet-1", request("410000012345678", null, null));
+
+        assertTrue(response.isVerified());
+        verify(apmsClient).verifyRegistration("410000012345678", "홍길동", "19900101");
+        verify(petRegistrationMapper).update(argThat(row ->
+                "홍길동".equals(row.get("ownerName")) && "19900101".equals(row.get("ownerBirth"))));
+    }
+
+    @Test
+    void should_throwBadRequest_when_reVerifyingWithoutInputAndNoStoredOwnerInfo() {
+        when(petMapper.findById("pet-1")).thenReturn(pet("member-1"));
+        when(petDocumentMapper.findByPetIdAndTypeForUpdate("pet-1", "REGISTRATION"))
+                .thenReturn(map("doc_id", 31L));
+        when(petRegistrationMapper.findByPetIdAndDocId("pet-1", "31")).thenReturn(map("doc_id", 31L));
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.verify("member-1", "pet-1", request("410000012345678", null, null)));
+
+        assertEquals(HttpStatus.BAD_REQUEST, exception.getStatus());
+        verifyNoInteractions(apmsClient);
+    }
+
+    @Test
     void should_throwForbidden_when_nonOwnerVerifies() {
         when(petMapper.findById("pet-1")).thenReturn(pet("owner-1"));
 

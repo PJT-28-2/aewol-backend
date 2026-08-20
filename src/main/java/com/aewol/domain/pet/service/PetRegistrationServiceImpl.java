@@ -47,6 +47,19 @@ public class PetRegistrationServiceImpl implements PetRegistrationService {
         String ownerName = trimToNull(request.getUserName());
         String ownerBirth = digits(request.getBirthDate());
         if (ownerName == null && ownerBirth == null) {
+            // 재연동(이미 검증된 등록증을 다시 verify): 요청에 소유자 정보가 없으면 마지막으로
+            // 검증에 성공했던 값을 재사용한다. 로그인 회원과 정부 등록 소유자가 다를 수 있어서
+            // (가족 반려동물 대리 등록 등) 매번 다시 입력받는 대신 저장된 값을 우선한다.
+            Map<String, Object> existingDocument = petDocumentMapper.findByPetIdAndTypeForUpdate(petId, REGISTRATION);
+            Map<String, Object> existing = existingDocument == null ? null
+                    : petRegistrationMapper.findByPetIdAndDocId(
+                            petId, String.valueOf(value(existingDocument, "doc_id", "docId")));
+            if (existing != null) {
+                ownerName = trimToNull((String) existing.get("owner_name"));
+                ownerBirth = digits((String) existing.get("owner_birth"));
+            }
+        }
+        if (ownerName == null && ownerBirth == null) {
             throw new BusinessException("소유자 이름 또는 생년월일을 입력해주세요.");
         }
         if (ownerBirth != null && ownerBirth.length() != 8) {
@@ -60,6 +73,8 @@ public class PetRegistrationServiceImpl implements PetRegistrationService {
         }
 
         Map<String, Object> registration = normalize(external, petId);
+        registration.put("ownerName", ownerName);
+        registration.put("ownerBirth", ownerBirth);
         validateExternalResponse(registration);
         validateMatch(pet, registration, request.getRegNumber());
         validateDuplicate(petId, request.getRegNumber());

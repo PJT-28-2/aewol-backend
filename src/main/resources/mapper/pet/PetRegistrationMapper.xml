@@ -17,10 +17,11 @@
     <insert id="insert" parameterType="map">
         INSERT INTO pet_registration
             (doc_id, pet_id, reg_number, name, breed, gender, neutered, birth_date,
-             rfid_cd, rfid_gubun, org_nm, office_tel, apr_gbn_nm, reg_tm, apr_tm, last_synced_at)
+             rfid_cd, rfid_gubun, org_nm, office_tel, apr_gbn_nm, owner_name, owner_birth,
+             reg_tm, apr_tm, last_synced_at)
         VALUES
             (#{docId}, #{petId}, #{regNumber}, #{name}, #{breed}, #{gender}, #{neutered}, #{birthDate},
-             #{rfidCd}, #{rfidGubun}, #{orgNm}, #{officeTel}, #{aprGbnNm},
+             #{rfidCd}, #{rfidGubun}, #{orgNm}, #{officeTel}, #{aprGbnNm}, #{ownerName}, #{ownerBirth},
              #{regTm}, #{aprTm}, NOW())
     </insert>
 
@@ -29,7 +30,8 @@
         SET reg_number = #{regNumber}, name = #{name}, breed = #{breed}, gender = #{gender},
             neutered = #{neutered}, birth_date = #{birthDate}, rfid_cd = #{rfidCd},
             rfid_gubun = #{rfidGubun}, org_nm = #{orgNm}, office_tel = #{officeTel},
-            apr_gbn_nm = #{aprGbnNm}, reg_tm = #{regTm}, apr_tm = #{aprTm}, last_synced_at = NOW()
+            apr_gbn_nm = #{aprGbnNm}, owner_name = #{ownerName}, owner_birth = #{ownerBirth},
+            reg_tm = #{regTm}, apr_tm = #{aprTm}, last_synced_at = NOW()
         WHERE doc_id = #{docId} AND pet_id = #{petId}
     </update>
 
