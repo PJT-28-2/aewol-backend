@@ -33,7 +33,7 @@ public class InquiryServiceImpl implements InquiryService {
 
     // api_명세서.md: "category는 FAQ와 동일한 값 사용"
     private static final Set<String> ALLOWED_CATEGORIES =
-            Set.of("지갑·버킷", "보험", "계좌연동", "공동양육", "회원정보", "기타");
+            Set.of("지갑·버킷", "보험", "계좌연동", "공동육아", "회원정보", "기타");
     private static final Set<String> ALLOWED_STATUSES = Set.of("WAITING", "ANSWERED");
     private static final int MAX_ATTACHMENTS = 3;
     private static final long MAX_ATTACHMENT_SIZE_BYTES = 10L * 1024 * 1024;
