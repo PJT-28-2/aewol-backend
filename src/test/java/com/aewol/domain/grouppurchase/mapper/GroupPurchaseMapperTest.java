@@ -211,6 +211,21 @@ class GroupPurchaseMapperTest {
     }
 
     @Test
+    @DisplayName("마감일과 등록일이 같으면 gp_id 내림차순으로 고정 정렬한다")
+    void should_orderByIdDescending_whenDeadlineAndCreatedAtAreTied() {
+        LocalDateTime now = LocalDateTime.now().withNano(0);
+        LocalDateTime sameDeadline = now.plusDays(5);
+        long first = insertGroupPurchase(99L, "OPEN", 3, 10, sameDeadline, now);
+        long second = insertGroupPurchase(99L, "OPEN", 3, 10, sameDeadline, now);
+
+        List<Map<String, Object>> result = findList("OPEN", null, null, 10, 0);
+
+        assertEquals(
+                List.of(second, first),
+                result.stream().map(row -> ((Number) row.get("gp_id")).longValue()).toList());
+    }
+
+    @Test
     @DisplayName("findMyGroupPurchases도 마감 임박순, 마감이 같으면 최신 등록순으로 정렬한다")
     void should_orderMyGroupPurchasesByDeadlineThenCreatedAt() {
         LocalDateTime now = LocalDateTime.now();

@@ -53,7 +53,7 @@
 
              상태 필터가 걸린 경우에는 이 CASE가 항상 같은 값이다. WHERE가 이미 한쪽으로
              좁혀놓기 때문이다(OPEN이면 0, COMPLETED·FAILED면 1). 그래서 정렬에서 빼도
-             결과 순서가 같고, 대신 (deadline, created_at DESC) 인덱스가 정렬을 그대로 제공할 수 있다.
+             결과 순서가 같고, 대신 (deadline, created_at DESC, gp_id DESC) 인덱스가 정렬을 그대로 제공할 수 있다.
 
              빼지 않으면 NOW()가 든 계산식이라 어떤 인덱스도 순서를 줄 수 없어 20만 행을
              전부 정렬한다(V39 당시 created_at 단일 인덱스 기준 측정치는 101ms -> 2.7ms.
@@ -67,7 +67,7 @@
             <if test="status == null or status == ''">
             CASE WHEN current_quantity &lt; target_quantity AND deadline &gt;= NOW() THEN 0 ELSE 1 END,
             </if>
-            deadline ASC, created_at DESC
+            deadline ASC, created_at DESC, gp_id DESC
         LIMIT #{limit} OFFSET #{offset}
     </select>
 
@@ -204,7 +204,7 @@
              회원 참여 5,000건으로 측정해도 체감 지연은 없었다. 별도 인덱스로 해결하려면 join
              순서 자체를 gp 우선으로 강제해야 하는데, 그러려면 gp 쪽에서 먼저 필터링할 조건이
              없어 실익이 없다. -->
-        ORDER BY gp.deadline ASC, gp.created_at DESC
+        ORDER BY gp.deadline ASC, gp.created_at DESC, gp.gp_id DESC
     </select>
 
     <!-- 마감이 지났고 목표 수량 미달인 공동구매의 PAID 참여자를 조회한다(마감 자동 환불 배치 전용, Notion 순서19).
