@@ -10,6 +10,7 @@ import com.aewol.domain.member.mapper.MemberMapper;
 import com.aewol.domain.notification.mapper.NotificationSettingMapper;
 import com.aewol.domain.wallet.mapper.WalletMapper;
 import com.aewol.external.kakao.KakaoAuthClient;
+import com.aewol.external.smtp.EmailSendException;
 import com.aewol.external.smtp.EmailService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -128,10 +129,11 @@ class AuthServiceImplEmailVerificationTest {
         SignupEmailCodeRequest request = emailCodeRequest("failure@aewol.com");
         when(memberMapper.existsActiveByEmail(request.getEmail())).thenReturn(false);
         when(redisTemplate.opsForValue()).thenReturn(valueOperations);
-        RuntimeException smtpException = new RuntimeException("smtp failure");
+        EmailSendException smtpException = new EmailSendException(
+                "email send failed", new RuntimeException("provider detail"));
         doThrow(smtpException).when(emailService).sendVerificationEmail(anyString(), anyString());
 
-        RuntimeException thrown = assertThrows(RuntimeException.class,
+        BusinessException thrown = assertThrows(BusinessException.class,
                 () -> authService.sendSignupVerificationCode(request));
 
         ArgumentCaptor<String> valueCaptor = ArgumentCaptor.forClass(String.class);
@@ -143,7 +145,9 @@ class AuthServiceImplEmailVerificationTest {
                         && script.getScriptAsString().contains("redis.call('DEL', KEYS[1])")),
                 eq(List.of("signup:verify:failure@aewol.com")), eq(valueCaptor.getValue()));
         verify(redisTemplate, never()).delete(anyString());
-        assertSame(smtpException, thrown);
+        assertEquals(503, thrown.getStatus().value());
+        assertEquals("인증 이메일을 발송할 수 없습니다. 잠시 후 다시 시도해주세요.",
+                thrown.getMessage());
     }
 
     @Test
@@ -151,18 +155,19 @@ class AuthServiceImplEmailVerificationTest {
         SignupEmailCodeRequest request = emailCodeRequest("failure@aewol.com");
         when(memberMapper.existsActiveByEmail(request.getEmail())).thenReturn(false);
         when(redisTemplate.opsForValue()).thenReturn(valueOperations);
-        RuntimeException smtpException = new RuntimeException("smtp failure");
+        EmailSendException smtpException = new EmailSendException(
+                "email send failed", new RuntimeException("provider detail"));
         RuntimeException redisException = new RuntimeException("redis failure");
         doThrow(smtpException).when(emailService).sendVerificationEmail(anyString(), anyString());
         when(redisTemplate.execute(any(RedisScript.class), anyList(), anyString()))
                 .thenThrow(redisException);
 
-        RuntimeException thrown = assertThrows(RuntimeException.class,
+        BusinessException thrown = assertThrows(BusinessException.class,
                 () -> authService.sendSignupVerificationCode(request));
 
-        assertSame(smtpException, thrown);
-        assertEquals(1, thrown.getSuppressed().length);
-        assertSame(redisException, thrown.getSuppressed()[0]);
+        assertEquals(503, thrown.getStatus().value());
+        assertEquals(1, smtpException.getSuppressed().length);
+        assertSame(redisException, smtpException.getSuppressed()[0]);
     }
 
     @Test

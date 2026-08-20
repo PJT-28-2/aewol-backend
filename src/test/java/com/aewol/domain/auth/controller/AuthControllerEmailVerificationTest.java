@@ -1,5 +1,7 @@
 package com.aewol.domain.auth.controller;
 
+import com.aewol.common.exception.BusinessException;
+import com.aewol.common.exception.GlobalExceptionHandler;
 import com.aewol.common.response.ApiResponse;
 import com.aewol.domain.auth.dto.SignupEmailCodeRequest;
 import com.aewol.domain.auth.dto.SignupEmailCodeResponse;
@@ -10,7 +12,9 @@ import com.aewol.domain.auth.service.AuthService;
 import com.aewol.domain.auth.service.AccountFindService;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import java.nio.charset.StandardCharsets;
 import org.junit.jupiter.api.Test;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.test.web.servlet.MockMvc;
@@ -45,6 +49,28 @@ class AuthControllerEmailVerificationTest {
         assertEquals("회원가입 인증번호가 발송되었습니다.", json.get("message").asText());
         assertEquals(300L, json.get("result").get("expiresInSeconds").asLong());
         verify(authService).sendSignupVerificationCode(request);
+    }
+
+    @Test
+    void sendCodeMailFailureReturnsStandardServiceUnavailableResponse() throws Exception {
+        when(authService.sendSignupVerificationCode(org.mockito.ArgumentMatchers.any()))
+                .thenThrow(new BusinessException(HttpStatus.SERVICE_UNAVAILABLE,
+                        "인증 이메일을 발송할 수 없습니다. 잠시 후 다시 시도해주세요."));
+        MockMvc mockMvc = MockMvcBuilders.standaloneSetup(controller)
+                .setControllerAdvice(new GlobalExceptionHandler())
+                .build();
+
+        String body = mockMvc.perform(post("/api/auth/signup/send-code")
+                        .contentType("application/json")
+                        .content("{\"email\":\"user@example.com\"}"))
+                .andExpect(status().isServiceUnavailable())
+                .andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8);
+        JsonNode json = objectMapper.readTree(body);
+
+        assertEquals(503, json.get("status").asInt());
+        assertEquals("인증 이메일을 발송할 수 없습니다. 잠시 후 다시 시도해주세요.",
+                json.get("message").asText());
+        assertTrue(json.get("result").isNull());
     }
 
     @Test

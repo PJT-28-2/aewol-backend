@@ -4,6 +4,7 @@ import javax.mail.MessagingException;
 import javax.mail.internet.MimeMessage;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.mail.MailException;
 import org.springframework.mail.javamail.JavaMailSender;
 import org.springframework.mail.javamail.MimeMessageHelper;
 import org.springframework.stereotype.Service;
@@ -42,9 +43,9 @@ public class EmailService {
             );
             mailSender.send(message);
             log.info("인증 이메일 발송이 완료되었습니다.");
-        } catch (MessagingException e) {
+        } catch (MessagingException | MailException e) {
             log.error("인증 이메일 발송에 실패했습니다.", e);
-            throw new RuntimeException("이메일 발송에 실패했습니다.", e);
+            throw new EmailSendException("이메일 발송에 실패했습니다.", e);
         }
     }
 }
