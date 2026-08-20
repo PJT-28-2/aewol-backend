@@ -52,6 +52,11 @@ class GroupPurchaseMapperTest {
                     gp_id BIGINT NOT NULL AUTO_INCREMENT,
                     member_id BIGINT NOT NULL,
                     product_name VARCHAR(200) NOT NULL,
+                    -- 필터·정렬 검증에 쓰지는 않지만 findList가 컬럼을 명시해 조회하므로
+                    -- 픽스처에도 있어야 한다.
+                    category VARCHAR(20) NULL,
+                    unit_price DECIMAL(12,2) NULL,
+                    group_price DECIMAL(12,2) NULL,
                     status VARCHAR(20) NOT NULL DEFAULT 'OPEN',
                     current_quantity INT NOT NULL DEFAULT 0,
                     target_quantity INT NOT NULL DEFAULT 1,

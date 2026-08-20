@@ -10,8 +10,24 @@
          target_quantity <= 0인 행(정상 생성 경로로는 나올 수 없는 레거시/비정상 데이터)은 목록 자체에서
          제외한다 — 마감 자동 환불 배치(findExpiredUnfulfilledPaidParticipants)는 이 목록과 무관하게
          계속 처리하므로 결제된 참여자 환불에는 영향이 없다. -->
+    <!--
+        목록은 카드에 그릴 값만 있으면 된다. description은 TEXT라 SELECT *로 가져오면
+        페이지 크기만큼 본문 전체가 딸려온다. 상세(findById)에서만 읽으면 충분하다.
+        image·delivery_* 도 목록 응답(GroupPurchaseListItemResponse)에 없다.
+    -->
     <select id="findList" resultType="map">
-        SELECT * FROM group_purchase
+        SELECT gp_id,
+               member_id,
+               product_name,
+               category,
+               unit_price,
+               group_price,
+               target_quantity,
+               current_quantity,
+               status,
+               deadline,
+               created_at
+        FROM group_purchase
         <where>
             status != 'CANCELLED' AND target_quantity &gt; 0
             <choose>
