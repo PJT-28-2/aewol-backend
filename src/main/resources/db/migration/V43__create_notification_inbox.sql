@@ -1,3 +1,4 @@
+-- V43: V42는 공동구매 마감 임박순 정렬 인덱스 마이그레이션에서 사용한다.
 CREATE TABLE IF NOT EXISTS `notification` (
     `notification_id` BIGINT NOT NULL AUTO_INCREMENT,
     `member_id`       BIGINT NOT NULL,

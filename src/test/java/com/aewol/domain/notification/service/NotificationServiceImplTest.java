@@ -20,6 +20,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -56,6 +57,16 @@ class NotificationServiceImplTest {
         assertEquals(2, result.getUnreadCount());
         assertTrue(result.isHasNext());
         verify(mapper).findByMemberId("member-1", 3, 0);
+    }
+
+    @Test
+    void rejectsPageThatWouldOverflowMapperOffset() {
+        BusinessException exception = assertThrows(
+                BusinessException.class,
+                () -> service.getNotifications("member-1", Integer.MAX_VALUE, 100));
+
+        assertEquals(HttpStatus.BAD_REQUEST, exception.getStatus());
+        verify(mapper, never()).findByMemberId(any(), anyInt(), anyInt());
     }
 
     @Test

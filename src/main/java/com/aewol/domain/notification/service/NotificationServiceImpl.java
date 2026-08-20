@@ -31,8 +31,12 @@ public class NotificationServiceImpl implements NotificationService {
         memberId = requireMemberId(memberId);
         int safePage = Math.max(page, 0);
         int safeSize = size <= 0 ? DEFAULT_PAGE_SIZE : Math.min(size, MAX_PAGE_SIZE);
+        long offset = (long) safePage * safeSize;
+        if (offset > Integer.MAX_VALUE) {
+            throw new BusinessException("페이지 범위를 확인해주세요.");
+        }
         List<Map<String, Object>> rows = notificationMapper.findByMemberId(
-                memberId, safeSize + 1, safePage * safeSize);
+                memberId, safeSize + 1, (int) offset);
         boolean hasNext = rows.size() > safeSize;
         List<Map<String, Object>> pageRows = hasNext ? rows.subList(0, safeSize) : rows;
         List<NotificationResponse> notifications = pageRows.stream()
