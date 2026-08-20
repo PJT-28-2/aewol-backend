@@ -5,6 +5,7 @@ import com.aewol.domain.auth.dto.KakaoOAuthResponse;
 import com.aewol.domain.auth.dto.KakaoPhoneSendCodeResponse;
 import com.aewol.domain.auth.dto.TokenResponse;
 import com.aewol.domain.auth.service.KakaoSignupService;
+import com.aewol.domain.auth.support.KakaoRegistrationCookie;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.nio.charset.StandardCharsets;
@@ -25,6 +26,8 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 
+import javax.servlet.http.Cookie;
+
 class KakaoSignupControllerTest {
 
     private static final String TOKEN = "a".repeat(43);
@@ -38,7 +41,7 @@ class KakaoSignupControllerTest {
         LocalValidatorFactoryBean validator = new LocalValidatorFactoryBean();
         validator.afterPropertiesSet();
         mockMvc = MockMvcBuilders.standaloneSetup(
-                        new KakaoSignupController(kakaoSignupService))
+                        new KakaoSignupController(kakaoSignupService, new KakaoRegistrationCookie(false)))
                 .setControllerAdvice(new GlobalExceptionHandler())
                 .setValidator(validator)
                 .build();
@@ -57,18 +60,21 @@ class KakaoSignupControllerTest {
         JsonNode sent = json(mockMvc.perform(post(
                         "/api/auth/oauth/kakao/signup/phone/send-code")
                         .contentType("application/json")
+                        .cookie(new Cookie(KakaoRegistrationCookie.NAME, TOKEN))
                         .content("{\"registrationToken\":\"" + TOKEN
                                 + "\",\"phone\":\"01012345678\"}"))
                 .andReturn());
         JsonNode verified = json(mockMvc.perform(post(
                         "/api/auth/oauth/kakao/signup/phone/verify-code")
                         .contentType("application/json")
+                        .cookie(new Cookie(KakaoRegistrationCookie.NAME, TOKEN))
                         .content("{\"registrationToken\":\"" + TOKEN
                                 + "\",\"verificationCode\":\"123456\"}"))
                 .andReturn());
         MvcResult completedResult = mockMvc.perform(post(
                         "/api/auth/oauth/kakao/signup/complete")
                         .contentType("application/json")
+                        .cookie(new Cookie(KakaoRegistrationCookie.NAME, TOKEN))
                         .content(completeBody(true, true)))
                 .andReturn();
         JsonNode completed = json(completedResult);
@@ -87,6 +93,20 @@ class KakaoSignupControllerTest {
         assertEquals("refresh-token",
                 completed.get("result").get("refreshToken").asText());
         assertTrue(completed.get("result").get("registrationToken").isNull());
+    }
+
+    @Test
+    void signupRejectsWhenRegistrationCookieDoesNotMatchBody() throws Exception {
+        MvcResult result = mockMvc.perform(post(
+                        "/api/auth/oauth/kakao/signup/phone/send-code")
+                        .contentType("application/json")
+                        .cookie(new Cookie(KakaoRegistrationCookie.NAME, "b".repeat(43)))
+                        .content("{\"registrationToken\":\"" + TOKEN
+                                + "\",\"phone\":\"01012345678\"}"))
+                .andReturn();
+
+        assertEquals(HttpStatus.UNAUTHORIZED.value(), result.getResponse().getStatus());
+        verifyNoInteractions(kakaoSignupService);
     }
 
     @Test
@@ -126,6 +146,7 @@ class KakaoSignupControllerTest {
         MvcResult accepted = mockMvc.perform(post(
                         "/api/auth/oauth/kakao/signup/complete")
                         .contentType("application/json")
+                        .cookie(new Cookie(KakaoRegistrationCookie.NAME, TOKEN))
                         .content(completeBody(true, true, "가".repeat(100))))
                 .andReturn();
 

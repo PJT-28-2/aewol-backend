@@ -3,6 +3,7 @@ package com.aewol.domain.auth.controller;
 import com.aewol.common.exception.GlobalExceptionHandler;
 import com.aewol.domain.auth.dto.SignupResponse;
 import com.aewol.domain.auth.service.AccountFindService;
+import com.aewol.domain.auth.support.KakaoRegistrationCookie;
 import com.aewol.domain.auth.service.AuthService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
@@ -32,7 +33,7 @@ class AuthControllerSignupPhoneValidationTest {
     @BeforeEach
     void setUp() {
         authService = mock(AuthService.class);
-        AuthController controller = new AuthController(authService, mock(AccountFindService.class));
+        AuthController controller = new AuthController(authService, mock(AccountFindService.class), new KakaoRegistrationCookie(false));
         mockMvc = MockMvcBuilders.standaloneSetup(controller)
                 .setControllerAdvice(new GlobalExceptionHandler())
                 .build();

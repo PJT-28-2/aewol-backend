@@ -10,6 +10,7 @@ import com.aewol.domain.auth.dto.AccountFindResultResponse;
 import com.aewol.domain.auth.service.AuthCredentialStore;
 import com.aewol.domain.auth.service.AuthService;
 import com.aewol.domain.auth.service.AccountFindService;
+import com.aewol.domain.auth.support.KakaoRegistrationCookie;
 import com.aewol.domain.member.mapper.MemberMapper;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -225,7 +226,7 @@ class AuthControllerRefreshTest {
 
         @Bean
         AuthController authController(AuthService authService, AccountFindService accountFindService) {
-            return new AuthController(authService, accountFindService);
+            return new AuthController(authService, accountFindService, new KakaoRegistrationCookie(false));
         }
 
         @Bean
