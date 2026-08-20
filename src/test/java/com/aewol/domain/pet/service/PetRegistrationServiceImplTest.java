@@ -298,6 +298,38 @@ class PetRegistrationServiceImplTest {
         verifyNoInteractions(petRegistrationMapper);
     }
 
+    @Test
+    void should_deleteRegistrationAndClearRegNumber_when_ownerCancels() {
+        when(petMapper.findById("pet-1")).thenReturn(pet("member-1"));
+
+        service.cancel("member-1", "pet-1", "doc-1");
+
+        verify(petRegistrationMapper).deleteByPetIdAndDocId("pet-1", "doc-1");
+        verify(petMapper).updateRegistrationNumber("pet-1", "member-1", null);
+    }
+
+    @Test
+    void should_throwForbidden_when_nonOwnerCancels() {
+        when(petMapper.findById("pet-1")).thenReturn(pet("owner-1"));
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.cancel("member-2", "pet-1", "doc-1"));
+
+        assertEquals(HttpStatus.FORBIDDEN, exception.getStatus());
+        verifyNoInteractions(petRegistrationMapper);
+    }
+
+    @Test
+    void should_throwNotFound_when_petDoesNotExist_onCancel() {
+        when(petMapper.findById("pet-404")).thenReturn(null);
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.cancel("member-1", "pet-404", "doc-1"));
+
+        assertEquals(HttpStatus.NOT_FOUND, exception.getStatus());
+        verifyNoInteractions(petRegistrationMapper);
+    }
+
     private PetRegistrationVerifyRequest request(String regNumber, String userName, String birthDate) {
         return new PetRegistrationVerifyRequest(regNumber, userName, birthDate);
     }
