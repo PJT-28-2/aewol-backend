@@ -145,7 +145,14 @@ public class CareDiaryServiceImpl implements CareDiaryService {
             throw new BusinessException("사진이 없는 일기는 내용을 비울 수 없습니다.");
         }
 
-        if (careDiaryMapper.update(diaryId, diaryDate, content) != 1) {
+        // version을 보낸 요청은 그 사이 다른 곳에서 저장됐는지까지 판정한다. 위에서 행을
+        // 이미 읽어 존재는 확인했으므로, 여기서 0행이면 원인은 버전 불일치다.
+        Long expectedVersion = request.getVersion();
+        if (careDiaryMapper.update(diaryId, diaryDate, content, expectedVersion) != 1) {
+            if (expectedVersion != null) {
+                throw BusinessException.conflict(
+                        "다른 곳에서 이 일기를 먼저 수정했어요. 최신 내용을 불러온 뒤 다시 저장해 주세요.");
+            }
             throw BusinessException.notFound("수정할 일기를 찾을 수 없습니다.");
         }
         return getDetail(memberId, diaryId);
@@ -344,6 +351,7 @@ public class CareDiaryServiceImpl implements CareDiaryService {
                 .authorId(authorId)
                 .authorName(text(row, "authorName"))
                 .createdAt(dateTimeText(value(row, "createdAt")))
+                .version(longValue(row, "version"))
                 .editable(isAuthor)
                 .deletable(isAuthor || requesterId.equals(ownerId))
                 .build();
@@ -399,6 +407,15 @@ public class CareDiaryServiceImpl implements CareDiaryService {
     private static String text(Map<String, Object> map, String... keys) {
         Object value = value(map, keys);
         return value == null ? null : String.valueOf(value);
+    }
+
+    /** MyBatis가 map으로 돌려주는 수치형은 드라이버에 따라 Long/BigInteger 등으로 달라진다. */
+    private static Long longValue(Map<String, Object> map, String key) {
+        Object raw = map == null ? null : map.get(key);
+        if (raw == null) {
+            return null;
+        }
+        return raw instanceof Number number ? number.longValue() : Long.valueOf(raw.toString());
     }
 
     private static String dateText(Object value) {
