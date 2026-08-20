@@ -10,6 +10,7 @@ import java.util.stream.Collectors;
 import javax.servlet.http.HttpServletRequest;
 import org.springframework.aop.support.AopUtils;
 import org.springframework.context.ApplicationContext;
+import org.springframework.context.annotation.Profile;
 import org.springframework.core.annotation.AnnotationUtils;
 import org.springframework.stereotype.Component;
 import org.springframework.web.bind.annotation.RestController;
@@ -24,6 +25,7 @@ import springfox.documentation.spi.DocumentationType;
  * {@code @Tag} 이름으로 되돌려 준다.
  */
 @Component
+@Profile("!prod")
 public class SwaggerTagRemapFilter implements WebMvcOpenApiTransformationFilter {
 
     private final Map<String, String> defaultTagToDeclaredTag = new HashMap<>();

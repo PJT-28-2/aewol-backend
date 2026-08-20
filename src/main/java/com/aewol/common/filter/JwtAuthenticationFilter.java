@@ -50,7 +50,6 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                 return;
             }
             String memberId = claims.getSubject();
-            String role = claims.get("role", String.class);
             Map<String, Object> authState;
             try {
                 authState = memberMapper.findAuthStateById(memberId);
@@ -60,6 +59,12 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             }
 
             if (!canAuthenticate(authState, claims.getIssuedAt())) {
+                filterChain.doFilter(request, response);
+                return;
+            }
+
+            String role = resolveRole(authState, claims);
+            if (role == null) {
                 filterChain.doFilter(request, response);
                 return;
             }
@@ -86,6 +91,25 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         }
         // 마지막 탈퇴 시각과 같거나 이전에 발급된 토큰은 복구 후에도 다시 사용할 수 없다.
         return issuedAt.getTime() / 1000L > ((Number) withdrawnAtEpoch).longValue();
+    }
+
+    /**
+     * 권한은 DB의 현재 role을 쓴다. 토큰 claim만 보면 강등 후에도 access TTL(30분) 동안
+     * ADMIN API가 살아 있다. DB에 role이 아직 없는 테스트/레거시 행만 claim으로 보조한다.
+     */
+    private String resolveRole(Map<String, Object> authState, Claims claims) {
+        Object dbRole = authState.get("role");
+        if (dbRole != null) {
+            String role = String.valueOf(dbRole).trim();
+            if (!role.isEmpty()) {
+                return role;
+            }
+        }
+        String claimRole = claims.get("role", String.class);
+        if (claimRole == null || claimRole.isBlank()) {
+            return null;
+        }
+        return claimRole.trim();
     }
 
     private boolean isActive(Object value) {
