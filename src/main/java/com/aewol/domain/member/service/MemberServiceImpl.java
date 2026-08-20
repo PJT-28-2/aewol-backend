@@ -154,6 +154,9 @@ public class MemberServiceImpl implements MemberService {
         if (!StringUtils.hasText(normalizedPhone)) {
             throw new BusinessException("전화번호는 비어 있을 수 없습니다.");
         }
+        if (!normalizedPhone.matches("^010\\d{8}$")) {
+            throw new BusinessException("올바른 휴대전화 번호를 입력해주세요.");
+        }
         if (memberMapper.existsActiveByPhoneExcludingMember(normalizedPhone, memberId)) {
             throw BusinessException.conflict("이미 사용 중인 전화번호입니다.");
         }
