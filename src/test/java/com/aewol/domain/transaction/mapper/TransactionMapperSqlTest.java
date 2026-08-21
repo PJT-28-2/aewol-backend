@@ -24,39 +24,49 @@ class TransactionMapperSqlTest {
 
     @Test
     void should_includeRefundInChargeFilter_forFindByWalletId() throws Exception {
-        String sql = Files.readString(
-                Path.of("src/main/resources/mapper/transaction/TransactionMapper.xml"),
-                StandardCharsets.UTF_8);
-        int start = sql.indexOf("<select id=\"findByWalletId\"");
-        int end = sql.indexOf("</select>", start);
-        String select = sql.substring(start, end);
-
-        assertTrue(select.contains("'DEPOSIT', 'REFUND'"));
+        assertTrue(selectBody("findByWalletId").contains("'DEPOSIT', 'REFUND'"));
     }
 
     @Test
     void should_includeRefundInChargeFilter_forFindRecentByWalletId() throws Exception {
-        String sql = Files.readString(
-                Path.of("src/main/resources/mapper/transaction/TransactionMapper.xml"),
-                StandardCharsets.UTF_8);
-        int start = sql.indexOf("<select id=\"findRecentByWalletId\"");
-        int end = sql.indexOf("</select>", start);
-        String select = sql.substring(start, end);
-
-        assertTrue(select.contains("'DEPOSIT', 'REFUND'"));
+        assertTrue(selectBody("findRecentByWalletId").contains("'DEPOSIT', 'REFUND'"));
     }
 
     @Test
     void should_excludeRefundedPayments_forFindByWalletIdPaymentFilter() throws Exception {
-        String sql = Files.readString(
-                Path.of("src/main/resources/mapper/transaction/TransactionMapper.xml"),
-                StandardCharsets.UTF_8);
-        int start = sql.indexOf("<select id=\"findByWalletId\"");
-        int end = sql.indexOf("</select>", start);
-        String select = sql.substring(start, end);
+        String select = selectBody("findByWalletId");
 
         assertTrue(select.contains("txnFilter == 'PAYMENT'"));
         assertTrue(select.contains("t.txn_type = 'PAYMENT'"));
         assertTrue(select.contains("gpp.payment_status = 'CANCELLED'"));
+    }
+
+    @Test
+    void should_excludeRefundedPayments_forFindByWalletIdWithdrawFilter() throws Exception {
+        String withdrawBlock = ifBlock(selectBody("findByWalletId"), "WITHDRAW");
+
+        assertTrue(withdrawBlock.contains("gpp.payment_status = 'CANCELLED'"));
+    }
+
+    @Test
+    void should_excludeRefundedPayments_forFindRecentByWalletIdWithdrawFilter() throws Exception {
+        String withdrawBlock = ifBlock(selectBody("findRecentByWalletId"), "WITHDRAW");
+
+        assertTrue(withdrawBlock.contains("gpp.payment_status = 'CANCELLED'"));
+    }
+
+    private static String selectBody(String selectId) throws Exception {
+        String sql = Files.readString(
+                Path.of("src/main/resources/mapper/transaction/TransactionMapper.xml"),
+                StandardCharsets.UTF_8);
+        int start = sql.indexOf("<select id=\"" + selectId + "\"");
+        int end = sql.indexOf("</select>", start);
+        return sql.substring(start, end);
+    }
+
+    private static String ifBlock(String body, String txnFilterValue) {
+        int start = body.indexOf("txnFilter == '" + txnFilterValue + "'");
+        int end = body.indexOf("</if>", start);
+        return body.substring(start, end);
     }
 }
