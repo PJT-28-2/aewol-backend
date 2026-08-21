@@ -30,6 +30,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -90,6 +91,22 @@ class ClaimServiceImplTest {
         assertNull(result.getHospitalName());
         verify(insuranceMapper).insertClaim(argThat((Map<String, Object> m) ->
                 "DRAFT".equals(m.get("claimStatus")) && m.get("hospitalName") == null));
+        verify(fileStorage, never()).delete(anyString());
+    }
+
+    @Test
+    @DisplayName("createClaim은 DB 저장이 실패하면 올려 둔 영수증 파일을 지운다")
+    void should_deleteStoredReceipt_whenInsertClaimFails() {
+        service = new ClaimServiceImpl(insuranceMapper, petMapper, paddleOcrClient, fileStorage);
+        when(petMapper.findByIdAndMemberId("10", "100")).thenReturn(Map.of("pet_id", "10"));
+        when(fileStorage.store(any(), eq("receipts"), eq("jpg"))).thenReturn("receipts/x.jpg");
+        when(paddleOcrClient.extractReceiptData(any(), anyString())).thenReturn("{}");
+        doThrow(new RuntimeException("db")).when(insuranceMapper).insertClaim(any());
+
+        MockMultipartFile receipt = new MockMultipartFile("receipt", "receipt.jpg", "image/jpeg", "img".getBytes());
+
+        assertThrows(RuntimeException.class, () -> service.createClaim("100", "10", receipt));
+        verify(fileStorage).delete("receipts/x.jpg");
     }
 
     @Test
