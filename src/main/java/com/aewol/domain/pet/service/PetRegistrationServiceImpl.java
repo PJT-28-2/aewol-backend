@@ -9,6 +9,7 @@ import com.aewol.domain.pet.mapper.PetMapper;
 import com.aewol.domain.pet.mapper.PetRegistrationMapper;
 import com.aewol.external.apms.ApmsClient;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -23,6 +24,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class PetRegistrationServiceImpl implements PetRegistrationService {
@@ -45,6 +47,19 @@ public class PetRegistrationServiceImpl implements PetRegistrationService {
         String ownerName = trimToNull(request.getUserName());
         String ownerBirth = digits(request.getBirthDate());
         if (ownerName == null && ownerBirth == null) {
+            // 재연동(이미 검증된 등록증을 다시 verify): 요청에 소유자 정보가 없으면 마지막으로
+            // 검증에 성공했던 값을 재사용한다. 로그인 회원과 정부 등록 소유자가 다를 수 있어서
+            // (가족 반려동물 대리 등록 등) 매번 다시 입력받는 대신 저장된 값을 우선한다.
+            Map<String, Object> existingDocument = petDocumentMapper.findByPetIdAndTypeForUpdate(petId, REGISTRATION);
+            Map<String, Object> existing = existingDocument == null ? null
+                    : petRegistrationMapper.findByPetIdAndDocId(
+                            petId, String.valueOf(value(existingDocument, "doc_id", "docId")));
+            if (existing != null) {
+                ownerName = trimToNull((String) existing.get("owner_name"));
+                ownerBirth = digits((String) existing.get("owner_birth"));
+            }
+        }
+        if (ownerName == null && ownerBirth == null) {
             throw new BusinessException("소유자 이름 또는 생년월일을 입력해주세요.");
         }
         if (ownerBirth != null && ownerBirth.length() != 8) {
@@ -58,6 +73,8 @@ public class PetRegistrationServiceImpl implements PetRegistrationService {
         }
 
         Map<String, Object> registration = normalize(external, petId);
+        registration.put("ownerName", ownerName);
+        registration.put("ownerBirth", ownerBirth);
         validateExternalResponse(registration);
         validateMatch(pet, registration, request.getRegNumber());
         validateDuplicate(petId, request.getRegNumber());
@@ -128,6 +145,23 @@ public class PetRegistrationServiceImpl implements PetRegistrationService {
             throw BusinessException.notFound("동물등록정보를 찾을 수 없습니다.");
         }
         return toResponse(registration);
+    }
+
+    @Override
+    @Transactional
+    public void cancel(String memberId, String petId, String docId) {
+        Map<String, Object> pet = petMapper.findById(petId);
+        if (pet == null) throw BusinessException.notFound("반려동물을 찾을 수 없습니다.");
+        if (!Objects.equals(memberId, String.valueOf(pet.get("member_id")))) {
+            throw BusinessException.forbidden("대표 보호자만 이 작업을 할 수 있습니다.");
+        }
+
+        // fk_petreg_doc가 pet_document.doc_id를 참조하므로, pet_document를 지우기 전에
+        // 자식 행인 pet_registration을 먼저 지워야 한다.
+        if (petRegistrationMapper.deleteByPetIdAndDocId(petId, docId) != 1) {
+            throw BusinessException.notFound("동물등록정보를 찾을 수 없습니다.");
+        }
+        petMapper.updateRegistrationNumber(petId, memberId, null);
     }
 
     /** pet_registration 테이블 행(DB 네이티브 컬럼)을 응답으로 매핑한다. verify()/getDetail() 공용. */
@@ -234,10 +268,19 @@ public class PetRegistrationServiceImpl implements PetRegistrationService {
 
     private static String normalizeNeutered(String value) {
         if (value == null) return null;
-        String upper = value.trim().toUpperCase(Locale.ROOT);
+        String trimmed = value.trim();
+        String upper = trimmed.toUpperCase(Locale.ROOT);
         if (upper.equals("O") || upper.equals("Y")) return "Y";
         if (upper.equals("X") || upper.equals("N")) return "N";
-        return upper;
+        // APMS는 neuterYn에 "중성"/"미중성" 같은 한글 값을 준다. pet_registration.neutered가
+        // CHAR(1)이라 알 수 없는 값을 그대로 저장하면 truncation 에러가 나고, 프론트는 "Y"가
+        // 아닌 값을 전부 "중성화 안함"으로 표시하므로 인식 못한 값(길이 무관)을 그대로 저장하면
+        // 잘못된 정보가 노출된다. 그래서 인식한 Y/N 값만 저장하고 나머지는 로그 후 null 처리한다.
+        if (trimmed.contains("중성")) {
+            return trimmed.contains("미") ? "N" : "Y";
+        }
+        log.warn("APMS neuterYn 값을 인식하지 못해 저장하지 않습니다 - value: {}", value);
+        return null;
     }
 
     private static String digits(String value) {

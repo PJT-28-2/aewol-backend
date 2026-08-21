@@ -22,6 +22,7 @@ import com.aewol.domain.notification.mapper.NotificationSettingMapper;
 import com.aewol.domain.wallet.mapper.WalletMapper;
 import com.aewol.external.kakao.KakaoAuthClient;
 import com.aewol.external.kakao.KakaoUserInfo;
+import com.aewol.external.smtp.EmailSendException;
 import com.aewol.external.smtp.EmailService;
 import io.jsonwebtoken.Claims;
 import lombok.RequiredArgsConstructor;
@@ -65,6 +66,8 @@ public class AuthServiceImpl implements AuthService {
     private static final String PASSWORD_RESET_TOKEN_KEY_PREFIX = "password:reset:token:";
     private static final String INVALID_PASSWORD_RESET_TOKEN_MESSAGE =
             "유효하지 않거나 만료된 비밀번호 재설정 토큰입니다.";
+    private static final String EMAIL_SEND_FAILURE_MESSAGE =
+            "인증 이메일을 발송할 수 없습니다. 잠시 후 다시 시도해주세요.";
     private static final String VERIFICATION_VALUE_DELIMITER = "|";
     private static final DefaultRedisScript<Long> COMPARE_AND_DELETE_SCRIPT = new DefaultRedisScript<>(
             "local stored = redis.call('GET', KEYS[1])\n" +
@@ -162,14 +165,14 @@ public class AuthServiceImpl implements AuthService {
 
         try {
             emailService.sendVerificationEmail(email, code);
-        } catch (RuntimeException e) {
+        } catch (EmailSendException e) {
             try {
                 redisTemplate.execute(
                         COMPARE_AND_DELETE_SCRIPT, List.of(verificationKey), verificationValue);
             } catch (RuntimeException cleanupException) {
                 e.addSuppressed(cleanupException);
             }
-            throw e;
+            throw new BusinessException(HttpStatus.SERVICE_UNAVAILABLE, EMAIL_SEND_FAILURE_MESSAGE);
         }
 
         return new SignupEmailCodeResponse(SIGNUP_VERIFICATION_TTL_SECONDS);
@@ -220,14 +223,14 @@ public class AuthServiceImpl implements AuthService {
 
         try {
             emailService.sendPasswordResetEmail(request.getEmail(), code);
-        } catch (RuntimeException e) {
+        } catch (EmailSendException e) {
             try {
                 redisTemplate.execute(
                         COMPARE_AND_DELETE_SCRIPT, List.of(verificationKey), verificationValue);
             } catch (RuntimeException cleanupException) {
                 e.addSuppressed(cleanupException);
             }
-            throw e;
+            throw new BusinessException(HttpStatus.SERVICE_UNAVAILABLE, EMAIL_SEND_FAILURE_MESSAGE);
         }
 
         return new SignupEmailCodeResponse(PASSWORD_RESET_VERIFICATION_TTL_SECONDS);

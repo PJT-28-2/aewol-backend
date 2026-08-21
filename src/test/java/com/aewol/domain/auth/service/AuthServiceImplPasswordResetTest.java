@@ -12,6 +12,7 @@ import com.aewol.domain.member.mapper.MemberMapper;
 import com.aewol.domain.notification.mapper.NotificationSettingMapper;
 import com.aewol.domain.wallet.mapper.WalletMapper;
 import com.aewol.external.kakao.KakaoAuthClient;
+import com.aewol.external.smtp.EmailSendException;
 import com.aewol.external.smtp.EmailService;
 import java.util.HashMap;
 import java.util.List;
@@ -113,6 +114,32 @@ class AuthServiceImplPasswordResetTest {
         assertEquals(300L, response.getExpiresInSeconds());
         verify(redisRateLimiter, times(5)).incrementWithExpiry(
                 "password:reset:request-count:" + EMAIL, 1800L);
+    }
+
+    @Test
+    void mailFailureCleansCurrentOtpAndReturnsServiceUnavailable() {
+        when(memberMapper.findActiveByEmail(EMAIL)).thenReturn(member("LOCAL", true, "old-hash"));
+        when(redisTemplate.opsForValue()).thenReturn(valueOperations);
+        when(redisRateLimiter.incrementWithExpiry(
+                "password:reset:request-count:" + EMAIL, 1800L)).thenReturn(1L);
+        doThrow(new EmailSendException("email send failed", new RuntimeException("provider detail")))
+                .when(emailService).sendPasswordResetEmail(anyString(), anyString());
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.sendPasswordResetVerificationCode(emailRequest(EMAIL)));
+
+        ArgumentCaptor<String> valueCaptor = ArgumentCaptor.forClass(String.class);
+        verify(valueOperations).set(
+                eq("password:reset:verify:" + EMAIL), valueCaptor.capture(),
+                eq(300L), eq(TimeUnit.SECONDS));
+        verify(redisTemplate).execute(
+                argThat(script -> script.getScriptAsString().contains("stored == ARGV[1]")
+                        && script.getScriptAsString().contains("redis.call('DEL', KEYS[1])")),
+                eq(List.of("password:reset:verify:" + EMAIL)), eq(valueCaptor.getValue()));
+        verify(redisTemplate, never()).delete(anyString());
+        assertEquals(HttpStatus.SERVICE_UNAVAILABLE, exception.getStatus());
+        assertEquals("인증 이메일을 발송할 수 없습니다. 잠시 후 다시 시도해주세요.",
+                exception.getMessage());
     }
 
     @Test

@@ -46,6 +46,19 @@ class JwtAuthenticationFilterTest {
     }
 
     @Test
+    void dbRoleOverridesStaleJwtClaim() throws Exception {
+        stubToken(new Date(900_000L), "ADMIN");
+        Map<String, Object> member = member(true, null);
+        member.put("role", "USER");
+        when(memberMapper.findAuthStateById("member-1")).thenReturn(member);
+
+        filter.doFilter(request(), new MockHttpServletResponse(), mock(FilterChain.class));
+
+        assertEquals("ROLE_USER",
+                SecurityContextHolder.getContext().getAuthentication().getAuthorities().iterator().next().getAuthority());
+    }
+
+    @Test
     void inactiveMemberIsNotAuthenticated() throws Exception {
         stubToken(new Date(1_100_000L));
         when(memberMapper.findAuthStateById("member-1")).thenReturn(member(false, WITHDRAWN_AT));
@@ -160,9 +173,13 @@ class JwtAuthenticationFilterTest {
     }
 
     private void stubToken(Date issuedAt) {
+        stubToken(issuedAt, "USER");
+    }
+
+    private void stubToken(Date issuedAt, String role) {
         Claims claims = mock(Claims.class);
         when(claims.getSubject()).thenReturn("member-1");
-        when(claims.get("role", String.class)).thenReturn("USER");
+        when(claims.get("role", String.class)).thenReturn(role);
         when(claims.getIssuedAt()).thenReturn(issuedAt);
         when(jwtUtil.isTokenValid("access-token")).thenReturn(true);
         when(jwtUtil.parseClaims("access-token")).thenReturn(claims);

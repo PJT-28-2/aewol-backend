@@ -232,6 +232,12 @@ public class Gov24SyncServiceImpl implements Gov24SyncService {
         if (region == null || region.isBlank()) {
             return conditions;
         }
+        // 시도를 알아볼 수 없으면 이 조건은 아무와도 맞지 않는다. 사업이 조용히 묻히므로
+        // 원본이 이상하다는 것을 로그로 남긴다. (예: "전남광주통합특별시" — 없는 행정구역)
+        if (RegionMatcher.parse(region) == null) {
+            log.warn("[Gov24] 알 수 없는 지역이라 아무 회원과도 매칭되지 않습니다 - programId={}, region={}",
+                    programId, region);
+        }
         Map<String, Object> regionCondition = new HashMap<>();
         regionCondition.put("programId", programId);
         regionCondition.put("conditionType", "REGION");
@@ -245,13 +251,24 @@ public class Gov24SyncServiceImpl implements Gov24SyncService {
         return conditions;
     }
 
-    /** "서울특별시 동대문구" -> "서울특별시". 광역 단위만 남긴다. */
+    /**
+     * 기관명에서 사업의 대상 지역을 읽는다. {@code "서울특별시 동대문구" -> "서울특별시 동대문구"}.
+     *
+     * <p>예전에는 첫 어절만 남겨 광역 단위로 잘랐다. 그래서 구민 전용 사업이 그 시도
+     * 주민 전체에게 신청 가능으로 보였다. 원본에는 시군구가 들어 있으므로 그대로 쓴다.
+     *
+     * <p>둘째 어절이 늘 시군구인 것은 아니다. {@code "서울특별시 동물복지과"}처럼 부서명이
+     * 오면 광역 단위 사업으로 본다. 접미사로 걸러지므로 예외 목록이 필요 없다.
+     */
     private String extractRegion(String organizationName) {
         if (organizationName == null || organizationName.isBlank()) return null;
-        String first = organizationName.trim().split("\\s+")[0];
+        String[] tokens = organizationName.trim().split("\\s+");
         // 중앙행정기관(교육부 등)은 지역 조건을 만들지 않는다
-        if (!first.matches(".*(특별시|광역시|특별자치시|특별자치도|도)$")) return null;
-        return first;
+        if (!tokens[0].matches(".*(특별시|광역시|특별자치시|특별자치도|도)$")) return null;
+        if (tokens.length > 1 && tokens[1].matches(".+(시|군|구)$")) {
+            return tokens[0] + " " + tokens[1];
+        }
+        return tokens[0];
     }
 
     /** 서비스명에 축종이 드러나면 반영하고, 아니면 ALL. */

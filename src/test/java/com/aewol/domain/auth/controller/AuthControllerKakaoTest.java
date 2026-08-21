@@ -3,6 +3,7 @@ package com.aewol.domain.auth.controller;
 import com.aewol.domain.auth.dto.KakaoOAuthResponse;
 import com.aewol.domain.auth.dto.TokenResponse;
 import com.aewol.domain.auth.service.AccountFindService;
+import com.aewol.domain.auth.support.KakaoRegistrationCookie;
 import com.aewol.domain.auth.service.AuthService;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -34,7 +35,7 @@ class AuthControllerKakaoTest {
     @BeforeEach
     void setUp() {
         mockMvc = MockMvcBuilders.standaloneSetup(
-                new AuthController(authService, accountFindService)).build();
+                new AuthController(authService, accountFindService, new KakaoRegistrationCookie(false))).build();
     }
 
     @Test

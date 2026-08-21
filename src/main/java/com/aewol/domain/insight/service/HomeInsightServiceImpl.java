@@ -75,7 +75,9 @@ public class HomeInsightServiceImpl implements HomeInsightService {
                 cards.add(toResponse(card, hit));
                 continue;
             }
-            cards.add(generateAndStore(memberId, card));
+            // 홈을 연 스레드에서 LLM을 부르면 캐시 미스마다 수 초가 붙는다.
+            // 문구는 배치 warmUp이 채우고, 여기선 데이터로 만든 대체 문장만 바로 돌려준다.
+            cards.add(fallbackResponse(card));
         }
         return cards;
     }
@@ -148,6 +150,20 @@ public class HomeInsightServiceImpl implements HomeInsightService {
                 .ctaLabel(card.getCtaLabel())
                 .ctaPath(card.getCtaPath())
                 .fallback(fallback)
+                .recommendedProducts(card.getRecommendedProducts())
+                .categoryBreakdown(card.getCategoryBreakdown())
+                .build();
+    }
+
+    private static HomeInsightResponse fallbackResponse(InsightCard card) {
+        return HomeInsightResponse.builder()
+                .type(card.getType().name())
+                .headline(card.getHeadline())
+                .body(trimToColumn(card.getFallbackBody()))
+                .projection(card.getProjection())
+                .ctaLabel(card.getCtaLabel())
+                .ctaPath(card.getCtaPath())
+                .fallback(true)
                 .build();
     }
 
@@ -184,6 +200,10 @@ public class HomeInsightServiceImpl implements HomeInsightService {
                 .ctaPath(card.getCtaPath())
                 .fallback("Y".equals(String.valueOf(cached.get("fallback"))))
                 .generatedAt(generatedAt == null ? null : String.valueOf(generatedAt))
+                // 추천 상품도 헤드라인/전망과 같은 이유로 캐시하지 않는다. 공동구매 진행 상태는
+                // 어제와 다를 수 있어 매번 새로 조회한다.
+                .recommendedProducts(card.getRecommendedProducts())
+                .categoryBreakdown(card.getCategoryBreakdown())
                 .build();
     }
 

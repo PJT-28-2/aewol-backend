@@ -44,7 +44,8 @@ public class GroupPurchaseServiceImpl implements GroupPurchaseService {
 
     // 목록(findList)은 마감(취소)된 게시글을 SQL에서 무조건 제외하므로(status != 'CANCELLED'),
     // CANCELLED는 이 API의 유효한 필터 값이 아니다.
-    private static final Set<String> LIST_STATUS_VALUES = Set.of("OPEN", "COMPLETED", "FAILED");
+    private static final Set<String> LIST_STATUS_VALUES =
+            Set.of(GroupPurchaseStatus.OPEN, GroupPurchaseStatus.COMPLETED, GroupPurchaseStatus.FAILED);
 
     private final GroupPurchaseMapper groupPurchaseMapper;
     private final FileStorage fileStorage;
@@ -69,18 +70,24 @@ public class GroupPurchaseServiceImpl implements GroupPurchaseService {
 
     @Override
     public GroupPurchaseListResponse list(String memberId, String status, String keyword, String category, int page, int size) {
+        return list(memberId, status, keyword, category, page, size, null);
+    }
+
+    @Override
+    public GroupPurchaseListResponse list(String memberId, String status, String keyword, String category, int page, int size, String sort) {
         int safePage = Math.max(page, 0);
         int safeSize = size <= 0 ? 10 : size;
         String dbStatus = validateListStatus(status);
 
         List<Map<String, Object>> rows = groupPurchaseMapper.findList(
-                dbStatus, keyword, category, safeSize + 1, safePage * safeSize);
+                dbStatus, keyword, category, safeSize + 1, safePage * safeSize, sort);
 
         boolean hasNext = rows.size() > safeSize;
         List<Map<String, Object>> pageRows = hasNext ? rows.subList(0, safeSize) : rows;
+        Set<String> participatingGpIds = findParticipatingGpIds(memberId, pageRows);
 
         List<GroupPurchaseListItemResponse> items = pageRows.stream()
-                .map(gp -> toListItemResponse(gp, memberId))
+                .map(gp -> toListItemResponse(gp, participatingGpIds.contains(String.valueOf(gp.get("gp_id")))))
                 .collect(Collectors.toList());
 
         return GroupPurchaseListResponse.builder()
@@ -154,7 +161,7 @@ public class GroupPurchaseServiceImpl implements GroupPurchaseService {
                         .paidAt(toLocalDateTime(participant.get("paid_at")))
                         .build();
 
-        boolean ownerCancelled = "CANCELLED".equals(gp.get("status"));
+        boolean ownerCancelled = GroupPurchaseStatus.CANCELLED.equals(gp.get("status"));
         String status = computeStatus(ownerCancelled, deadline, currentQuantity, targetQuantity);
 
         return GroupPurchaseStatusResponse.builder()
@@ -203,12 +210,12 @@ public class GroupPurchaseServiceImpl implements GroupPurchaseService {
         BigDecimal groupPrice = toDecimal(gp.get("group_price"));
         BigDecimal paidAmount = groupPrice == null ? null : groupPrice.multiply(BigDecimal.valueOf(quantity));
 
-        String paymentStatus = "PENDING";
+        String paymentStatus = GroupPurchaseParticipantStatus.PENDING;
         LocalDateTime paidAt = null;
         Long txnId = null;
         if (paidAmount != null) {
             txnId = chargeWallet(memberId, gpId, gp, paidAmount);
-            paymentStatus = "PAID";
+            paymentStatus = GroupPurchaseParticipantStatus.PAID;
             paidAt = LocalDateTime.now();
         }
 
@@ -305,7 +312,7 @@ public class GroupPurchaseServiceImpl implements GroupPurchaseService {
 
         BigDecimal refundedAmount = toDecimal(participant.get("paid_amount"));
         BigDecimal refundedWalletBalance = null;
-        if ("PAID".equals(participant.get("payment_status")) && refundedAmount != null) {
+        if (GroupPurchaseParticipantStatus.PAID.equals(participant.get("payment_status")) && refundedAmount != null) {
             refundedWalletBalance = refundWallet(memberId, gpId, gp, refundedAmount,
                     "공동구매 참여 취소 환불: " + gp.get("product_name") + " (gpId=" + gpId + ")");
         }
@@ -319,7 +326,7 @@ public class GroupPurchaseServiceImpl implements GroupPurchaseService {
                 .targetQuantity(toInt(updatedGp.get("target_quantity")))
                 .refundedAmount(refundedAmount)
                 .refundedWalletBalance(refundedWalletBalance)
-                .paymentStatus("CANCELLED")
+                .paymentStatus(GroupPurchaseParticipantStatus.CANCELLED)
                 .canceledAt(canceledAt)
                 .build();
     }
@@ -362,7 +369,7 @@ public class GroupPurchaseServiceImpl implements GroupPurchaseService {
 
         return GroupPurchaseCancelResponse.builder()
                 .gpId(gpId)
-                .status("CANCELLED")
+                .status(GroupPurchaseStatus.CANCELLED)
                 .canceledAt(canceledAt)
                 .refundedParticipants(refunded)
                 .build();
@@ -387,7 +394,7 @@ public class GroupPurchaseServiceImpl implements GroupPurchaseService {
         if (groupPurchaseMapper.cancelParticipant(gpId, participantMemberId, canceledAt) == 0) {
             return null;
         }
-        if (!"PAID".equals(participant.get("payment_status"))) {
+        if (!GroupPurchaseParticipantStatus.PAID.equals(participant.get("payment_status"))) {
             return null;
         }
         BigDecimal paidAmount = toDecimal(participant.get("paid_amount"));
@@ -398,7 +405,7 @@ public class GroupPurchaseServiceImpl implements GroupPurchaseService {
                 .memberId(participantMemberId)
                 .refundedAmount(paidAmount)
                 .refundedWalletBalance(refundedWalletBalance)
-                .paymentStatus("CANCELLED")
+                .paymentStatus(GroupPurchaseParticipantStatus.CANCELLED)
                 .build();
     }
 
@@ -500,7 +507,7 @@ public class GroupPurchaseServiceImpl implements GroupPurchaseService {
         LocalDateTime deadline = toLocalDateTime(gp.get("deadline"));
         Integer currentQuantity = toInt(gp.get("current_quantity"));
         Integer targetQuantity = toInt(gp.get("target_quantity"));
-        boolean cancelled = "CANCELLED".equals(gp.get("status"));
+        boolean cancelled = GroupPurchaseStatus.CANCELLED.equals(gp.get("status"));
         return GroupPurchaseResponse.builder()
                 .gpId(String.valueOf(gp.get("gp_id")))
                 .memberId(String.valueOf(gp.get("member_id")))
@@ -523,21 +530,39 @@ public class GroupPurchaseServiceImpl implements GroupPurchaseService {
                 .build();
     }
 
-    private GroupPurchaseListItemResponse toListItemResponse(Map<String, Object> gp, String memberId) {
+    /**
+     * 목록 한 페이지의 참여 여부를 한 번에 조회한다. 비로그인이거나 빈 페이지면 쿼리하지 않는다.
+     */
+    private Set<String> findParticipatingGpIds(String memberId, List<Map<String, Object>> pageRows) {
+        if (memberId == null || pageRows.isEmpty()) {
+            return Collections.emptySet();
+        }
+        List<String> gpIds = pageRows.stream()
+                .map(gp -> String.valueOf(gp.get("gp_id")))
+                .collect(Collectors.toList());
+        List<Long> participating = groupPurchaseMapper.findParticipatingGpIds(memberId, gpIds);
+        if (participating == null || participating.isEmpty()) {
+            return Collections.emptySet();
+        }
+        return participating.stream()
+                .map(String::valueOf)
+                .collect(Collectors.toSet());
+    }
+
+    private GroupPurchaseListItemResponse toListItemResponse(Map<String, Object> gp, boolean isParticipating) {
         LocalDateTime deadline = toLocalDateTime(gp.get("deadline"));
         Integer currentQuantity = toInt(gp.get("current_quantity"));
         Integer targetQuantity = toInt(gp.get("target_quantity"));
         BigDecimal unitPrice = toDecimal(gp.get("unit_price"));
         BigDecimal groupPrice = toDecimal(gp.get("group_price"));
         // findList SQL이 status != 'CANCELLED'를 무조건 적용하므로 이 목록에는 취소된 게시글이 없다.
-        boolean cancelled = "CANCELLED".equals(gp.get("status"));
-        String gpId = String.valueOf(gp.get("gp_id"));
-        boolean isParticipating = memberId != null && groupPurchaseMapper.findParticipant(gpId, memberId) != null;
+        boolean cancelled = GroupPurchaseStatus.CANCELLED.equals(gp.get("status"));
         return GroupPurchaseListItemResponse.builder()
                 .id(toLong(gp.get("gp_id")))
                 .memberId(toLong(gp.get("member_id")))
                 .productName((String) gp.get("product_name"))
                 .category((String) gp.get("category"))
+                .image(fileStorage.signedUrl((String) gp.get("image")))
                 .status(computeStatus(cancelled, deadline, currentQuantity, targetQuantity))
                 .unitPrice(unitPrice)
                 .groupPrice(groupPrice)
@@ -560,25 +585,25 @@ public class GroupPurchaseServiceImpl implements GroupPurchaseService {
      */
     private static String computeStatus(boolean cancelled, LocalDateTime deadline, Integer currentQuantity, Integer targetQuantity) {
         if (cancelled) {
-            return "CANCELLED";
+            return GroupPurchaseStatus.CANCELLED;
         }
         int current = currentQuantity == null ? 0 : currentQuantity;
         int target = targetQuantity == null ? 0 : targetQuantity;
         if (isTargetReached(current, target)) {
-            return "COMPLETED";
+            return GroupPurchaseStatus.COMPLETED;
         }
         if (deadline != null && deadline.isBefore(LocalDateTime.now())) {
-            return "FAILED";
+            return GroupPurchaseStatus.FAILED;
         }
-        return "OPEN";
+        return GroupPurchaseStatus.OPEN;
     }
 
     /** 각 status 값에 맞는 안내 문구를 반환한다(상태 화면 전용). */
     private static String toNoticeMessage(String status) {
         return switch (status) {
-            case "COMPLETED" -> "목표 인원이 모두 모여 공동구매가 확정되었습니다.";
-            case "FAILED" -> "목표 인원 미달로 공동구매가 취소되어 환불됩니다.";
-            case "CANCELLED" -> "작성자가 취소한 공동구매입니다.";
+            case GroupPurchaseStatus.COMPLETED -> "목표 인원이 모두 모여 공동구매가 확정되었습니다.";
+            case GroupPurchaseStatus.FAILED -> "목표 인원 미달로 공동구매가 취소되어 환불됩니다.";
+            case GroupPurchaseStatus.CANCELLED -> "작성자가 취소한 공동구매입니다.";
             default -> "목표 인원이 모두 모이면 공동구매가 최종 확정됩니다.";
         };
     }
@@ -587,7 +612,7 @@ public class GroupPurchaseServiceImpl implements GroupPurchaseService {
         LocalDateTime deadline = toLocalDateTime(gp.get("deadline"));
         Integer currentQuantity = toInt(gp.get("current_quantity"));
         Integer targetQuantity = toInt(gp.get("target_quantity"));
-        boolean cancelled = "CANCELLED".equals(gp.get("status"));
+        boolean cancelled = GroupPurchaseStatus.CANCELLED.equals(gp.get("status"));
         return GroupPurchaseMyItemResponse.builder()
                 .gpId(toLong(gp.get("gp_id")))
                 .memberId(toLong(gp.get("member_id")))

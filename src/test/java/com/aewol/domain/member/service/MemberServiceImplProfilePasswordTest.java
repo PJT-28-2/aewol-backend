@@ -128,6 +128,27 @@ class MemberServiceImplProfilePasswordTest {
     }
 
     @Test
+    void invalidPhonesReturnBadRequestBeforeDuplicateCheckAndUpdate() {
+        when(memberMapper.findById("1")).thenReturn(member("LOCAL", "encoded"));
+
+        String[] invalidPhones = {
+                "01112345678",
+                "0101234567",
+                "010123456789",
+                "123",
+                "invalid-phone"
+        };
+
+        for (String phone : invalidPhones) {
+            assertBadRequest(() -> service.updateMember(
+                    "1", updateRequest(phone, null, null, null, null)));
+        }
+
+        verify(memberMapper, never()).existsActiveByPhoneExcludingMember(any(), any());
+        verify(memberMapper, never()).updateProfile(any());
+    }
+
+    @Test
     void activeDuplicatePhoneReturnsConflict() {
         when(memberMapper.findById("1")).thenReturn(member("LOCAL", "encoded"));
         when(memberMapper.existsActiveByPhoneExcludingMember("01099998888", "1")).thenReturn(true);
@@ -167,6 +188,19 @@ class MemberServiceImplProfilePasswordTest {
         assertEquals("", captor.getAllValues().get(1).get("addressDetail"));
         assertEquals("", captor.getAllValues().get(2).get("profileImg"));
         assertEquals("", captor.getAllValues().get(2).get("addressDetail"));
+    }
+
+    @Test
+    void patchWithoutPhonePreservesPhoneAndSkipsPhoneDuplicateCheck() {
+        when(memberMapper.findById("1")).thenReturn(member("LOCAL", "encoded"));
+
+        service.updateMember("1", updateRequest(null, "updated.jpg", null, null, null));
+
+        ArgumentCaptor<Map<String, Object>> captor = ArgumentCaptor.forClass(Map.class);
+        verify(memberMapper).updateProfile(captor.capture());
+        assertEquals("01012345678", captor.getValue().get("phone"));
+        assertEquals("updated.jpg", captor.getValue().get("profileImg"));
+        verify(memberMapper, never()).existsActiveByPhoneExcludingMember(any(), any());
     }
 
     @Test

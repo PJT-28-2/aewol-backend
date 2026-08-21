@@ -6,6 +6,7 @@ import com.aewol.domain.auth.dto.PasswordResetVerifyResponse;
 import com.aewol.domain.auth.dto.SignupEmailCodeResponse;
 import com.aewol.domain.auth.service.AuthService;
 import com.aewol.domain.auth.service.AccountFindService;
+import com.aewol.domain.auth.support.KakaoRegistrationCookie;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.nio.charset.StandardCharsets;
@@ -39,7 +40,7 @@ class AuthControllerPasswordResetTest {
         LocalValidatorFactoryBean validator = new LocalValidatorFactoryBean();
         validator.afterPropertiesSet();
         mockMvc = MockMvcBuilders.standaloneSetup(
-                        new AuthController(authService, mock(AccountFindService.class)))
+                        new AuthController(authService, mock(AccountFindService.class), new KakaoRegistrationCookie(false)))
                 .setControllerAdvice(new GlobalExceptionHandler())
                 .setValidator(validator)
                 .build();
@@ -79,6 +80,24 @@ class AuthControllerPasswordResetTest {
         assertEquals("비밀번호 재설정 요청이 너무 많아요. 30분 후 다시 시도해주세요",
                 json.get("message").asText());
         assertTrue(json.has("result"));
+        assertTrue(json.get("result").isNull());
+    }
+
+    @Test
+    void resetRequestMailFailureReturnsStandardServiceUnavailableResponse() throws Exception {
+        when(authService.sendPasswordResetVerificationCode(any()))
+                .thenThrow(new BusinessException(HttpStatus.SERVICE_UNAVAILABLE,
+                        "인증 이메일을 발송할 수 없습니다. 잠시 후 다시 시도해주세요."));
+
+        JsonNode json = json(mockMvc.perform(post("/api/auth/password/reset-request")
+                        .contentType("application/json")
+                        .content("{\"email\":\"user@example.com\"}"))
+                .andExpect(status().isServiceUnavailable())
+                .andReturn());
+
+        assertEquals(503, json.get("status").asInt());
+        assertEquals("인증 이메일을 발송할 수 없습니다. 잠시 후 다시 시도해주세요.",
+                json.get("message").asText());
         assertTrue(json.get("result").isNull());
     }
 

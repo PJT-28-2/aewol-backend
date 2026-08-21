@@ -4,6 +4,7 @@ import com.aewol.common.exception.BusinessException;
 import com.aewol.common.storage.FileStorage;
 import com.aewol.domain.insurance.dto.ClaimResponse;
 import com.aewol.domain.insurance.mapper.InsuranceMapper;
+import com.aewol.domain.pet.mapper.PetMapper;
 import com.aewol.external.paddleocr.PaddleOcrClient;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -29,6 +30,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -36,6 +38,7 @@ import static org.mockito.Mockito.when;
 class ClaimServiceImplTest {
 
     @Mock InsuranceMapper insuranceMapper;
+    @Mock PetMapper petMapper;
     @Mock PaddleOcrClient paddleOcrClient;
     @Mock FileStorage fileStorage;
 
@@ -63,7 +66,8 @@ class ClaimServiceImplTest {
     @Test
     @DisplayName("createClaim은 OCR 결과를 extractedData로 저장하고 hospitalName 등은 null로 초기화한다")
     void should_createDraftClaim_withNullFieldsAndExtractedData() {
-        service = new ClaimServiceImpl(insuranceMapper, paddleOcrClient, fileStorage);
+        service = new ClaimServiceImpl(insuranceMapper, petMapper, paddleOcrClient, fileStorage);
+        when(petMapper.findByIdAndMemberId("10", "100")).thenReturn(Map.of("pet_id", "10"));
         when(fileStorage.store(any(), eq("receipts"), eq("jpg"))).thenReturn("receipts/x.jpg");
 
         when(paddleOcrClient.extractReceiptData(any(), anyString()))
@@ -88,12 +92,28 @@ class ClaimServiceImplTest {
                 "DRAFT".equals(m.get("claimStatus")) && m.get("hospitalName") == null));
     }
 
+    @Test
+    @DisplayName("createClaim은 타인 반려동물이면 영수증을 저장하기 전에 거절한다")
+    void should_rejectCreateClaim_whenPetDoesNotBelongToMember() {
+        service = new ClaimServiceImpl(insuranceMapper, petMapper, paddleOcrClient, fileStorage);
+        when(petMapper.findByIdAndMemberId("10", "100")).thenReturn(null);
+
+        MockMultipartFile receipt = new MockMultipartFile("receipt", "receipt.jpg", "image/jpeg", "img".getBytes());
+
+        BusinessException ex = assertThrows(BusinessException.class,
+                () -> service.createClaim("100", "10", receipt));
+        assertEquals(HttpStatus.NOT_FOUND, ex.getStatus());
+        verify(fileStorage, never()).store(any(), anyString(), anyString());
+        verify(paddleOcrClient, never()).extractReceiptData(any(), anyString());
+        verify(insuranceMapper, never()).insertClaim(any());
+    }
+
     // ---------- confirmClaim ----------
 
     @Test
     @DisplayName("confirmClaim은 본인 소유 청구에 수정 데이터를 반영하고 상태를 SUBMITTED로 전이한다")
     void should_updateClaim_whenOwnerConfirmsWithCorrectedData() {
-        service = new ClaimServiceImpl(insuranceMapper, paddleOcrClient, fileStorage);
+        service = new ClaimServiceImpl(insuranceMapper, petMapper, paddleOcrClient, fileStorage);
         when(insuranceMapper.findClaimById("1"))
                 .thenReturn(claimRow(1L, 100L, 10L, null, null, null, "{}", "DRAFT"))
                 .thenReturn(claimRow(1L, 100L, 10L, "애월동물병원", "2026-01-01", new BigDecimal("15000"), "{}", "SUBMITTED"));
@@ -115,7 +135,7 @@ class ClaimServiceImplTest {
     @Test
     @DisplayName("confirmClaim은 body가 없으면(null) 기존 4개 필드를 그대로 유지한 채 상태만 전이한다")
     void should_preserveAllFourFields_whenConfirmedWithoutBody() {
-        service = new ClaimServiceImpl(insuranceMapper, paddleOcrClient, fileStorage);
+        service = new ClaimServiceImpl(insuranceMapper, petMapper, paddleOcrClient, fileStorage);
         Map<String, Object> existing = claimRow(1L, 100L, 10L, "기존병원", "2025-12-01",
                 new BigDecimal("9000"), "{\"hospital_name\":\"기존병원\"}", "DRAFT");
         when(insuranceMapper.findClaimById("1")).thenReturn(existing);
@@ -133,7 +153,7 @@ class ClaimServiceImplTest {
     @Test
     @DisplayName("confirmClaim은 타인의 청구를 조회하면 not-found 예외를 던진다")
     void should_throwNotFound_whenConfirmingOthersClaim() {
-        service = new ClaimServiceImpl(insuranceMapper, paddleOcrClient, fileStorage);
+        service = new ClaimServiceImpl(insuranceMapper, petMapper, paddleOcrClient, fileStorage);
         when(insuranceMapper.findClaimById("1")).thenReturn(claimRow(1L, 999L, 10L, null, null, null, "{}", "DRAFT"));
 
         BusinessException ex = assertThrows(BusinessException.class,
@@ -144,7 +164,7 @@ class ClaimServiceImplTest {
     @Test
     @DisplayName("confirmClaim은 존재하지 않는 claimId에 대해 not-found 예외를 던진다")
     void should_throwNotFound_whenConfirmingNonExistentClaim() {
-        service = new ClaimServiceImpl(insuranceMapper, paddleOcrClient, fileStorage);
+        service = new ClaimServiceImpl(insuranceMapper, petMapper, paddleOcrClient, fileStorage);
         when(insuranceMapper.findClaimById("999")).thenReturn(null);
 
         assertThrows(BusinessException.class, () -> service.confirmClaim("100", "999", null));
@@ -155,7 +175,7 @@ class ClaimServiceImplTest {
     @Test
     @DisplayName("getClaims는 회원의 청구 목록을 ClaimResponse 리스트로 변환한다")
     void should_returnClaimList_forMember() {
-        service = new ClaimServiceImpl(insuranceMapper, paddleOcrClient, fileStorage);
+        service = new ClaimServiceImpl(insuranceMapper, petMapper, paddleOcrClient, fileStorage);
         when(insuranceMapper.findClaimsByMemberId("100")).thenReturn(List.of(
                 claimRow(1L, 100L, 10L, "병원A", "2026-01-01", new BigDecimal("1000"), "{}", "SUBMITTED"),
                 claimRow(2L, 100L, 10L, null, null, null, "{}", "DRAFT")));
@@ -172,7 +192,7 @@ class ClaimServiceImplTest {
     @Test
     @DisplayName("getClaim은 본인 소유 청구를 정상 조회한다")
     void should_returnClaim_whenOwnerRequestsOwnClaim() {
-        service = new ClaimServiceImpl(insuranceMapper, paddleOcrClient, fileStorage);
+        service = new ClaimServiceImpl(insuranceMapper, petMapper, paddleOcrClient, fileStorage);
         when(insuranceMapper.findClaimById("1")).thenReturn(
                 claimRow(1L, 100L, 10L, "병원A", "2026-01-01", new BigDecimal("1000"), "{}", "SUBMITTED"));
         when(fileStorage.signedUrl("/uploads/receipts/x.jpg")).thenReturn("signed:receipts/x.jpg");
@@ -187,7 +207,7 @@ class ClaimServiceImplTest {
     @Test
     @DisplayName("getClaim은 타인의 청구를 조회하면 not-found 예외를 던진다")
     void should_throwNotFound_whenRequestingOthersClaim() {
-        service = new ClaimServiceImpl(insuranceMapper, paddleOcrClient, fileStorage);
+        service = new ClaimServiceImpl(insuranceMapper, petMapper, paddleOcrClient, fileStorage);
         when(insuranceMapper.findClaimById("1")).thenReturn(claimRow(1L, 999L, 10L, null, null, null, "{}", "DRAFT"));
 
         BusinessException ex = assertThrows(BusinessException.class, () -> service.getClaim("100", "1"));
@@ -197,7 +217,7 @@ class ClaimServiceImplTest {
     @Test
     @DisplayName("getClaim은 존재하지 않는 claimId에 대해 NPE 대신 not-found 예외를 던진다")
     void should_throwNotFound_whenClaimDoesNotExist() {
-        service = new ClaimServiceImpl(insuranceMapper, paddleOcrClient, fileStorage);
+        service = new ClaimServiceImpl(insuranceMapper, petMapper, paddleOcrClient, fileStorage);
         when(insuranceMapper.findClaimById("999")).thenReturn(null);
 
         assertThrows(BusinessException.class, () -> service.getClaim("100", "999"));

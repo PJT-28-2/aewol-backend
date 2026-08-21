@@ -1,5 +1,7 @@
 package com.aewol.domain.insight.dto;
 
+import com.aewol.domain.grouppurchase.dto.GroupPurchaseListItemResponse;
+import java.util.List;
 import lombok.Builder;
 import lombok.Getter;
 
@@ -25,4 +27,11 @@ public class HomeInsightResponse {
     /** 문구가 LLM 없이 만들어졌는지. 프론트가 표시를 달리하고 싶을 때 쓴다. */
     private final boolean fallback;
     private final String generatedAt;
+    /**
+     * 이 카드와 관련해 추천하는 공동구매 상품(최대 3건). 현재는 SPENDING 카드에서
+     * 이번 달 가장 많이 쓴 카테고리 기준으로만 채운다. 맞는 카테고리가 없으면 비어 있다.
+     */
+    private final List<GroupPurchaseListItemResponse> recommendedProducts;
+    /** 카테고리별 비중(도넛 차트용). SPENDING 카드에서만 채운다. */
+    private final List<CategoryShare> categoryBreakdown;
 }

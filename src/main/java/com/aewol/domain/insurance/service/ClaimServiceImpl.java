@@ -4,6 +4,7 @@ import com.aewol.common.exception.BusinessException;
 import com.aewol.common.storage.FileStorage;
 import com.aewol.domain.insurance.dto.ClaimResponse;
 import com.aewol.domain.insurance.mapper.InsuranceMapper;
+import com.aewol.domain.pet.mapper.PetMapper;
 import com.aewol.external.paddleocr.PaddleOcrClient;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -26,11 +27,15 @@ import java.util.stream.Collectors;
 public class ClaimServiceImpl implements ClaimService {
 
     private final InsuranceMapper insuranceMapper;
+    private final PetMapper petMapper;
     private final PaddleOcrClient paddleOcrClient;
     private final FileStorage fileStorage;
 
     @Override
     public ClaimResponse createClaim(String memberId, String petId, MultipartFile receipt) {
+        if (petMapper.findByIdAndMemberId(petId, memberId) == null) {
+            throw BusinessException.notFound("반려동물을 찾을 수 없습니다.");
+        }
         try {
             // 저장 위치는 FileStorage가 정한다. 예전에는 여기서 디스크에 직접 쓰고
             // "/uploads/receipts/..." 형태의 URL을 DB에 넣었는데, 조회는 이미

@@ -114,6 +114,34 @@ class PetDocumentQueryDeleteServiceTest {
     }
 
     @Test
+    void should_cancelRegistration_when_deletingRegistrationDocument() throws IOException {
+        givenOwner();
+        Map<String, Object> registrationDocument = document("doc-2", null, null);
+        registrationDocument.put("doc_type", "REGISTRATION");
+        when(petDocumentMapper.findByIdAndPetIdForUpdate("doc-2", "pet-1")).thenReturn(registrationDocument);
+        when(petDocumentMapper.deleteByIdAndPetId("doc-2", "pet-1")).thenReturn(1);
+
+        service.deletePetDocument("member-1", "pet-1", "doc-2");
+
+        // pet_registration이 fk_petreg_doc로 pet_document를 참조하므로, 자식 행을 먼저
+        // 지우지 않으면 pet_document 삭제가 FK 위반으로 실패한다(회귀 방지).
+        verify(petRegistrationService).cancel("member-1", "pet-1", "doc-2");
+        verify(petDocumentMapper).deleteByIdAndPetId("doc-2", "pet-1");
+    }
+
+    @Test
+    void should_notCancelRegistration_when_deletingNonRegistrationDocument() throws IOException {
+        givenOwner();
+        when(petDocumentMapper.findByIdAndPetIdForUpdate("doc-1", "pet-1"))
+                .thenReturn(document("doc-1", "pet-documents/file.pdf", null));
+        when(petDocumentMapper.deleteByIdAndPetId("doc-1", "pet-1")).thenReturn(1);
+
+        service.deletePetDocument("member-1", "pet-1", "doc-1");
+
+        verifyNoInteractions(petRegistrationService);
+    }
+
+    @Test
     void should_throwNotFound_when_documentDoesNotBelongToPet() {
         givenOwner();
         when(petDocumentMapper.findByIdAndPetIdForUpdate("doc-2", "pet-1")).thenReturn(null);

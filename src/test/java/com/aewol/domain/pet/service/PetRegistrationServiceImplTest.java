@@ -71,6 +71,93 @@ class PetRegistrationServiceImplTest {
     }
 
     @Test
+    void should_normalizeNeuteredToY_when_apmsReturnsKoreanNeuteredValue() {
+        when(petMapper.findById("pet-1")).thenReturn(pet("member-1"));
+        Map<String, Object> neuteredRegistration = registration();
+        neuteredRegistration.put("neuterYn", "중성");
+        when(apmsClient.verifyRegistration("410000012345678", "홍길동", null)).thenReturn(neuteredRegistration);
+        when(petDocumentMapper.findByPetIdAndTypeForUpdate("pet-1", "REGISTRATION")).thenReturn(null);
+        doAnswer(invocation -> {
+            invocation.<Map<String, Object>>getArgument(0).put("docId", 31L);
+            return null;
+        }).when(petDocumentMapper).insert(any());
+        when(petMapper.updateRegistrationNumber("pet-1", "member-1", "410000012345678")).thenReturn(1);
+        when(petRegistrationMapper.findByPetIdAndDocId("pet-1", "31")).thenReturn(map(
+                "doc_id", 31L, "pet_id", "pet-1", "reg_number", "410000012345678", "name", "몽이",
+                "last_synced_at", LocalDateTime.of(2026, 8, 14, 11, 0, 0)));
+
+        service.verify("member-1", "pet-1", request("410000012345678", "홍길동", null));
+
+        verify(petRegistrationMapper).insert(argThat(row -> "Y".equals(row.get("neutered"))));
+    }
+
+    @Test
+    void should_normalizeNeuteredToN_when_apmsReturnsKoreanNotNeuteredValue() {
+        when(petMapper.findById("pet-1")).thenReturn(pet("member-1"));
+        Map<String, Object> notNeuteredRegistration = registration();
+        notNeuteredRegistration.put("neuterYn", "미중성");
+        when(apmsClient.verifyRegistration("410000012345678", "홍길동", null)).thenReturn(notNeuteredRegistration);
+        when(petDocumentMapper.findByPetIdAndTypeForUpdate("pet-1", "REGISTRATION")).thenReturn(null);
+        doAnswer(invocation -> {
+            invocation.<Map<String, Object>>getArgument(0).put("docId", 31L);
+            return null;
+        }).when(petDocumentMapper).insert(any());
+        when(petMapper.updateRegistrationNumber("pet-1", "member-1", "410000012345678")).thenReturn(1);
+        when(petRegistrationMapper.findByPetIdAndDocId("pet-1", "31")).thenReturn(map(
+                "doc_id", 31L, "pet_id", "pet-1", "reg_number", "410000012345678", "name", "몽이",
+                "last_synced_at", LocalDateTime.of(2026, 8, 14, 11, 0, 0)));
+
+        service.verify("member-1", "pet-1", request("410000012345678", "홍길동", null));
+
+        verify(petRegistrationMapper).insert(argThat(row -> "N".equals(row.get("neutered"))));
+    }
+
+    @Test
+    void should_dropNeutered_when_apmsReturnsUnrecognizedSingleChar() {
+        when(petMapper.findById("pet-1")).thenReturn(pet("member-1"));
+        Map<String, Object> unknownCodeRegistration = registration();
+        unknownCodeRegistration.put("neuterYn", "Z");
+        when(apmsClient.verifyRegistration("410000012345678", "홍길동", null)).thenReturn(unknownCodeRegistration);
+        when(petDocumentMapper.findByPetIdAndTypeForUpdate("pet-1", "REGISTRATION")).thenReturn(null);
+        doAnswer(invocation -> {
+            invocation.<Map<String, Object>>getArgument(0).put("docId", 31L);
+            return null;
+        }).when(petDocumentMapper).insert(any());
+        when(petMapper.updateRegistrationNumber("pet-1", "member-1", "410000012345678")).thenReturn(1);
+        when(petRegistrationMapper.findByPetIdAndDocId("pet-1", "31")).thenReturn(map(
+                "doc_id", 31L, "pet_id", "pet-1", "reg_number", "410000012345678", "name", "몽이",
+                "last_synced_at", LocalDateTime.of(2026, 8, 14, 11, 0, 0)));
+
+        service.verify("member-1", "pet-1", request("410000012345678", "홍길동", null));
+
+        // 1글자라 truncation은 안 나더라도, 프론트가 "Y" 아닌 값을 전부 "중성화 안함"으로
+        // 표시하므로 인식 못한 값은 길이와 무관하게 저장하지 않고 null로 둔다.
+        verify(petRegistrationMapper).insert(argThat(row -> row.get("neutered") == null));
+    }
+
+    @Test
+    void should_dropNeutered_when_apmsReturnsUnrecognizedMultiCharValue() {
+        when(petMapper.findById("pet-1")).thenReturn(pet("member-1"));
+        Map<String, Object> unknownValueRegistration = registration();
+        unknownValueRegistration.put("neuterYn", "미상");
+        when(apmsClient.verifyRegistration("410000012345678", "홍길동", null)).thenReturn(unknownValueRegistration);
+        when(petDocumentMapper.findByPetIdAndTypeForUpdate("pet-1", "REGISTRATION")).thenReturn(null);
+        doAnswer(invocation -> {
+            invocation.<Map<String, Object>>getArgument(0).put("docId", 31L);
+            return null;
+        }).when(petDocumentMapper).insert(any());
+        when(petMapper.updateRegistrationNumber("pet-1", "member-1", "410000012345678")).thenReturn(1);
+        when(petRegistrationMapper.findByPetIdAndDocId("pet-1", "31")).thenReturn(map(
+                "doc_id", 31L, "pet_id", "pet-1", "reg_number", "410000012345678", "name", "몽이",
+                "last_synced_at", LocalDateTime.of(2026, 8, 14, 11, 0, 0)));
+
+        service.verify("member-1", "pet-1", request("410000012345678", "홍길동", null));
+
+        // 2글자 이상인데 "중성"을 포함하지 않는 값은 CHAR(1) truncation을 막기 위해 저장하지 않고 null로 둔다.
+        verify(petRegistrationMapper).insert(argThat(row -> row.get("neutered") == null));
+    }
+
+    @Test
     void should_updateRegistration_when_petWasAlreadyVerified() {
         PetRegistrationVerifyRequest request = request("410000012345678", "홍길동", null);
         when(petMapper.findById("pet-1")).thenReturn(pet("member-1"));
@@ -90,6 +177,68 @@ class PetRegistrationServiceImplTest {
         verify(petRegistrationMapper).update(argThat(row -> Long.valueOf(31L).equals(row.get("docId"))));
         verify(petRegistrationMapper, never()).insert(any());
         assertEquals("2026-08-14T11:00:00", response.getLastSyncedAt());
+    }
+
+    @Test
+    void should_notLookUpStoredOwnerInfo_when_requestProvidesOwnerInformation() {
+        PetRegistrationVerifyRequest request = request("410000012345678", "홍길동", null);
+        when(petMapper.findById("pet-1")).thenReturn(pet("member-1"));
+        when(apmsClient.verifyRegistration("410000012345678", "홍길동", null)).thenReturn(registration());
+        when(petDocumentMapper.findByPetIdAndTypeForUpdate("pet-1", "REGISTRATION"))
+                .thenReturn(map("doc_id", 31L));
+        when(petRegistrationMapper.findByRegNumber("410000012345678"))
+                .thenReturn(map("pet_id", "pet-1"));
+        when(petRegistrationMapper.update(any())).thenReturn(1);
+        when(petMapper.updateRegistrationNumber("pet-1", "member-1", "410000012345678")).thenReturn(1);
+        when(petRegistrationMapper.findByPetIdAndDocId("pet-1", "31")).thenReturn(map(
+                "doc_id", 31L, "pet_id", "pet-1", "reg_number", "410000012345678", "name", "몽이",
+                "last_synced_at", LocalDateTime.of(2026, 8, 14, 11, 0, 0)));
+
+        service.verify("member-1", "pet-1", request);
+
+        // 요청에 소유자 정보가 있으면 재연동 fallback 조회가 돌지 않아야 한다 — 각 메서드는
+        // 원래 흐름(insert/update 판단 1회, 최종 응답 재조회 1회)에서만 호출되는 게 맞다.
+        // 조건문이 나중에 리팩터링되어 fallback이 잘못 같이 돌면 호출 횟수가 2번으로 늘어난다.
+        verify(petDocumentMapper, times(1)).findByPetIdAndTypeForUpdate("pet-1", "REGISTRATION");
+        verify(petRegistrationMapper, times(1)).findByPetIdAndDocId("pet-1", "31");
+    }
+
+    @Test
+    void should_reuseStoredOwnerInfo_when_reVerifyingWithoutInput() {
+        // 재연동: 이름/생년월일을 입력하지 않아도 이전 검증 때 저장된 소유자 정보로 APMS를 호출해야 한다.
+        when(petMapper.findById("pet-1")).thenReturn(pet("member-1"));
+        when(petDocumentMapper.findByPetIdAndTypeForUpdate("pet-1", "REGISTRATION"))
+                .thenReturn(map("doc_id", 31L));
+        when(petRegistrationMapper.findByPetIdAndDocId("pet-1", "31")).thenReturn(map(
+                "doc_id", 31L, "pet_id", "pet-1", "reg_number", "410000012345678", "name", "몽이",
+                "owner_name", "홍길동", "owner_birth", "19900101",
+                "last_synced_at", LocalDateTime.of(2026, 8, 14, 11, 0, 0)));
+        when(apmsClient.verifyRegistration("410000012345678", "홍길동", "19900101")).thenReturn(registration());
+        when(petRegistrationMapper.findByRegNumber("410000012345678")).thenReturn(map("pet_id", "pet-1"));
+        when(petRegistrationMapper.update(any())).thenReturn(1);
+        when(petMapper.updateRegistrationNumber("pet-1", "member-1", "410000012345678")).thenReturn(1);
+
+        PetRegistrationResponse response = service.verify(
+                "member-1", "pet-1", request("410000012345678", null, null));
+
+        assertTrue(response.isVerified());
+        verify(apmsClient).verifyRegistration("410000012345678", "홍길동", "19900101");
+        verify(petRegistrationMapper).update(argThat(row ->
+                "홍길동".equals(row.get("ownerName")) && "19900101".equals(row.get("ownerBirth"))));
+    }
+
+    @Test
+    void should_throwBadRequest_when_reVerifyingWithoutInputAndNoStoredOwnerInfo() {
+        when(petMapper.findById("pet-1")).thenReturn(pet("member-1"));
+        when(petDocumentMapper.findByPetIdAndTypeForUpdate("pet-1", "REGISTRATION"))
+                .thenReturn(map("doc_id", 31L));
+        when(petRegistrationMapper.findByPetIdAndDocId("pet-1", "31")).thenReturn(map("doc_id", 31L));
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.verify("member-1", "pet-1", request("410000012345678", null, null)));
+
+        assertEquals(HttpStatus.BAD_REQUEST, exception.getStatus());
+        verifyNoInteractions(apmsClient);
     }
 
     @Test
@@ -207,6 +356,51 @@ class PetRegistrationServiceImplTest {
 
         BusinessException exception = assertThrows(BusinessException.class,
                 () -> service.getDetail("member-1", "pet-404", "doc-1"));
+
+        assertEquals(HttpStatus.NOT_FOUND, exception.getStatus());
+        verifyNoInteractions(petRegistrationMapper);
+    }
+
+    @Test
+    void should_deleteRegistrationAndClearRegNumber_when_ownerCancels() {
+        when(petMapper.findById("pet-1")).thenReturn(pet("member-1"));
+        when(petRegistrationMapper.deleteByPetIdAndDocId("pet-1", "doc-1")).thenReturn(1);
+
+        service.cancel("member-1", "pet-1", "doc-1");
+
+        verify(petRegistrationMapper).deleteByPetIdAndDocId("pet-1", "doc-1");
+        verify(petMapper).updateRegistrationNumber("pet-1", "member-1", null);
+    }
+
+    @Test
+    void should_throwNotFound_when_registrationAlreadyGone_onCancel() {
+        when(petMapper.findById("pet-1")).thenReturn(pet("member-1"));
+        when(petRegistrationMapper.deleteByPetIdAndDocId("pet-1", "doc-1")).thenReturn(0);
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.cancel("member-1", "pet-1", "doc-1"));
+
+        assertEquals(HttpStatus.NOT_FOUND, exception.getStatus());
+        verify(petMapper, never()).updateRegistrationNumber(anyString(), anyString(), any());
+    }
+
+    @Test
+    void should_throwForbidden_when_nonOwnerCancels() {
+        when(petMapper.findById("pet-1")).thenReturn(pet("owner-1"));
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.cancel("member-2", "pet-1", "doc-1"));
+
+        assertEquals(HttpStatus.FORBIDDEN, exception.getStatus());
+        verifyNoInteractions(petRegistrationMapper);
+    }
+
+    @Test
+    void should_throwNotFound_when_petDoesNotExist_onCancel() {
+        when(petMapper.findById("pet-404")).thenReturn(null);
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.cancel("member-1", "pet-404", "doc-1"));
 
         assertEquals(HttpStatus.NOT_FOUND, exception.getStatus());
         verifyNoInteractions(petRegistrationMapper);

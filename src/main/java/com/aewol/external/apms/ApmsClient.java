@@ -100,9 +100,14 @@ public class ApmsClient {
             query.append("&owner_nm=").append(encode(ownerName));
         }
         if (ownerBirth != null && !ownerBirth.isBlank()) {
-            query.append("&owner_birth=").append(encode(ownerBirth));
+            query.append("&owner_birth=").append(encode(toApmsBirth(ownerBirth)));
         }
         return URI.create(baseUrl + "?" + query);
+    }
+
+    /** APMS는 생년월일을 주민번호 앞 6자리(YYMMDD)로 받는다. 앱 내부는 yyyyMMdd(8자리)로 다루므로 전송 직전 변환한다. */
+    private String toApmsBirth(String ownerBirth) {
+        return ownerBirth.length() == 8 ? ownerBirth.substring(2) : ownerBirth;
     }
 
     void validateHeader(Map<String, Object> header) {

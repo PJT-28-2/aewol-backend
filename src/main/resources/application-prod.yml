@@ -55,6 +55,15 @@ insight:
   ttl-hours: ${INSIGHT_TTL_HOURS:24}
   enabled: ${INSIGHT_ENABLED:true}
 
+swagger:
+  enabled: false
+
+donation:
+  show-demo-campaigns: false
+
+cookie:
+  secure: true
+
 # External APIs
 external:
   solapi:

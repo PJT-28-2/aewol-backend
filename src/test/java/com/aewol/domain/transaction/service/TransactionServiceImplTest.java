@@ -357,6 +357,26 @@ class TransactionServiceImplTest {
         verify(transactionMapper, never()).insertTossPayment(any());
     }
 
+    @Test
+    @DisplayName("결제 기록은 본인 반려동물만 petId로 남긴다")
+    void should_rejectPayment_whenPetDoesNotBelongToMember() {
+        TransactionServiceImpl service = service();
+        PaymentRequest request = new PaymentRequest();
+        ReflectionTestUtils.setField(request, "merchantName", "애월동물병원");
+        ReflectionTestUtils.setField(request, "amount", new BigDecimal("72000"));
+        ReflectionTestUtils.setField(request, "petId", "pet-2");
+        when(walletMapper.findByMemberId("member-1")).thenReturn(map(
+                "wallet_id", "wallet-1", "balance", new BigDecimal("100000")));
+        when(petMapper.findByIdAndMemberId("pet-2", "member-1")).thenReturn(null);
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.processPayment("member-1", request));
+
+        assertEquals(HttpStatus.NOT_FOUND, exception.getStatus());
+        verify(walletMapper, never()).deductBalance(any(), any());
+        verify(transactionMapper, never()).insert(any());
+    }
+
     private TransactionServiceImpl service() {
         return new TransactionServiceImpl(transactionMapper, walletMapper, autoTaggingService, petMapper);
     }

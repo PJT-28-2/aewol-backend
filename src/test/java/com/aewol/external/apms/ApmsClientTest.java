@@ -107,6 +107,17 @@ class ApmsClientTest {
     }
 
     @Test
+    void should_convertOwnerBirthToSixDigits_when_buildingRequestUri() {
+        ApmsClient client = client(null, "key");
+
+        URI uri = client.buildRequestUri("123456789012", "홍길동", "19900101");
+
+        String query = uri.getRawQuery();
+        assertTrue(query.contains("owner_birth=900101"));
+        assertTrue(!query.contains("owner_birth=19900101"));
+    }
+
+    @Test
     void should_acceptResponse_when_resultCodeIsSuccess() {
         ApmsClient client = client(null, "key");
 

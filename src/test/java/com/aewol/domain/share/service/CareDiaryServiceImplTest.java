@@ -308,6 +308,57 @@ class CareDiaryServiceImplTest {
                 .thenReturn(diaryRow(diaryId, petId, authorId, diaryDate, content));
     }
 
+    @Test
+    @DisplayName("보낸 버전이 최신이 아니면 일기를 수정하지 않고 409로 알린다")
+    void should_rejectUpdate_when_versionIsStale() {
+        CareDiaryServiceImpl service = service();
+        givenPetOwnedBy("pet-1", "owner-1");
+        when(careDiaryMapper.findById("diary-1"))
+                .thenReturn(diaryRow("diary-1", "pet-1", "owner-1", "2026-08-10", "산책"));
+        // 그 사이 다른 곳에서 저장돼 version이 올라간 상태를 흉내 낸다.
+        when(careDiaryMapper.update("diary-1", "2026-08-10", "덮어쓰기", 3L)).thenReturn(0);
+
+        CareDiaryUpdateRequest request = new CareDiaryUpdateRequest();
+        ReflectionTestUtils.setField(request, "content", "덮어쓰기");
+        ReflectionTestUtils.setField(request, "version", 3L);
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.update("owner-1", "diary-1", request));
+        assertEquals(409, exception.getStatus().value());
+    }
+
+    @Test
+    @DisplayName("버전을 보내지 않으면 예전처럼 검사 없이 수정한다")
+    void should_updateWithoutVersionCheck_when_versionIsAbsent() {
+        CareDiaryServiceImpl service = service();
+        givenPetOwnedBy("pet-1", "owner-1");
+        when(careDiaryMapper.findById("diary-1"))
+                .thenReturn(diaryRow("diary-1", "pet-1", "owner-1", "2026-08-10", "산책"));
+        when(careDiaryMapper.update("diary-1", "2026-08-10", "수정", null)).thenReturn(1);
+        when(careDiaryMapper.findImagesByDiaryIds(List.of("diary-1"))).thenReturn(List.of());
+
+        CareDiaryUpdateRequest request = new CareDiaryUpdateRequest();
+        ReflectionTestUtils.setField(request, "content", "수정");
+
+        service.update("owner-1", "diary-1", request);
+
+        verify(careDiaryMapper).update("diary-1", "2026-08-10", "수정", null);
+    }
+
+    @Test
+    @DisplayName("조회 응답에 다음 수정에 쓸 버전을 함께 내려준다")
+    void should_exposeVersion_inDetailResponse() {
+        CareDiaryServiceImpl service = service();
+        givenPetOwnedBy("pet-1", "owner-1");
+        when(careDiaryMapper.findById("diary-1"))
+                .thenReturn(diaryRow("diary-1", "pet-1", "owner-1", "2026-08-10", "산책"));
+        when(careDiaryMapper.findImagesByDiaryIds(List.of("diary-1"))).thenReturn(List.of());
+
+        CareDiaryResponse response = service.getDetail("owner-1", "diary-1");
+
+        assertEquals(3L, response.getVersion());
+    }
+
     private static Map<String, Object> diaryRow(String diaryId, String petId, String authorId,
                                                 String diaryDate, String content) {
         return map("diaryId", diaryId,
@@ -316,6 +367,7 @@ class CareDiaryServiceImplTest {
                 "authorName", "테스터",
                 "diaryDate", java.sql.Date.valueOf(diaryDate),
                 "content", content,
+                "version", 3L,
                 "createdAt", java.sql.Timestamp.valueOf(diaryDate + " 09:00:00"));
     }
 

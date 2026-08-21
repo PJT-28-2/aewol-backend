@@ -14,6 +14,7 @@ public class GroupPurchaseListItemResponse {
     private Long memberId;
     private String productName;
     private String category;
+    private String image;
     private String status;
     private BigDecimal unitPrice;
     private BigDecimal groupPrice;
@@ -22,6 +23,7 @@ public class GroupPurchaseListItemResponse {
     @Getter(AccessLevel.NONE)
     private String dDay;
     private String badgeText;
+    @JsonProperty("isParticipating")
     private Boolean isParticipating;
     private LocalDateTime createdAt;
 

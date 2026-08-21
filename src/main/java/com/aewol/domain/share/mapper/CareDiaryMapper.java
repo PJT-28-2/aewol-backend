@@ -23,7 +23,8 @@ public interface CareDiaryMapper {
 
     int update(@Param("diaryId") String diaryId,
                @Param("diaryDate") String diaryDate,
-               @Param("content") String content);
+               @Param("content") String content,
+               @Param("version") Long version);
 
     int softDelete(@Param("diaryId") String diaryId);
 }

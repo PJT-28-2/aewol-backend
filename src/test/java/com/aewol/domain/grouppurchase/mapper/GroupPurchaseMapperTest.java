@@ -52,6 +52,12 @@ class GroupPurchaseMapperTest {
                     gp_id BIGINT NOT NULL AUTO_INCREMENT,
                     member_id BIGINT NOT NULL,
                     product_name VARCHAR(200) NOT NULL,
+                    -- 필터·정렬 검증에 쓰지는 않지만 findList가 컬럼을 명시해 조회하므로
+                    -- 픽스처에도 있어야 한다.
+                    category VARCHAR(20) NULL,
+                    image VARCHAR(500) NULL,
+                    unit_price DECIMAL(12,2) NULL,
+                    group_price DECIMAL(12,2) NULL,
                     status VARCHAR(20) NOT NULL DEFAULT 'OPEN',
                     current_quantity INT NOT NULL DEFAULT 0,
                     target_quantity INT NOT NULL DEFAULT 1,
@@ -122,6 +128,18 @@ class GroupPurchaseMapperTest {
     }
 
     @Test
+    @DisplayName("findList는 image 컬럼을 목록 카드 썸네일용으로 함께 반환한다")
+    void should_includeImageColumn_inFindListResult() {
+        long gpId = insertGroupPurchase(99L, "OPEN", 3, 10, LocalDateTime.now().plusDays(5));
+        jdbcTemplate.update("UPDATE group_purchase SET image = ? WHERE gp_id = ?",
+                "group-purchase/sample.png", gpId);
+
+        List<Map<String, Object>> result = findList(null, null, null, 10, 0);
+
+        assertEquals("group-purchase/sample.png", result.get(0).get("image"));
+    }
+
+    @Test
     @DisplayName("target_quantity가 0 이하인 비정상 데이터는 status 필터 없이도 findList 결과에서 제외된다")
     void should_excludeNonPositiveTargetQuantity_fromFindList_regardlessOfStatusFilter() {
         long corruptedGpId = insertGroupPurchase(99L, "OPEN", 0, 0, LocalDateTime.now().plusDays(5));
@@ -162,18 +180,94 @@ class GroupPurchaseMapperTest {
     }
 
     @Test
-    @DisplayName("필터 없이 조회하면 진행중(마감 전+목표 미달) 게시글이 그룹 전체가 먼저, 마감된(목표 달성/미달) 게시글이 뒤에 오고 각 그룹 안에서는 최신 등록순이다")
-    void should_orderOpenGroupBeforeClosedGroup_andLatestFirstWithinEachGroup() {
+    @DisplayName("필터 없이 조회하면 진행중(마감 전+목표 미달) 게시글 그룹 전체가 마감된(목표 달성/미달) 게시글 그룹보다 먼저 온다")
+    void should_orderOpenGroupBeforeClosedGroup() {
         LocalDateTime now = LocalDateTime.now();
-        long oldOpen = insertGroupPurchase(99L, "OPEN", 3, 10, now.plusDays(5), now.minusDays(3));
-        long newOpen = insertGroupPurchase(99L, "OPEN", 3, 10, now.plusDays(5), now.minusHours(1));
-        long oldClosed = insertGroupPurchase(99L, "OPEN", 10, 10, now.plusDays(5), now.minusDays(2));
-        long newClosed = insertGroupPurchase(99L, "OPEN", 3, 10, now.minusDays(1), now.minusHours(2));
+        long open = insertGroupPurchase(99L, "OPEN", 3, 10, now.plusDays(5), now.minusDays(3));
+        long closed = insertGroupPurchase(99L, "OPEN", 10, 10, now.plusDays(1), now.minusHours(1));
 
         List<Map<String, Object>> result = findList(null, null, null, 10, 0);
 
         assertEquals(
-                List.of(newOpen, oldOpen, newClosed, oldClosed),
+                List.of(open, closed),
+                result.stream().map(row -> ((Number) row.get("gp_id")).longValue()).toList());
+    }
+
+    @Test
+    @DisplayName("각 그룹 안에서는 마감이 임박한(deadline 오름차순) 게시글이 먼저 온다 — 등록일이 더 최근이어도 마감이 늦으면 뒤로 밀린다")
+    void should_orderByDeadlineAscending_withinEachGroup() {
+        LocalDateTime now = LocalDateTime.now();
+        // soonDeadline은 더 일찍(오래전) 등록됐지만 마감이 임박해서 앞에 와야 한다.
+        long soonDeadline = insertGroupPurchase(99L, "OPEN", 3, 10, now.plusDays(1), now.minusDays(5));
+        long laterDeadline = insertGroupPurchase(99L, "OPEN", 3, 10, now.plusDays(5), now.minusHours(1));
+
+        List<Map<String, Object>> result = findList(null, null, null, 10, 0);
+
+        assertEquals(
+                List.of(soonDeadline, laterDeadline),
+                result.stream().map(row -> ((Number) row.get("gp_id")).longValue()).toList());
+    }
+
+    @Test
+    @DisplayName("마감이 같으면 최근에 등록된 게시글이 먼저 온다")
+    void should_orderByCreatedAtDescending_whenDeadlineIsTied() {
+        LocalDateTime now = LocalDateTime.now();
+        LocalDateTime sameDeadline = now.plusDays(5);
+        long older = insertGroupPurchase(99L, "OPEN", 3, 10, sameDeadline, now.minusDays(3));
+        long newer = insertGroupPurchase(99L, "OPEN", 3, 10, sameDeadline, now.minusHours(1));
+
+        List<Map<String, Object>> result = findList(null, null, null, 10, 0);
+
+        assertEquals(
+                List.of(newer, older),
+                result.stream().map(row -> ((Number) row.get("gp_id")).longValue()).toList());
+    }
+
+    @Test
+    @DisplayName("마감일과 등록일이 같으면 gp_id 내림차순으로 고정 정렬한다")
+    void should_orderByIdDescending_whenDeadlineAndCreatedAtAreTied() {
+        LocalDateTime now = LocalDateTime.now().withNano(0);
+        LocalDateTime sameDeadline = now.plusDays(5);
+        long first = insertGroupPurchase(99L, "OPEN", 3, 10, sameDeadline, now);
+        long second = insertGroupPurchase(99L, "OPEN", 3, 10, sameDeadline, now);
+
+        List<Map<String, Object>> result = findList("OPEN", null, null, 10, 0);
+
+        assertEquals(
+                List.of(second, first),
+                result.stream().map(row -> ((Number) row.get("gp_id")).longValue()).toList());
+    }
+
+    @Test
+    @DisplayName("findMyGroupPurchases도 마감 임박순, 마감이 같으면 최신 등록순으로 정렬한다")
+    void should_orderMyGroupPurchasesByDeadlineThenCreatedAt() {
+        LocalDateTime now = LocalDateTime.now();
+        long soonDeadline = insertGroupPurchase(99L, "OPEN", 3, 10, now.plusDays(1), now.minusDays(5));
+        long laterDeadlineButNewer = insertGroupPurchase(99L, "OPEN", 3, 10, now.plusDays(5), now.minusHours(1));
+        insertParticipant(soonDeadline, 1L);
+        insertParticipant(laterDeadlineButNewer, 1L);
+
+        List<Map<String, Object>> result = findMyGroupPurchases("1", null);
+
+        assertEquals(
+                List.of(soonDeadline, laterDeadlineButNewer),
+                result.stream().map(row -> ((Number) row.get("gp_id")).longValue()).toList());
+    }
+
+    @Test
+    @DisplayName("sort=DEADLINE_ASC이면 등록일과 무관하게 마감이 가장 빠른 것부터 정렬한다")
+    void should_orderByDeadlineAscending_when_sortIsDeadlineAsc() {
+        LocalDateTime now = LocalDateTime.now();
+        // created_at을 일부러 반대로 둬서, 최신 등록순이 아니라 진짜 deadline 기준으로
+        // 정렬됐는지 구분되게 한다.
+        long later = insertGroupPurchase(99L, "OPEN", 0, 10, now.plusDays(10), now.minusHours(1));
+        long soonest = insertGroupPurchase(99L, "OPEN", 0, 10, now.plusHours(2), now.minusDays(3));
+        long soon = insertGroupPurchase(99L, "OPEN", 0, 10, now.plusDays(1), now.minusDays(2));
+
+        List<Map<String, Object>> result = findList("OPEN", null, null, 10, 0, "DEADLINE_ASC");
+
+        assertEquals(
+                List.of(soonest, soon, later),
                 result.stream().map(row -> ((Number) row.get("gp_id")).longValue()).toList());
     }
 
@@ -239,6 +333,21 @@ class GroupPurchaseMapperTest {
         insertParticipant(gpId, 1L, "PAID");
 
         assertEquals("PAID", findParticipant(gpId, 1L).get("payment_status").toString());
+    }
+
+    @Test
+    @DisplayName("findParticipatingGpIds는 현재 페이지 중 CANCELLED가 아닌 참여 gp_id만 반환한다")
+    void should_returnOnlyActiveParticipatingGpIds() {
+        long joined = insertGroupPurchase(99L, "OPEN", 1, 10, LocalDateTime.now().plusDays(5));
+        long cancelled = insertGroupPurchase(99L, "OPEN", 1, 10, LocalDateTime.now().plusDays(5));
+        long other = insertGroupPurchase(99L, "OPEN", 1, 10, LocalDateTime.now().plusDays(5));
+        insertParticipant(joined, 1L, "PAID");
+        insertParticipant(cancelled, 1L, "CANCELLED");
+
+        List<Long> result = findParticipatingGpIds(1L, List.of(joined, cancelled, other));
+
+        assertEquals(1, result.size());
+        assertEquals(joined, result.get(0));
     }
 
     @Test
@@ -488,6 +597,14 @@ class GroupPurchaseMapperTest {
         }
     }
 
+    private List<Long> findParticipatingGpIds(long memberId, List<Long> gpIds) {
+        List<String> ids = gpIds.stream().map(String::valueOf).toList();
+        try (SqlSession session = sqlSessionFactory.openSession(true)) {
+            return session.getMapper(GroupPurchaseMapper.class)
+                    .findParticipatingGpIds(String.valueOf(memberId), ids);
+        }
+    }
+
     private Map<String, Object> findParticipantIncludingCancelled(long gpId, long memberId) {
         return jdbcTemplate.queryForMap(
                 "SELECT * FROM group_purchase_participant WHERE gp_id = ? AND member_id = ?", gpId, memberId);
@@ -518,8 +635,13 @@ class GroupPurchaseMapperTest {
     }
 
     private List<Map<String, Object>> findList(String status, String keyword, String category, int limit, int offset) {
+        return findList(status, keyword, category, limit, offset, null);
+    }
+
+    private List<Map<String, Object>> findList(String status, String keyword, String category, int limit, int offset,
+                                                 String sort) {
         try (SqlSession session = sqlSessionFactory.openSession(true)) {
-            return session.getMapper(GroupPurchaseMapper.class).findList(status, keyword, category, limit, offset);
+            return session.getMapper(GroupPurchaseMapper.class).findList(status, keyword, category, limit, offset, sort);
         }
     }
 
