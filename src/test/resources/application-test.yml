@@ -27,6 +27,9 @@ security:
     encryption-key: gK1L1wUh76cY2JxWNrJKy7BDjsrXfCZQo0a8Gi3tBF8=
     hash-key: aLjLtXstTULNVE9hp5Hpn3910DXa/v0tGa0cQ7AZ5BA=
 
+wallet:
+  allow-unverified-deposit: true
+
 logging:
   level:
     com.aewol: DEBUG
