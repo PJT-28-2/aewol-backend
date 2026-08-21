@@ -26,6 +26,8 @@ import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.util.ReflectionTestUtils;
+import org.springframework.transaction.support.TransactionCallback;
+import org.springframework.transaction.support.TransactionOperations;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -50,6 +52,7 @@ class AuthServiceImplInactiveMemberTest {
     @Mock KakaoAuthClient kakaoAuthClient;
     @Mock AuthCredentialStore authCredentialStore;
     @Mock KakaoRegistrationStore kakaoRegistrationStore;
+    @Mock TransactionOperations transactionOperations;
 
     private AuthServiceImpl service;
 
@@ -57,7 +60,13 @@ class AuthServiceImplInactiveMemberTest {
     void setUp() {
         service = new AuthServiceImpl(memberMapper, walletMapper, notificationSettingMapper,
                 jwtUtil, passwordEncoder, redisTemplate, redisRateLimiter, emailService,
-                kakaoAuthClient, authCredentialStore, kakaoRegistrationStore);
+                kakaoAuthClient, authCredentialStore, kakaoRegistrationStore,
+                transactionOperations);
+        lenient().when(transactionOperations.execute(org.mockito.ArgumentMatchers.any()))
+                .thenAnswer(invocation -> {
+                    TransactionCallback<?> callback = invocation.getArgument(0);
+                    return callback.doInTransaction(null);
+                });
     }
 
     @Test
@@ -107,6 +116,26 @@ class AuthServiceImplInactiveMemberTest {
         verify(memberMapper, never()).insert(org.mockito.ArgumentMatchers.any());
         verify(walletMapper, never()).insert(org.mockito.ArgumentMatchers.any());
         verify(kakaoRegistrationStore, never()).create(org.mockito.ArgumentMatchers.any());
+        org.mockito.InOrder order = org.mockito.Mockito.inOrder(
+                kakaoAuthClient, transactionOperations);
+        order.verify(kakaoAuthClient).getAccessToken("authorization-code");
+        order.verify(kakaoAuthClient).getUserInfo("kakao-access-token");
+        order.verify(transactionOperations).execute(org.mockito.ArgumentMatchers.any());
+    }
+
+    @Test
+    void recoverableKakaoIdentityRejectsNullRoleBeforeRestoring() {
+        assertInvalidRecoveryRole(null);
+    }
+
+    @Test
+    void recoverableKakaoIdentityRejectsBlankRoleBeforeRestoring() {
+        assertInvalidRecoveryRole("   ");
+    }
+
+    @Test
+    void recoverableKakaoIdentityRejectsUnknownRoleBeforeRestoring() {
+        assertInvalidRecoveryRole("SUPERUSER");
     }
 
     @Test
@@ -453,6 +482,27 @@ class AuthServiceImplInactiveMemberTest {
         member.put("email", "member@example.com");
         member.put("recoverable_within_30_days", 1);
         return member;
+    }
+
+    private void assertInvalidRecoveryRole(String role) {
+        stubKakaoUserInfo("member@example.com", "홍길동");
+        when(memberMapper.findActiveKakaoByProviderId("kakao-id")).thenReturn(null);
+        when(memberMapper.findActiveByEmail("member@example.com")).thenReturn(null);
+        Map<String, Object> inactive = recoverableInactiveKakaoMember();
+        inactive.put("role", role);
+        when(memberMapper.findInactiveKakaoByProviderIdForUpdate("kakao-id"))
+                .thenReturn(inactive);
+
+        assertThrows(IllegalStateException.class,
+                () -> service.kakaoLogin("authorization-code"));
+
+        verify(memberMapper, never()).restoreKakaoMember(
+                org.mockito.ArgumentMatchers.anyLong());
+        verify(notificationSettingMapper, never()).ensureForRecovery(
+                org.mockito.ArgumentMatchers.anyLong());
+        verify(jwtUtil, never()).generateAccessToken(
+                org.mockito.ArgumentMatchers.anyString(),
+                org.mockito.ArgumentMatchers.anyString());
     }
 
     private Claims refreshClaims(Date issuedAt) {

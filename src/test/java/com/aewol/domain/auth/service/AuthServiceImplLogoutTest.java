@@ -14,6 +14,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.transaction.support.TransactionOperations;
 
 import static org.mockito.Mockito.verify;
 
@@ -31,6 +32,7 @@ class AuthServiceImplLogoutTest {
     @Mock KakaoAuthClient kakaoAuthClient;
     @Mock AuthCredentialStore authCredentialStore;
     @Mock KakaoRegistrationStore kakaoRegistrationStore;
+    @Mock TransactionOperations transactionOperations;
 
     private AuthServiceImpl service;
 
@@ -38,7 +40,8 @@ class AuthServiceImplLogoutTest {
     void setUp() {
         service = new AuthServiceImpl(memberMapper, walletMapper, notificationSettingMapper,
                 jwtUtil, passwordEncoder, redisTemplate, redisRateLimiter, emailService,
-                kakaoAuthClient, authCredentialStore, kakaoRegistrationStore);
+                kakaoAuthClient, authCredentialStore, kakaoRegistrationStore,
+                transactionOperations);
     }
 
     @Test
