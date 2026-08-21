@@ -76,6 +76,15 @@ public class PetController {
         return ResponseEntity.ok(ApiResponse.success());
     }
 
+    @Operation(summary = "동물등록번호 연동 해제")
+    @DeleteMapping("/{petId}/registration")
+    public ResponseEntity<ApiResponse<Void>> disconnectRegistration(
+            @AuthenticationPrincipal String memberId,
+            @PathVariable String petId) {
+        petService.disconnectRegistration(memberId, petId);
+        return ResponseEntity.ok(ApiResponse.success());
+    }
+
     @Operation(summary = "반려동물 비활성화")
     @DeleteMapping("/{petId}")
     public ResponseEntity<ApiResponse<Void>> deletePet(@AuthenticationPrincipal String memberId,
