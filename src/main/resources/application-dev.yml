@@ -54,6 +54,10 @@ demo:
   # CODEF 데모 서버에 붙어 있을 때만 동작한다(AccountServiceImpl.isTestExposureAllowed).
   expose-depositor-name: ${DEMO_EXPOSE_DEPOSITOR_NAME:false}
 
+# Toss 없이 지갑을 올리는 데모 API. 개발 서버에서만 켠다(#298).
+wallet:
+  allow-unverified-deposit: ${WALLET_ALLOW_UNVERIFIED_DEPOSIT:true}
+
 # External APIs
 external:
   solapi:

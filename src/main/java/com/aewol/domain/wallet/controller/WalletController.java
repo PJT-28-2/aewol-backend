@@ -1,5 +1,6 @@
 package com.aewol.domain.wallet.controller;
 
+import com.aewol.common.exception.BusinessException;
 import com.aewol.common.response.ApiResponse;
 import com.aewol.domain.wallet.dto.TossChargeOrderRequest;
 import com.aewol.domain.wallet.dto.TossChargeOrderResponse;
@@ -14,6 +15,7 @@ import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import javax.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -29,16 +31,26 @@ public class WalletController {
     private final TossChargeService tossChargeService;
     private final WalletWithdrawalService walletWithdrawalService;
 
+    // Toss 승인 없이 MAIN 지갑을 올리는 데모용 API. prod 기본값은 false다.
+    @Value("${wallet.allow-unverified-deposit:false}")
+    private boolean allowUnverifiedDeposit;
+
     @Operation(summary = "내 지갑 조회")
     @GetMapping
     public ResponseEntity<ApiResponse<WalletResponse>> getMyWallet(@AuthenticationPrincipal String memberId) {
         return ResponseEntity.ok(ApiResponse.success(walletService.getWallet(memberId)));
     }
 
-    @Operation(summary = "지갑 충전")
+    @Operation(summary = "지갑 충전(무결제, 로컬·개발 전용)",
+            description = "Toss 승인 없이 MAIN 지갑 잔액을 올린다. "
+                    + "wallet.allow-unverified-deposit=true 인 환경에서만 동작하며, "
+                    + "운영 충전은 /api/wallet/toss-charge를 쓴다.")
     @PostMapping("/deposit")
     public ResponseEntity<ApiResponse<WalletResponse>> deposit(@AuthenticationPrincipal String memberId,
                                                                 @RequestParam java.math.BigDecimal amount) {
+        if (!allowUnverifiedDeposit) {
+            throw BusinessException.forbidden("결제 확인 없는 충전은 할 수 없습니다. Toss 충전을 이용해 주세요.");
+        }
         return ResponseEntity.ok(ApiResponse.success(walletService.deposit(memberId, amount)));
     }
 
