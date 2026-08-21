@@ -63,6 +63,11 @@ public class CodefClient {
     @Value("${external.codef.api-base-url:https://development.codef.io}")
     private String apiBaseUrl;
 
+    // 데모 서버 호스트. isDemoServer()가 "실제 돈이 오가지 않는 환경인가"를 판단하는
+    // 기준으로 쓴다 — 정식 서버(api.codef.io)는 이 문자열을 포함하지 않으므로,
+    // 운영 전환 시 별도 조치 없이 자동으로 데모 전용 동작이 꺼진다.
+    private static final String DEMO_API_HOST = "development.codef.io";
+
     private static final String TOKEN_REDIS_KEY = "codef:accessToken";
     // CODEF accessToken은 1주일 유효 — 만료 임박 재요청을 피하려고 6일만 캐싱
     private static final long TOKEN_TTL_DAYS = 6;
@@ -243,6 +248,47 @@ public class CodefClient {
             log.info("1원인증 요청 완료 - bankCode: {}, account: {}", bankCode, maskAccountNumber(accountNumber));
         }
         return authCode;
+    }
+
+    /**
+     * 지금 붙어 있는 CODEF 서버가 데모 서버인지 — 다시 말해 이 서버로 보내는
+     * 1원 이체 요청이 실제 돈을 움직이지 않는지 판단한다.
+     *
+     * <p>데모 서버는 실제 이체 대신 랜덤 성공/실패 테스트 데이터를 돌려주기 때문에
+     * (위 {@link #requestAccountTransferAuth} TODO 참고), 여기서 나온 입금자명은
+     * 알아내더라도 실제 계좌를 탈취하는 데 쓸 수 없다. 반대로 정식 서버에서는 같은
+     * 값이 곧 "실제 1원이 찍힌 입금자명"이라 노출되는 순간 1원 인증의 본인 확인
+     * 효력이 사라진다.
+     *
+     * <p>그래서 입금자명을 화면/응답에 노출하는 시연용 동작
+     * ({@code AccountServiceImpl.isTestExposureAllowed})은 이 메서드가 true일 때만
+     * 허용한다. 프로필이나 설정 플래그가 아니라 "어느 서버에 붙어 있는가"를 기준으로
+     * 삼는 이유는, 정식 계약 후 {@code CODEF_API_BASE_URL}만 바꿔도 시연용 플래그를
+     * 끄는 걸 깜빡한 채 배포하는 사고를 구조적으로 막기 위해서다(#290).
+     *
+     * <p>판정은 반드시 호스트 <b>정확 일치</b>로 한다. 문자열 포함(contains)으로 보면
+     * {@code development.codef.io.example.com} 처럼 데모 호스트를 접두사로 갖는 제3자
+     * 도메인까지 데모 서버로 오인해서, 입금자명이 노출되는 경로가 열린다(리뷰 지적).
+     * 스킴이 없거나 형식이 깨져서 호스트를 못 뽑아내는 값은 "판단 불가"로 보고 false를
+     * 반환한다 — 안전장치이므로 애매하면 노출하지 않는 쪽으로 닫는다.
+     */
+    public boolean isDemoServer() {
+        return DEMO_API_HOST.equalsIgnoreCase(resolveHost(apiBaseUrl));
+    }
+
+    /** URL 문자열에서 호스트만 뽑아낸다. 뽑아낼 수 없으면 null. */
+    private static String resolveHost(String url) {
+        if (url == null || url.trim().isEmpty()) {
+            return null;
+        }
+        try {
+            // URI는 스킴이 없으면 getHost()가 null이다("development.codef.io"를 경로로 해석).
+            // 우리 설정값은 항상 스킴을 포함하므로 그대로 두고, null이면 판단 불가로 처리한다.
+            return new java.net.URI(url.trim()).getHost();
+        } catch (java.net.URISyntaxException e) {
+            log.warn("CODEF api-base-url에서 호스트를 해석하지 못했습니다 - 데모 서버가 아닌 것으로 간주합니다");
+            return null;
+        }
     }
 
     // ------------------------------------------------------------------
