@@ -2,6 +2,7 @@ package com.aewol.domain.insight.service.collector;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
@@ -180,6 +181,45 @@ class SpendingInsightCollectorTest {
     }
 
     @Test
+    @DisplayName("반올림 후에도 도넛 차트 비율 합계는 100이다")
+    void should_keepCategoryPercentageTotalAtOneHundred_afterRounding() {
+        givenBreakdown(
+                null,
+                List.of(
+                        Map.of("category", "FOOD", "amount", BigDecimal.ONE),
+                        Map.of("category", "SNACK", "amount", BigDecimal.ONE),
+                        Map.of("category", "HOSPITAL", "amount", BigDecimal.ONE)),
+                BigDecimal.valueOf(3));
+        when(groupPurchaseService.list(any(), any(), any(), any(), anyInt(), anyInt(), any()))
+                .thenReturn(GroupPurchaseListResponse.builder().items(List.of()).hasNext(false).build());
+
+        InsightCard card = collector.collect("m1", "p1");
+
+        assertEquals(100, card.getCategoryBreakdown().stream()
+                .mapToInt(com.aewol.domain.insight.dto.CategoryShare::getPercentage)
+                .sum());
+    }
+
+    @Test
+    @DisplayName("총액이 같아도 카테고리 구성이 바뀌면 캐시 지문이 달라진다")
+    void should_changeDigest_whenCategoryCompositionChangesAtSameTotal() {
+        givenBreakdown(null,
+                List.of(Map.of("category", "FOOD", "amount", BigDecimal.valueOf(10_000))),
+                BigDecimal.valueOf(10_000));
+        when(groupPurchaseService.list(any(), any(), any(), any(), anyInt(), anyInt(), any()))
+                .thenReturn(GroupPurchaseListResponse.builder().items(List.of()).hasNext(false).build());
+        InsightCard foodCard = collector.collect("m1", "p1");
+
+        givenBreakdown(null,
+                List.of(Map.of("category", "SNACK", "amount", BigDecimal.valueOf(10_000))),
+                BigDecimal.valueOf(10_000));
+        InsightCard snackCard = collector.collect("m1", "p1");
+
+        assertNotEquals(foodCard.getDigest(), snackCard.getDigest());
+        assertEquals(64, foodCard.getDigest().length());
+    }
+
+    @Test
     @DisplayName("카테고리가 4개를 넘으면 상위 4개만 남기고 나머지는 '기타'로 합친다")
     void should_collapseTailCategories_intoOther_whenMoreThanFourCategories() {
         givenBreakdown(
@@ -218,7 +258,7 @@ class SpendingInsightCollectorTest {
         InsightCard card = collector.collect("m1", "p1");
 
         assertNotNull(card);
-        assertEquals("/wallet", card.getCtaPath());
+        assertEquals("/wallet/history", card.getCtaPath());
         assertEquals("내역 보기", card.getCtaLabel());
     }
 }
