@@ -37,9 +37,10 @@
         WHERE recurring_id = #{recurringId} AND is_active = 1
     </update>
 
-    <delete id="deleteByPetId">
-        DELETE FROM recurring_payment WHERE pet_id = #{petId}
-    </delete>
+    <update id="deactivateByPetId">
+        UPDATE recurring_payment SET is_active = 0
+        WHERE pet_id = #{petId} AND is_active = 1
+    </update>
 
     <select id="findDuePayments" resultType="map">
         SELECT * FROM recurring_payment WHERE is_active = 1 AND next_payment_date &lt;= #{date}

@@ -17,7 +17,10 @@ public interface PetMapper {
                                  @Param("memberId") String memberId,
                                  @Param("regNumber") String regNumber);
 
-    /** 동물등록증 연동 성공 시 견종/중성화 여부를 등록증 값으로 동기화한다. APMS가 값을 안 주면(null) 기존 값을 유지한다. */
+    /**
+     * 동물등록증 연동 성공 시 견종/중성화 여부를 등록증 값으로 동기화한다. APMS가 값을 안 주면(null)
+     * 기존 값을 유지한다. petId만으로 매칭하므로 호출 전 소유권 검증(assertOwner 등)이 선행돼야 한다.
+     */
     int updateRegistrationDetails(@Param("petId") String petId,
                                   @Param("breed") String breed,
                                   @Param("neutered") String neutered);

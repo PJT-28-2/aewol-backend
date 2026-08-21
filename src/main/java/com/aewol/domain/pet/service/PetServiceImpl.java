@@ -138,8 +138,9 @@ public class PetServiceImpl implements PetService {
      * shared_access(ON DELETE NO ACTION)가 pet_id를 참조하고 있어서, pet 행을 하드 삭제하면
      * 공동육아 구성원이 쓴 다이어리가 강제로 함께 삭제되거나 shared_access를 먼저 지워야만
      * 삭제가 가능해져 다른 구성원의 접근 권한이 끊긴다. 그래서 소유자 개인 데이터(등록증/문서/
-     * 보험/정기결제)만 하드 삭제하고, 공동 데이터(care_diary/shared_access)는 그대로 둔다.
-     * transaction은 감사 추적성 때문에 이번 범위에서 제외한다.
+     * 보험청구/보험시뮬레이션)만 하드 삭제하고, 공동 데이터(care_diary/shared_access)는 그대로 둔다.
+     * transaction은 감사 추적성 때문에, recurring_payment는 transaction.recurring_id가 이를
+     * ON DELETE NO ACTION으로 참조해 하드 삭제 시 FK 위반이 날 수 있어서 하드 삭제 대신 비활성화한다.
      * reg_number 초기화는 deactivate보다 먼저 해야 한다 — updateRegistrationNumber는
      * is_active = 1 조건으로 매칭하므로, deactivate 이후에 호출하면 0행이 되어 반영되지 않는다.
      */
@@ -153,8 +154,10 @@ public class PetServiceImpl implements PetService {
         }
         insuranceMapper.deleteClaimsByPetId(petId);
         insuranceMapper.deleteSimulationsByPetId(petId);
-        recurringMapper.deleteByPetId(petId);
-        petMapper.updateRegistrationNumber(petId, memberId, null);
+        recurringMapper.deactivateByPetId(petId);
+        if (petMapper.updateRegistrationNumber(petId, memberId, null) != 1) {
+            throw BusinessException.notFound("반려동물을 찾을 수 없습니다.");
+        }
 
         if (petMapper.deactivate(petId, memberId) != 1) {
             throw BusinessException.notFound("반려동물을 찾을 수 없습니다.");

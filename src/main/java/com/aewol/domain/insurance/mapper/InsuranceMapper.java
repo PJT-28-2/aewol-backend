@@ -12,7 +12,11 @@ public interface InsuranceMapper {
     void updateClaim(Map<String, Object> claim);
     Map<String, Object> findClaimById(@Param("claimId") String claimId);
     List<Map<String, Object>> findClaimsByMemberId(@Param("memberId") String memberId);
+
+    /** 펫 등록해제(#291) 전용. petId만으로 매칭하므로 호출 전 소유권 검증(assertOwner 등)이 선행돼야 한다. */
     int deleteClaimsByPetId(@Param("petId") String petId);
+
+    /** 펫 등록해제(#291) 전용. petId만으로 매칭하므로 호출 전 소유권 검증(assertOwner 등)이 선행돼야 한다. */
     int deleteSimulationsByPetId(@Param("petId") String petId);
 
     List<Map<String, Object>> findProductsBySpecies(@Param("species") String species);
