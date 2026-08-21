@@ -107,6 +107,12 @@ class CodefClientTest {
         assertTrue(codefClientWithApiBaseUrl(apiBaseUrl).isDemoServer());
     }
 
+    @Test
+    @DisplayName("호스트 대소문자가 달라도 데모 서버로 판정한다 - 호스트는 대소문자를 구분하지 않는다")
+    void should_returnTrue_when_demoHostHasDifferentCase() {
+        assertTrue(codefClientWithApiBaseUrl("https://DEVELOPMENT.CODEF.IO").isDemoServer());
+    }
+
     @ParameterizedTest
     @ValueSource(strings = {
             "https://api.codef.io",
@@ -114,6 +120,36 @@ class CodefClientTest {
     })
     @DisplayName("정식 서버 주소에 붙어 있으면 isDemoServer()가 false다 - 실제 1원이 오가므로 시연용 노출이 차단되어야 한다(#290)")
     void should_returnFalse_when_apiBaseUrlIsProductionServer(String apiBaseUrl) {
+        assertFalse(codefClientWithApiBaseUrl(apiBaseUrl).isDemoServer());
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {
+            // 데모 호스트를 접두사로 갖는 제3자 도메인. 문자열 포함(contains)으로 판정하면
+            // 데모 서버로 오인해서 입금자명이 노출된다(리뷰 지적).
+            "https://development.codef.io.example.com",
+            "https://development.codef.io.attacker.test/v1",
+            // 데모 호스트가 경로/쿼리에만 들어있는 경우도 마찬가지다.
+            "https://api.codef.io/development.codef.io",
+            "https://api.codef.io?host=development.codef.io",
+            // 서브도메인은 다른 호스트다.
+            "https://evil.development.codef.io",
+    })
+    @DisplayName("데모 호스트를 문자열로만 포함하는 주소는 데모 서버로 판정하지 않는다 - 호스트 정확 일치로만 판단한다")
+    void should_returnFalse_when_demoHostOnlyAppearsAsSubstring(String apiBaseUrl) {
+        assertFalse(codefClientWithApiBaseUrl(apiBaseUrl).isDemoServer());
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {
+            // 스킴이 없으면 호스트를 뽑아낼 수 없다(URI가 경로로 해석한다).
+            "development.codef.io",
+            // 형식이 깨진 값.
+            "ht!tp://development.codef.io",
+            "   ",
+    })
+    @DisplayName("호스트를 해석할 수 없는 주소는 데모 서버로 판정하지 않는다 - 안전장치이므로 애매하면 닫는다")
+    void should_returnFalse_when_hostCannotBeResolved(String apiBaseUrl) {
         assertFalse(codefClientWithApiBaseUrl(apiBaseUrl).isDemoServer());
     }
 
