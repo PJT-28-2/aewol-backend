@@ -19,6 +19,16 @@
         <if test="txnFilter == 'WITHDRAW'">
             AND t.txn_type IN ('PAYMENT', 'WITHDRAW', 'TRANSFER')
         </if>
+        <!-- 지출 리포트 카테고리 상세용 필터: 환불(REFUND) 자체는 물론, 이미 환불된 원래 결제(PAYMENT)도
+             실제로 나간 돈이 아니므로 함께 제외한다(group_purchase_participant가 환불 여부를 들고 있는
+             유일한 소스 — REFUND는 공동구매 경로에서만 생성된다). -->
+        <if test="txnFilter == 'PAYMENT'">
+            AND t.txn_type = 'PAYMENT'
+            AND NOT EXISTS (
+                SELECT 1 FROM group_purchase_participant gpp
+                WHERE gpp.txn_id = t.txn_id AND gpp.payment_status = 'CANCELLED'
+            )
+        </if>
         AND t.txn_date &gt;= #{startDate}
         AND t.txn_date &lt; #{endDate}
         <if test="cursorDate != null and cursorTxnId != null">

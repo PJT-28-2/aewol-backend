@@ -212,7 +212,8 @@ public class TransactionServiceImpl implements TransactionService {
         if (type == null || "ALL".equalsIgnoreCase(type)) return "ALL";
         if ("CHARGE".equalsIgnoreCase(type)) return "CHARGE";
         if ("WITHDRAW".equalsIgnoreCase(type)) return "WITHDRAW";
-        throw new BusinessException("거래 유형은 ALL, CHARGE, WITHDRAW 중 하나여야 합니다.");
+        if ("PAYMENT".equalsIgnoreCase(type)) return "PAYMENT";
+        throw new BusinessException("거래 유형은 ALL, CHARGE, WITHDRAW, PAYMENT 중 하나여야 합니다.");
     }
 
     private YearMonth parseMonth(String period) {
