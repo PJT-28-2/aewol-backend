@@ -1,5 +1,8 @@
 package com.aewol.domain.insight.service;
 
+import com.aewol.domain.grouppurchase.dto.GroupPurchaseListItemResponse;
+import com.aewol.domain.insight.dto.CategoryShare;
+import java.util.List;
 import lombok.Builder;
 import lombok.Getter;
 
@@ -31,4 +34,18 @@ public class InsightCard {
     private final String ctaPath;
     /** 재료가 그대로면 다시 생성하지 않기 위한 지문. */
     private final String digest;
+    /**
+     * 카드 내용과 관련해 함께 보여줄 공동구매 상품. LLM이 아니라 자바에서 직접 고른다.
+     *
+     * <p>맞는 상품이 없으면 null/빈 리스트로 둔다. 억지로 채우지 않는다.
+     */
+    private final List<GroupPurchaseListItemResponse> recommendedProducts;
+    /**
+     * 카테고리별 비중(도넛 차트용). 지출 관련 카드에서만 채운다.
+     *
+     * <p>비중 상위 항목만 담고 나머지는 '기타'로 합친다 — 자바에서 계산하므로 숫자가
+     * 틀리면 안 되고, 본문 문장의 1위 카테고리와 반드시 같은 집계에서 나와야 한다
+     * (따로 계산하면 문장과 차트가 다른 1위를 말하는 사고가 날 수 있다).
+     */
+    private final List<CategoryShare> categoryBreakdown;
 }

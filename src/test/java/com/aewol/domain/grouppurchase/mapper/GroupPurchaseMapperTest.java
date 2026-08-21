@@ -255,6 +255,23 @@ class GroupPurchaseMapperTest {
     }
 
     @Test
+    @DisplayName("sort=DEADLINE_ASC이면 등록일과 무관하게 마감이 가장 빠른 것부터 정렬한다")
+    void should_orderByDeadlineAscending_when_sortIsDeadlineAsc() {
+        LocalDateTime now = LocalDateTime.now();
+        // created_at을 일부러 반대로 둬서, 최신 등록순이 아니라 진짜 deadline 기준으로
+        // 정렬됐는지 구분되게 한다.
+        long later = insertGroupPurchase(99L, "OPEN", 0, 10, now.plusDays(10), now.minusHours(1));
+        long soonest = insertGroupPurchase(99L, "OPEN", 0, 10, now.plusHours(2), now.minusDays(3));
+        long soon = insertGroupPurchase(99L, "OPEN", 0, 10, now.plusDays(1), now.minusDays(2));
+
+        List<Map<String, Object>> result = findList("OPEN", null, null, 10, 0, "DEADLINE_ASC");
+
+        assertEquals(
+                List.of(soonest, soon, later),
+                result.stream().map(row -> ((Number) row.get("gp_id")).longValue()).toList());
+    }
+
+    @Test
     @DisplayName("마감이 지났고 목표 미달이면 FAILED 필터에만 잡힌다")
     void should_matchFailedFilterOnly_when_deadlinePassedAndTargetNotReached() {
         long gpId = insertGroupPurchase(99L, "OPEN", 3, 10, LocalDateTime.now().minusDays(1));
@@ -618,8 +635,13 @@ class GroupPurchaseMapperTest {
     }
 
     private List<Map<String, Object>> findList(String status, String keyword, String category, int limit, int offset) {
+        return findList(status, keyword, category, limit, offset, null);
+    }
+
+    private List<Map<String, Object>> findList(String status, String keyword, String category, int limit, int offset,
+                                                 String sort) {
         try (SqlSession session = sqlSessionFactory.openSession(true)) {
-            return session.getMapper(GroupPurchaseMapper.class).findList(status, keyword, category, limit, offset);
+            return session.getMapper(GroupPurchaseMapper.class).findList(status, keyword, category, limit, offset, sort);
         }
     }
 
