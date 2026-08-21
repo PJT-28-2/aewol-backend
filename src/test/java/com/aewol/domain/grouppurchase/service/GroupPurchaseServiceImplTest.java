@@ -1360,6 +1360,8 @@ class GroupPurchaseServiceImplTest {
         assertTrue(txnCaptor.getAllValues().stream().allMatch(txn -> "REFUND".equals(txn.get("txnType"))));
         assertTrue(txnCaptor.getAllValues().stream()
                 .allMatch(txn -> ((String) txn.get("memo")).contains("작성자 취소로 인한 환불")));
+        assertTrue(txnCaptor.getAllValues().stream()
+                .noneMatch(txn -> ((String) txn.get("memo")).contains("gpId")));
     }
 
     @Test
