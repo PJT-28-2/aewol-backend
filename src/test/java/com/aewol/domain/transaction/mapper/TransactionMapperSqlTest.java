@@ -45,4 +45,18 @@ class TransactionMapperSqlTest {
 
         assertTrue(select.contains("'DEPOSIT', 'REFUND'"));
     }
+
+    @Test
+    void should_excludeRefundedPayments_forFindByWalletIdPaymentFilter() throws Exception {
+        String sql = Files.readString(
+                Path.of("src/main/resources/mapper/transaction/TransactionMapper.xml"),
+                StandardCharsets.UTF_8);
+        int start = sql.indexOf("<select id=\"findByWalletId\"");
+        int end = sql.indexOf("</select>", start);
+        String select = sql.substring(start, end);
+
+        assertTrue(select.contains("txnFilter == 'PAYMENT'"));
+        assertTrue(select.contains("t.txn_type = 'PAYMENT'"));
+        assertTrue(select.contains("gpp.payment_status = 'CANCELLED'"));
+    }
 }
