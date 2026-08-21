@@ -32,12 +32,23 @@ class AuthSignupMapperSqlTest {
                 memberSql, "<select id=\"findActiveKakaoByProviderId\"", "</select>");
         String inactiveKakaoSql = statement(
                 memberSql, "<select id=\"existsInactiveKakaoByProviderId\"", "</select>");
+        String recoverableKakaoSql = statement(
+                memberSql, "<select id=\"findInactiveKakaoByProviderIdForUpdate\"", "</select>");
         assertTrue(activeKakaoSql.contains("provider_id = #{providerId}"));
         assertTrue(inactiveKakaoSql.contains("provider_id = #{providerId}"));
         assertTrue(!activeKakaoSql.contains("#{email}"));
         assertTrue(!inactiveKakaoSql.contains("#{email}"));
         assertTrue(activeKakaoSql.contains("provider = 'KAKAO'"));
         assertTrue(inactiveKakaoSql.contains("provider = 'KAKAO'"));
+        assertTrue(recoverableKakaoSql.contains("SELECT member_id"));
+        assertTrue(recoverableKakaoSql.contains("role"));
+        assertTrue(!recoverableKakaoSql.contains("SELECT *"));
+
+        String insightSql = resource("mapper/insight/HomeInsightMapper.xml");
+        String warmUpSql = statement(
+                insightSql, "<select id=\"findWarmUpTargetMemberIds\"", "</select>");
+        assertTrue(warmUpSql.contains("m.is_active = 1"));
+        assertTrue(!warmUpSql.contains("m.withdrawn_at IS NULL"));
 
         String notificationSql = resource("mapper/notification/NotificationSettingMapper.xml");
         String duplicateClause = notificationSql.substring(notificationSql.indexOf("ON DUPLICATE KEY UPDATE"));

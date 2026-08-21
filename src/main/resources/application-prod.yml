@@ -64,6 +64,15 @@ donation:
 cookie:
   secure: true
 
+# 시연용 설정(#290)
+demo:
+  # 1원 인증 입금자명을 verify-deposit 응답에 실어 보낼지 여부. 실제 입금 확인 없이
+  # 인증을 통과시킬 수 있게 되므로 기본값은 false이며, 시연용 배포에서만 true로 켠다.
+  # true로 켜더라도 CODEF 데모 서버에 붙어 있을 때만 동작한다
+  # (AccountServiceImpl.isTestExposureAllowed) — 정식 서버로 전환하면 이 값을
+  # 끄지 않아도 자동으로 차단된다.
+  expose-depositor-name: ${DEMO_EXPOSE_DEPOSITOR_NAME:false}
+
 # External APIs
 external:
   solapi:

@@ -30,10 +30,14 @@ public class KakaoPhoneVerificationStore {
             "local session = redis.call('GET', KEYS[1])\n" +
             "if not session then return -1 end\n" +
             "if string.sub(session, 1, 8) == 'CLAIMED|' then return -2 end\n" +
+            "local decoded, registration = pcall(cjson.decode, session)\n" +
+            "if not decoded or type(registration) ~= 'table' then return -3 end\n" +
             "local sessionTtl = redis.call('PTTL', KEYS[1])\n" +
             "if sessionTtl <= 0 then return -1 end\n" +
             "local otpTtl = tonumber(ARGV[2])\n" +
             "if sessionTtl < otpTtl then otpTtl = sessionTtl end\n" +
+            "registration['verifiedPhone'] = nil\n" +
+            "redis.call('SET', KEYS[1], cjson.encode(registration), 'KEEPTTL')\n" +
             "redis.call('SET', KEYS[2], ARGV[1], 'PX', otpTtl)\n" +
             "return otpTtl",
             Long.class);
@@ -112,6 +116,9 @@ public class KakaoPhoneVerificationStore {
         }
         if (ttlMillis == -2L) {
             throw BusinessException.conflict("카카오 가입 요청이 이미 처리 중입니다.");
+        }
+        if (ttlMillis == -3L) {
+            throw serviceUnavailable();
         }
         if (ttlMillis <= 0L) {
             throw new BusinessException(HttpStatus.BAD_REQUEST, INVALID_SESSION_MESSAGE);

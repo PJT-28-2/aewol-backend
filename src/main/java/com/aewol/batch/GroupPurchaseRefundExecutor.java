@@ -56,13 +56,14 @@ public class GroupPurchaseRefundExecutor {
                 // 처리한다 — 대신 운영이 데이터 이상을 인지할 수 있도록 경고 로그를 남긴다.
                 log.warn("공동구매 target_quantity가 비정상입니다 - gpId: {}, targetQuantity: {}", gpId, targetQuantity);
             }
-            refundWallet(memberId, gpId, gp, refundedAmount);
+            refundWallet(memberId, gp, refundedAmount,
+                    "공동구매 마감 미달 자동환불: " + gp.get("product_name"));
         }
         return true;
     }
 
     /** 지갑 잔액을 환급하고 REFUND 타입 환불 거래내역을 생성한다. */
-    private void refundWallet(String memberId, String gpId, Map<String, Object> gp, BigDecimal amount) {
+    private void refundWallet(String memberId, Map<String, Object> gp, BigDecimal amount, String memo) {
         Map<String, Object> wallet = walletMapper.findByMemberId(memberId);
         if (wallet == null) {
             throw BusinessException.notFound("지갑을 찾을 수 없습니다. memberId=" + memberId);
@@ -82,7 +83,7 @@ public class GroupPurchaseRefundExecutor {
         txn.put("merchantCategoryCode", null);
         // 유저가 직접 취소한 게 아니라 마감 미달로 시스템이 자동 환불한 것이므로, leave()의
         // "참여 취소 환불" 문구와 구분되는 별도 문구를 쓴다(CS 문의 시 원인 구분용).
-        txn.put("memo", "공동구매 마감 미달 자동환불: " + gp.get("product_name") + " (gpId=" + gpId + ")");
+        txn.put("memo", memo);
         txn.put("autoTagged", "N");
         txn.put("txnDate", LocalDateTime.now());
         transactionMapper.insert(txn);

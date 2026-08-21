@@ -1,5 +1,6 @@
 package com.aewol.domain.insight.service.collector;
 
+import com.aewol.common.util.Sha256Util;
 import com.aewol.domain.dashboard.service.DashboardService;
 import com.aewol.domain.grouppurchase.dto.GroupPurchaseCategory;
 import com.aewol.domain.grouppurchase.dto.GroupPurchaseListItemResponse;
@@ -120,7 +121,7 @@ public class SpendingInsightCollector implements InsightCardCollector {
         // 직접 줄여볼 수 있는 시뮬레이터로 안내한다 — '내역 보기'보다 실제로 도움이 된다.
         boolean isInsuranceTop = INSURANCE_LABEL.equals(topLabel);
         String ctaLabel = isInsuranceTop ? "보험료 시뮬레이션 하러 가기" : "내역 보기";
-        String ctaPath = isInsuranceTop ? "/insurance/simulator" : "/wallet";
+        String ctaPath = isInsuranceTop ? "/insurance/simulator" : "/wallet/history";
         String closingHint = isInsuranceTop
                 ? "보험료가 부담된다면 시뮬레이터로 비교해 보세요."
                 : "내역에서 항목별로 확인해 보세요.";
@@ -149,7 +150,8 @@ public class SpendingInsightCollector implements InsightCardCollector {
                 .ctaPath(ctaPath)
                 // 남은 일수가 매일 줄어 예측 문장도 매일 달라진다. 날짜를 지문에 넣어
                 // 어제 문장이 오늘 그대로 재사용되지 않게 한다.
-                .digest(today + ":" + total.toPlainString())
+                .digest(Sha256Util.lowercaseHex(
+                        today + "\n" + total.toPlainString() + "\n" + changeText + "\n" + facts))
                 .recommendedProducts(recommendProducts(memberId, topLabel))
                 .categoryBreakdown(categoryBreakdown)
                 .build();
@@ -171,7 +173,27 @@ public class SpendingInsightCollector implements InsightCardCollector {
         if (otherAmount.signum() > 0) {
             shares.add(toShare(OTHER_LABEL, otherAmount, total));
         }
-        return shares;
+        return normalizePercentages(shares);
+    }
+
+    private static List<CategoryShare> normalizePercentages(List<CategoryShare> shares) {
+        if (shares.isEmpty()) {
+            return shares;
+        }
+        int adjustment = 100 - shares.stream().mapToInt(CategoryShare::getPercentage).sum();
+        if (adjustment == 0) {
+            return shares;
+        }
+
+        List<CategoryShare> normalized = new ArrayList<>(shares);
+        int lastIndex = normalized.size() - 1;
+        CategoryShare last = normalized.get(lastIndex);
+        normalized.set(lastIndex, CategoryShare.builder()
+                .label(last.getLabel())
+                .amount(last.getAmount())
+                .percentage(last.getPercentage() + adjustment)
+                .build());
+        return normalized;
     }
 
     private static CategoryShare toShare(String label, BigDecimal amount, BigDecimal total) {

@@ -23,6 +23,7 @@ import org.springframework.data.redis.core.ValueOperations;
 import org.springframework.data.redis.core.script.RedisScript;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.util.ReflectionTestUtils;
+import org.springframework.transaction.support.TransactionOperations;
 
 import java.util.List;
 import java.util.concurrent.TimeUnit;
@@ -62,6 +63,7 @@ class AuthServiceImplEmailVerificationTest {
     @Mock KakaoAuthClient kakaoAuthClient;
     @Mock AuthCredentialStore authCredentialStore;
     @Mock KakaoRegistrationStore kakaoRegistrationStore;
+    @Mock TransactionOperations transactionOperations;
 
     private AuthServiceImpl authService;
 
@@ -70,7 +72,7 @@ class AuthServiceImplEmailVerificationTest {
         authService = new AuthServiceImpl(
                 memberMapper, walletMapper, notificationSettingMapper, jwtUtil, passwordEncoder,
                 redisTemplate, redisRateLimiter, emailService, kakaoAuthClient, authCredentialStore,
-                kakaoRegistrationStore);
+                kakaoRegistrationStore, transactionOperations);
     }
 
     @Test

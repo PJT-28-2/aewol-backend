@@ -90,6 +90,23 @@
           AND provider_id = #{providerId}
     </select>
 
+    <select id="findInactiveKakaoByProviderIdForUpdate" resultType="map">
+        SELECT member_id,
+               role,
+               CASE
+                   WHEN withdrawn_at >= DATE_SUB(NOW(), INTERVAL 30 DAY) THEN 1
+                   ELSE 0
+               END AS recoverable_within_30_days
+        FROM member
+        WHERE provider = 'KAKAO'
+          AND is_active = 0
+          AND provider_id = #{providerId}
+          AND withdrawn_at IS NOT NULL
+        ORDER BY withdrawn_at DESC, member_id DESC
+        LIMIT 1
+        FOR UPDATE
+    </select>
+
     <!-- 동시 복구 요청이 같은 회원을 중복 활성화하지 못하도록 복구 대상 행을 잠근다. -->
     <select id="findLatestInactiveByEmailForUpdate" resultType="map">
         SELECT *,
@@ -142,6 +159,15 @@
             updated_at = NOW()
         WHERE member_id = #{memberId}
           AND is_active = 1
+    </update>
+
+    <update id="restoreKakaoMember">
+        UPDATE member
+        SET is_active = 1,
+            updated_at = NOW()
+        WHERE member_id = #{memberId}
+          AND provider = 'KAKAO'
+          AND is_active = 0
     </update>
 
     <update id="updateProfile" parameterType="map">

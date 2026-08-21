@@ -14,6 +14,7 @@ import com.aewol.domain.account.mapper.AccountMapper;
 import com.aewol.domain.account.mapper.AccountVerificationMapper;
 import com.aewol.external.codef.CodefClient;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.env.Environment;
 import org.springframework.core.env.Profiles;
 import org.springframework.http.HttpStatus;
@@ -36,6 +37,12 @@ public class AccountServiceImpl implements AccountService {
     private final Environment environment;
     private final RedisRateLimiter redisRateLimiter;
     private final AccountNumberCrypto accountNumberCrypto;
+
+    // 시연 환경에서 입금자명을 API 응답으로 내려줄지 여부(#290). 기본값은 false이고,
+    // true로 켜더라도 CODEF 데모 서버에 붙어 있을 때만 실제로 동작한다
+    // (isTestExposureAllowed 주석 참고).
+    @Value("${demo.expose-depositor-name:false}")
+    private boolean exposeDepositorNameForDemo;
 
     // 프론트(store.requestDepositAuth의 DEPOSIT_AUTH_TIMEOUT_SECONDS)와 동일한 유효시간.
     // 여기서 안 맞추면 프론트는 아직 타이머가 남았다고 보여주는데 서버는 이미
@@ -91,19 +98,31 @@ public class AccountServiceImpl implements AccountService {
                 .build();
     }
 
-    // 운영에서 이 값을 그대로 내려주면 사용자가 실제 입금 내역을 확인하지 않고도
+    // 이 값을 그대로 내려주면 사용자가 실제 입금 내역을 확인하지 않고도
     // verify-deposit -> confirm을 통과시킬 수 있어 1원 인증의 본인 확인 효력이
-    // 무효화된다(CodeRabbit 지적, 2026-08-06). local/test 프로필에서만 값을 채운다.
+    // 무효화된다(CodeRabbit 지적, 2026-08-06).
     //
-    // dev는 포함하지 않는다(2026-08-19 재검토, PR #236 리뷰) — 한때 dev도 포함시켰으나,
-    // 이 값은 CodefClient처럼 로그에만 남는 게 아니라 API 응답 바디에 그대로 실려 나간다.
-    // 로그 노출은 로그 열람 권한이 있는 사람으로 범위가 제한되지만, API 응답 노출은
-    // dev 서버 API를 호출할 수 있는 누구에게나(공유 dev 서버라면 QA, 외주 인력 등 포함)
-    // 1원 인증 정답을 그대로 알려주는 셈이라 blast radius가 훨씬 크다. 공유 dev 서버에서
-    // 로그 열람 권한 없이 계좌 연동을 끝까지 테스트하는 문제는 이 값을 API로 내려주는
-    // 방식이 아니라 별도의 로그 접근 권한 부여 등 인프라/운영 차원에서 풀어야 한다.
+    // 그래서 한동안 local/test 프로필에서만 값을 채웠다(PR #236, 2026-08-19). 하지만
+    // 프로필은 "실제 돈이 오가는가"의 간접 신호일 뿐이라, 배포 서버로 시연할 때는
+    // CODEF 데모 서버(=실제 이체 없음)에 붙어 있는데도 입금자명을 확인할 방법이
+    // DB 직접 조회밖에 없는 문제가 있었다(#290).
+    //
+    // 그래서 판단 기준을 프로필에서 "지금 붙어 있는 CODEF 서버가 데모 서버인가"로
+    // 바꾼다. 데모 서버가 아니면 프로필이 무엇이든, 플래그가 켜져 있든 무조건 차단한다
+    // — 정식 계약 후 CODEF_API_BASE_URL만 교체해도 시연용 설정을 끄는 걸 깜빡한 채
+    // 배포되는 사고가 구조적으로 불가능해지므로, PR #236에서 우려한 위험은 오히려
+    // 이전보다 확실하게 막힌다.
+    //
+    // 데모 서버라는 전제 위에서, 실제로 값을 내려줄지는 두 경로로 결정한다.
+    //   - local/test 프로필: 개발/테스트 편의를 위해 항상 노출(기존 동작 유지)
+    //   - demo.expose-depositor-name=true: 시연용 배포 환경에서 명시적으로 켠 경우
     private boolean isTestExposureAllowed() {
-        return environment.acceptsProfiles(Profiles.of("local", "test"));
+        // 실제 1원이 오가는 정식 서버에서는 어떤 설정으로도 노출하지 않는다.
+        if (!codefClient.isDemoServer()) {
+            return false;
+        }
+        return exposeDepositorNameForDemo
+                || environment.acceptsProfiles(Profiles.of("local", "test"));
     }
 
     /**

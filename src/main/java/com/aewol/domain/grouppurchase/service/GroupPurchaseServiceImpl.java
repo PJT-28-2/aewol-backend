@@ -214,7 +214,7 @@ public class GroupPurchaseServiceImpl implements GroupPurchaseService {
         LocalDateTime paidAt = null;
         Long txnId = null;
         if (paidAmount != null) {
-            txnId = chargeWallet(memberId, gpId, gp, paidAmount);
+            txnId = chargeWallet(memberId, gp, paidAmount, "공동구매 참여: " + gp.get("product_name"));
             paymentStatus = GroupPurchaseParticipantStatus.PAID;
             paidAt = LocalDateTime.now();
         }
@@ -313,8 +313,8 @@ public class GroupPurchaseServiceImpl implements GroupPurchaseService {
         BigDecimal refundedAmount = toDecimal(participant.get("paid_amount"));
         BigDecimal refundedWalletBalance = null;
         if (GroupPurchaseParticipantStatus.PAID.equals(participant.get("payment_status")) && refundedAmount != null) {
-            refundedWalletBalance = refundWallet(memberId, gpId, gp, refundedAmount,
-                    "공동구매 참여 취소 환불: " + gp.get("product_name") + " (gpId=" + gpId + ")");
+            refundedWalletBalance = refundWallet(memberId, gp, refundedAmount,
+                    "공동구매 참여 취소 환불: " + gp.get("product_name"));
         }
 
         Map<String, Object> updatedGp = groupPurchaseMapper.findById(gpId);
@@ -398,8 +398,8 @@ public class GroupPurchaseServiceImpl implements GroupPurchaseService {
             return null;
         }
         BigDecimal paidAmount = toDecimal(participant.get("paid_amount"));
-        BigDecimal refundedWalletBalance = refundWallet(participantMemberId, gpId, gp, paidAmount,
-                "공동구매 작성자 취소로 인한 환불: " + gp.get("product_name") + " (gpId=" + gpId + ")");
+        BigDecimal refundedWalletBalance = refundWallet(participantMemberId, gp, paidAmount,
+                "공동구매 작성자 취소로 인한 환불: " + gp.get("product_name"));
         return GroupPurchaseCancelParticipantResponse.builder()
                 .participantId(toLong(participant.get("participant_id")))
                 .memberId(participantMemberId)
@@ -410,7 +410,7 @@ public class GroupPurchaseServiceImpl implements GroupPurchaseService {
     }
 
     /** 지갑 잔액을 환급하고 REFUND 타입 환불 거래내역을 생성한 뒤 갱신된 지갑 잔액을 반환한다. memo는 환불 트리거(참여 취소/작성자 취소)별로 구분해서 넘긴다. */
-    private BigDecimal refundWallet(String memberId, String gpId, Map<String, Object> gp, BigDecimal amount, String memo) {
+    private BigDecimal refundWallet(String memberId, Map<String, Object> gp, BigDecimal amount, String memo) {
         Map<String, Object> wallet = walletMapper.findByMemberId(memberId);
         if (wallet == null) {
             throw BusinessException.notFound("지갑을 찾을 수 없습니다.");
@@ -437,8 +437,8 @@ public class GroupPurchaseServiceImpl implements GroupPurchaseService {
         return (BigDecimal) updatedWallet.get("balance");
     }
 
-    /** 지갑 잔액을 차감하고 거래내역을 생성한 뒤 생성된 txn_id를 반환한다. TransactionServiceImpl#processPayment와 동일한 차감·기록 패턴을 따른다. */
-    private Long chargeWallet(String memberId, String gpId, Map<String, Object> gp, BigDecimal amount) {
+    /** 지갑 잔액을 차감하고 거래내역을 생성한 뒤 생성된 txn_id를 반환한다. TransactionServiceImpl#processPayment와 동일한 차감·기록 패턴을 따른다. memo는 호출부에서 넘긴 문구를 그대로 기록한다. */
+    private Long chargeWallet(String memberId, Map<String, Object> gp, BigDecimal amount, String memo) {
         Map<String, Object> wallet = walletMapper.findByMemberId(memberId);
         if (wallet == null) {
             throw BusinessException.notFound("지갑을 찾을 수 없습니다.");
@@ -462,7 +462,7 @@ public class GroupPurchaseServiceImpl implements GroupPurchaseService {
         txn.put("category", toTxnCategory((String) gp.get("category")));
         txn.put("merchantName", gp.get("product_name"));
         txn.put("merchantCategoryCode", null);
-        txn.put("memo", "공동구매 참여: " + gp.get("product_name") + " (gpId=" + gpId + ")");
+        txn.put("memo", memo);
         txn.put("autoTagged", "N");
         txn.put("txnDate", LocalDateTime.now());
         transactionMapper.insert(txn);

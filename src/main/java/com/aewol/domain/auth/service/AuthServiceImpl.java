@@ -36,6 +36,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
+import org.springframework.transaction.support.TransactionOperations;
 
 import java.security.SecureRandom;
 import java.util.Date;
@@ -149,6 +150,7 @@ public class AuthServiceImpl implements AuthService {
     private final KakaoAuthClient kakaoAuthClient;
     private final AuthCredentialStore authCredentialStore;
     private final KakaoRegistrationStore kakaoRegistrationStore;
+    private final TransactionOperations transactionOperations;
 
     @Override
     public SignupEmailCodeResponse sendSignupVerificationCode(SignupEmailCodeRequest request) {
@@ -376,6 +378,12 @@ public class AuthServiceImpl implements AuthService {
         if (activeEmailMember != null && "LOCAL".equals(activeEmailMember.get("provider"))) {
             throw BusinessException.conflict("이미 가입된 이메일입니다.");
         }
+        KakaoRecovery recovery = transactionOperations.execute(status ->
+                restoreKakaoMemberIfEligible(userInfo.getProviderId()));
+        if (recovery != null) {
+            return KakaoOAuthResponse.accountRestored(
+                    generateTokens(String.valueOf(recovery.memberId), recovery.role));
+        }
         if (memberMapper.existsInactiveKakaoByProviderId(userInfo.getProviderId())) {
             throw BusinessException.unauthorized("카카오 로그인에 실패했습니다.");
         }
@@ -383,6 +391,45 @@ public class AuthServiceImpl implements AuthService {
         String registrationToken = kakaoRegistrationStore.create(new KakaoRegistrationSession(
                 userInfo.getProviderId(), userInfo.getEmail(), userInfo.getName()));
         return KakaoOAuthResponse.additionalInfoRequired(registrationToken);
+    }
+
+    private KakaoRecovery restoreKakaoMemberIfEligible(String providerId) {
+        Map<String, Object> inactiveKakao =
+                memberMapper.findInactiveKakaoByProviderIdForUpdate(providerId);
+        if (inactiveKakao == null
+                || !booleanValue(inactiveKakao,
+                "recoverable_within_30_days", "recoverableWithin30Days")) {
+            return null;
+        }
+
+        Long memberId = numberValue(inactiveKakao, "member_id", "memberId").longValue();
+        String role = requireSupportedRole(value(inactiveKakao, "role", "role"));
+        if (memberMapper.restoreKakaoMember(memberId) != 1) {
+            throw BusinessException.conflict("이미 활성화된 회원입니다.");
+        }
+        notificationSettingMapper.ensureForRecovery(memberId);
+        return new KakaoRecovery(memberId, role);
+    }
+
+    private String requireSupportedRole(Object value) {
+        if (!(value instanceof String)) {
+            throw new IllegalStateException("복구 회원의 권한을 확인할 수 없습니다.");
+        }
+        String role = ((String) value).trim();
+        if (!"USER".equals(role) && !"ADMIN".equals(role)) {
+            throw new IllegalStateException("복구 회원의 권한을 확인할 수 없습니다.");
+        }
+        return role;
+    }
+
+    private static final class KakaoRecovery {
+        private final Long memberId;
+        private final String role;
+
+        private KakaoRecovery(Long memberId, String role) {
+            this.memberId = memberId;
+            this.role = role;
+        }
     }
 
     @Override

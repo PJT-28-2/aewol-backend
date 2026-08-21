@@ -6,9 +6,11 @@ import static org.mockito.Mockito.*;
 
 import com.aewol.common.exception.BusinessException;
 import com.aewol.common.storage.FileStorage;
+import com.aewol.domain.insurance.mapper.InsuranceMapper;
 import com.aewol.domain.pet.dto.PetDocumentResponse;
 import com.aewol.domain.pet.mapper.PetDocumentMapper;
 import com.aewol.domain.pet.mapper.PetMapper;
+import com.aewol.domain.recurring.mapper.RecurringMapper;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.time.LocalDate;
@@ -28,12 +30,15 @@ class PetDocumentUploadServiceTest {
     @Mock PetMapper petMapper;
     @Mock PetDocumentMapper petDocumentMapper;    @Mock FileStorage fileStorage;
     @Mock PetRegistrationService petRegistrationService;
+    @Mock InsuranceMapper insuranceMapper;
+    @Mock RecurringMapper recurringMapper;
 
     private PetServiceImpl service;
 
     @BeforeEach
     void setUp() {
-        service = new PetServiceImpl(petMapper, petDocumentMapper, fileStorage, petRegistrationService);
+        service = new PetServiceImpl(petMapper, petDocumentMapper, fileStorage, petRegistrationService,
+                insuranceMapper, recurringMapper);
         lenient().when(fileStorage.signedUrl(anyString()))
                 .thenAnswer(invocation -> "signed:" + invocation.getArgument(0));
     }

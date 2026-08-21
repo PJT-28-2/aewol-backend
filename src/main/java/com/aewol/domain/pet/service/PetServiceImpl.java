@@ -5,9 +5,12 @@ import com.aewol.common.storage.FileStorage;
 import com.aewol.common.util.DateTimeUtil;
 import com.aewol.domain.pet.dto.PetCreateRequest;
 import com.aewol.domain.pet.dto.PetDocumentResponse;
+import com.aewol.domain.pet.dto.PetRegistrationVerifyRequest;
 import com.aewol.domain.pet.dto.PetResponse;
+import com.aewol.domain.insurance.mapper.InsuranceMapper;
 import com.aewol.domain.pet.mapper.PetDocumentMapper;
 import com.aewol.domain.pet.mapper.PetMapper;
+import com.aewol.domain.recurring.mapper.RecurringMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
@@ -46,6 +49,8 @@ public class PetServiceImpl implements PetService {
     private final PetDocumentMapper petDocumentMapper;
     private final FileStorage fileStorage;
     private final PetRegistrationService petRegistrationService;
+    private final InsuranceMapper insuranceMapper;
+    private final RecurringMapper recurringMapper;
 
     @Override
     @Transactional
@@ -62,7 +67,13 @@ public class PetServiceImpl implements PetService {
         pet.put("medicalHistory", request.getMedicalHistory());
         petMapper.insert(pet); // pet_id AUTO_INCREMENT
 
-        return getPet(memberId, String.valueOf(pet.get("petId")));
+        String petId = String.valueOf(pet.get("petId"));
+        if (hasText(request.getRegNumber())) {
+            petRegistrationService.verify(memberId, petId,
+                    registrationRequest(request, request.getRegNumber()));
+        }
+
+        return getPet(memberId, petId);
     }
 
     @Override
@@ -88,7 +99,8 @@ public class PetServiceImpl implements PetService {
     @Override
     @Transactional
     public void updatePet(String memberId, String petId, PetCreateRequest request) {
-        assertOwner(memberId, petId);
+        Map<String, Object> existingPet = assertOwner(memberId, petId);
+        String registrationNumberToVerify = registrationNumberToVerify(existingPet, request);
         Map<String, Object> pet = new HashMap<>();
         pet.put("petId", petId);
         pet.put("name", request.getName());
@@ -100,12 +112,59 @@ public class PetServiceImpl implements PetService {
         pet.put("neutered", request.getNeutered());
         pet.put("medicalHistory", request.getMedicalHistory());
         petMapper.update(pet);
+        if (registrationNumberToVerify != null) {
+            petRegistrationService.verify(memberId, petId,
+                    registrationRequest(request, registrationNumberToVerify));
+        }
     }
 
     @Override
     @Transactional
+    public void disconnectRegistration(String memberId, String petId) {
+        assertOwner(memberId, petId);
+        Map<String, Object> document = petDocumentMapper.findByPetIdAndTypeForUpdate(petId, REGISTRATION);
+        if (document == null) {
+            throw BusinessException.notFound("연동된 동물등록정보를 찾을 수 없습니다.");
+        }
+        String docId = String.valueOf(document.get("doc_id"));
+        petRegistrationService.cancel(memberId, petId, docId);
+        if (petDocumentMapper.deleteByIdAndPetId(docId, petId) != 1) {
+            throw BusinessException.notFound("동물등록증을 찾을 수 없습니다.");
+        }
+    }
+
+    /**
+     * 반려동물 등록해제(#291): pet 행 자체는 지우지 않는다 — care_diary(ON DELETE CASCADE)와
+     * shared_access(ON DELETE NO ACTION)가 pet_id를 참조하고 있어서, pet 행을 하드 삭제하면
+     * 공동육아 구성원이 쓴 다이어리가 강제로 함께 삭제되거나 shared_access를 먼저 지워야만
+     * 삭제가 가능해져 다른 구성원의 접근 권한이 끊긴다. 그래서 소유자 개인 데이터(등록증/문서/
+     * 보험청구/보험시뮬레이션)만 하드 삭제하고, 공동 데이터(care_diary/shared_access)는 그대로 둔다.
+     * transaction은 감사 추적성 때문에, recurring_payment는 transaction.recurring_id가 이를
+     * ON DELETE NO ACTION으로 참조해 하드 삭제 시 FK 위반이 날 수 있어서 하드 삭제 대신 비활성화한다.
+     * reg_number 초기화는 deactivate보다 먼저 해야 한다 — updateRegistrationNumber는
+     * is_active = 1 조건으로 매칭하므로, deactivate 이후에 호출하면 0행이 되어 반영되지 않는다.
+     */
+    @Override
+    @Transactional
     public void deactivatePet(String memberId, String petId) {
         assertOwner(memberId, petId);
+
+        for (Map<String, Object> document : petDocumentMapper.findByPetId(petId)) {
+            deletePetDocument(memberId, petId, String.valueOf(value(document, "doc_id", "docId")));
+        }
+        // insurance_claim은 pet_document와 달리 첨부 파일 키를 자체 컬럼(receipt_image_url/
+        // claim_document_url)에 들고 있어서, 행을 지우기 전에 먼저 조회해 정리 대상 키를 확보한다.
+        for (Map<String, Object> claim : insuranceMapper.findClaimsByPetId(petId)) {
+            arrangeDeletedFileCleanup((String) value(claim, "receipt_image_url", "receiptImageUrl"));
+            arrangeDeletedFileCleanup((String) value(claim, "claim_document_url", "claimDocumentUrl"));
+        }
+        insuranceMapper.deleteClaimsByPetId(petId);
+        insuranceMapper.deleteSimulationsByPetId(petId);
+        recurringMapper.deactivateByPetId(petId);
+        if (petMapper.updateRegistrationNumber(petId, memberId, null) != 1) {
+            throw BusinessException.notFound("반려동물을 찾을 수 없습니다.");
+        }
+
         if (petMapper.deactivate(petId, memberId) != 1) {
             throw BusinessException.notFound("반려동물을 찾을 수 없습니다.");
         }
@@ -319,12 +378,39 @@ public class PetServiceImpl implements PetService {
         return null;
     }
 
-    private void assertOwner(String memberId, String petId) {
+    private Map<String, Object> assertOwner(String memberId, String petId) {
         Map<String, Object> pet = petMapper.findById(petId);
         if (pet == null) throw BusinessException.notFound("반려동물을 찾을 수 없습니다.");
         if (!isOwner(memberId, pet)) {
             throw BusinessException.forbidden("대표 보호자만 이 작업을 할 수 있습니다.");
         }
+        return pet;
+    }
+
+    private String registrationNumberToVerify(Map<String, Object> existingPet, PetCreateRequest request) {
+        String existingRegNumber = stringValue(existingPet.get("reg_number"));
+        String requestedRegNumber = hasText(request.getRegNumber()) ? request.getRegNumber() : existingRegNumber;
+        if (!hasText(requestedRegNumber)) return null;
+        if (!Objects.equals(requestedRegNumber, existingRegNumber)) return requestedRegNumber;
+        if (hasText(request.getRegistrationOwnerName())) return requestedRegNumber;
+        if (!Objects.equals(request.getName(), existingPet.get("name"))) return requestedRegNumber;
+        if (!Objects.equals(request.getBirthDate(), stringValue(existingPet.get("birth_date")))) {
+            return requestedRegNumber;
+        }
+        return null;
+    }
+
+    private PetRegistrationVerifyRequest registrationRequest(PetCreateRequest request, String regNumber) {
+        return new PetRegistrationVerifyRequest(
+                regNumber, request.getRegistrationOwnerName(), null);
+    }
+
+    private static boolean hasText(String value) {
+        return value != null && !value.isBlank();
+    }
+
+    private static String stringValue(Object value) {
+        return value == null ? null : value.toString();
     }
 
     private boolean isOwner(String memberId, Map<String, Object> pet) {

@@ -111,6 +111,13 @@ public class PetRegistrationServiceImpl implements PetRegistrationService {
         if (petMapper.updateRegistrationNumber(petId, memberId, request.getRegNumber()) != 1) {
             throw BusinessException.notFound("반려동물을 찾을 수 없습니다.");
         }
+        // 견종/중성화는 name/birthDate/gender와 달리 validateMatch()에서 검증하지 않으므로,
+        // 사용자가 입력한 값이 등록증과 달라도 여기까지 통과한다. 정부 등록증을 진실 원천으로
+        // 보고 여기서 자동으로 덮어써 동기화한다(보험 시뮬레이션 등이 이 값을 쓰기 때문).
+        if (petMapper.updateRegistrationDetails(petId,
+                (String) registration.get("breed"), (String) registration.get("neutered")) != 1) {
+            throw BusinessException.notFound("반려동물을 찾을 수 없습니다.");
+        }
 
         // 방금 저장한 registration(메모리 맵)을 그대로 응답하면 last_synced_at이 빠진다 —
         // 그 컬럼은 insert/update SQL의 NOW()로 DB에서만 채워지고 메모리 맵엔 없기 때문이다.

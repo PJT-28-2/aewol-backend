@@ -39,6 +39,18 @@
         SELECT * FROM insurance_claim WHERE member_id = #{memberId} ORDER BY created_at DESC
     </select>
 
+    <select id="findClaimsByPetId" resultType="map">
+        SELECT * FROM insurance_claim WHERE pet_id = #{petId}
+    </select>
+
+    <delete id="deleteClaimsByPetId">
+        DELETE FROM insurance_claim WHERE pet_id = #{petId}
+    </delete>
+
+    <delete id="deleteSimulationsByPetId">
+        DELETE FROM insurance_simulation WHERE pet_id = #{petId}
+    </delete>
+
     <select id="findProductsBySpecies" resultType="map">
         SELECT * FROM insurance_product WHERE species = #{species}
     </select>

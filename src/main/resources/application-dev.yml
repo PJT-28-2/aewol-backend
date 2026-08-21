@@ -48,6 +48,12 @@ security:
     encryption-key: ${ACCOUNT_ENCRYPTION_KEY}
     hash-key: ${ACCOUNT_HASH_KEY}
 
+# 시연용 설정(#290)
+demo:
+  # 1원 인증 입금자명을 verify-deposit 응답에 실어 보낼지 여부.
+  # CODEF 데모 서버에 붙어 있을 때만 동작한다(AccountServiceImpl.isTestExposureAllowed).
+  expose-depositor-name: ${DEMO_EXPOSE_DEPOSITOR_NAME:false}
+
 # External APIs
 external:
   solapi:

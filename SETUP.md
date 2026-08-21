@@ -20,6 +20,17 @@ docker-compose up -d
   ```bash
   cp src/main/resources/application-local.yml.example src/main/resources/application-local.yml
   ```
+
+  이미 `application-local.yml`을 만들어 둔 사람도 예제 파일이 바뀌면 다시 비교해야 한다.
+  예를 들어 계좌 암호화 키(`security.account.*`)는 2026-08-13에 추가돼서, 그 전에 만든
+  파일에는 항목 자체가 없다. 빠져 있으면 기동 시 `AccountNumberCrypto` 빈 생성에서 멈춘다.
+
+  ```bash
+  # 암호화 키는 정확히 32바이트, 해시 키는 32바이트 이상이어야 한다(base64 인코딩 전)
+  openssl rand -base64 32   # ACCOUNT_ENCRYPTION_KEY
+  openssl rand -base64 32   # ACCOUNT_HASH_KEY
+  ```
+
 - 개인 설정 없이 docker-compose 기본값으로 바로 띄우려면 `-Dspring.profiles.active=dev`를 사용해도 된다 (`application-dev.yml`의 기본값이 위 계정/포트와 일치).
 - 공통 `application.yml`에 더해 활성 프로파일과 같은 이름의 설정 파일 하나만 로드된다. 예를 들어 `dev`는 `application-dev.yml`, 테스트의 `test`는 `application-test.yml`을 사용한다.
 

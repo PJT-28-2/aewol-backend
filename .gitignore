@@ -28,6 +28,10 @@ out/
 .classpath
 .project
 .settings/
+# Eclipse/STS와 IDEA의 Eclipse 호환 모드가 컴파일 결과를 여기에 쌓는다.
+# gradle의 build/ 와 역할이 같은데 무시 목록에 없어서, 누가 `git add .` 한 번만 하면
+# .class 파일이 통째로 커밋된다.
+bin/
 
 # --- VS Code ---
 .vscode/

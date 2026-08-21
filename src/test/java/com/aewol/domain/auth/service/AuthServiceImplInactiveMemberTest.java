@@ -26,6 +26,8 @@ import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.util.ReflectionTestUtils;
+import org.springframework.transaction.support.TransactionCallback;
+import org.springframework.transaction.support.TransactionOperations;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -50,6 +52,7 @@ class AuthServiceImplInactiveMemberTest {
     @Mock KakaoAuthClient kakaoAuthClient;
     @Mock AuthCredentialStore authCredentialStore;
     @Mock KakaoRegistrationStore kakaoRegistrationStore;
+    @Mock TransactionOperations transactionOperations;
 
     private AuthServiceImpl service;
 
@@ -57,7 +60,13 @@ class AuthServiceImplInactiveMemberTest {
     void setUp() {
         service = new AuthServiceImpl(memberMapper, walletMapper, notificationSettingMapper,
                 jwtUtil, passwordEncoder, redisTemplate, redisRateLimiter, emailService,
-                kakaoAuthClient, authCredentialStore, kakaoRegistrationStore);
+                kakaoAuthClient, authCredentialStore, kakaoRegistrationStore,
+                transactionOperations);
+        lenient().when(transactionOperations.execute(org.mockito.ArgumentMatchers.any()))
+                .thenAnswer(invocation -> {
+                    TransactionCallback<?> callback = invocation.getArgument(0);
+                    return callback.doInTransaction(null);
+                });
     }
 
     @Test
@@ -83,6 +92,84 @@ class AuthServiceImplInactiveMemberTest {
                 () -> service.kakaoLogin("authorization-code"));
 
         assertEquals(401, exception.getStatus().value());
+        verifyKakaoAuthenticationWasNotCreated();
+    }
+
+    @Test
+    void recoverableKakaoIdentityRestoresExistingMemberAndIssuesFreshTokens() {
+        stubKakaoUserInfo("member@example.com", "홍길동");
+        when(memberMapper.findActiveKakaoByProviderId("kakao-id")).thenReturn(null);
+        when(memberMapper.findActiveByEmail("member@example.com")).thenReturn(null);
+        Map<String, Object> inactive = recoverableInactiveKakaoMember();
+        when(memberMapper.findInactiveKakaoByProviderIdForUpdate("kakao-id"))
+                .thenReturn(inactive);
+        when(memberMapper.restoreKakaoMember(7L)).thenReturn(1);
+        stubTokenGeneration("7");
+
+        KakaoOAuthResponse response = service.kakaoLogin("authorization-code");
+
+        assertEquals(KakaoAuthStatus.ACCOUNT_RESTORED, response.getAuthStatus());
+        assertEquals("access-token", response.getAccessToken());
+        assertEquals("refresh-token", response.getRefreshToken());
+        verify(memberMapper).restoreKakaoMember(7L);
+        verify(notificationSettingMapper).ensureForRecovery(7L);
+        verify(memberMapper, never()).insert(org.mockito.ArgumentMatchers.any());
+        verify(walletMapper, never()).insert(org.mockito.ArgumentMatchers.any());
+        verify(kakaoRegistrationStore, never()).create(org.mockito.ArgumentMatchers.any());
+        org.mockito.InOrder order = org.mockito.Mockito.inOrder(
+                kakaoAuthClient, transactionOperations);
+        order.verify(kakaoAuthClient).getAccessToken("authorization-code");
+        order.verify(kakaoAuthClient).getUserInfo("kakao-access-token");
+        order.verify(transactionOperations).execute(org.mockito.ArgumentMatchers.any());
+    }
+
+    @Test
+    void recoverableKakaoIdentityRejectsNullRoleBeforeRestoring() {
+        assertInvalidRecoveryRole(null);
+    }
+
+    @Test
+    void recoverableKakaoIdentityRejectsBlankRoleBeforeRestoring() {
+        assertInvalidRecoveryRole("   ");
+    }
+
+    @Test
+    void recoverableKakaoIdentityRejectsUnknownRoleBeforeRestoring() {
+        assertInvalidRecoveryRole("SUPERUSER");
+    }
+
+    @Test
+    void kakaoIdentityAtExactlyThirtyDayBoundaryIsRecoverable() {
+        stubKakaoUserInfo("member@example.com", "홍길동");
+        when(memberMapper.findActiveKakaoByProviderId("kakao-id")).thenReturn(null);
+        when(memberMapper.findActiveByEmail("member@example.com")).thenReturn(null);
+        Map<String, Object> boundaryMember = recoverableInactiveKakaoMember();
+        when(memberMapper.findInactiveKakaoByProviderIdForUpdate("kakao-id"))
+                .thenReturn(boundaryMember);
+        when(memberMapper.restoreKakaoMember(7L)).thenReturn(1);
+        stubTokenGeneration("7");
+
+        KakaoOAuthResponse response = service.kakaoLogin("authorization-code");
+
+        assertEquals(KakaoAuthStatus.ACCOUNT_RESTORED, response.getAuthStatus());
+        verify(memberMapper).restoreKakaoMember(7L);
+        verify(kakaoRegistrationStore, never()).create(org.mockito.ArgumentMatchers.any());
+    }
+
+    @Test
+    void kakaoIdentityPastThirtyDaysRemainsBlocked() {
+        stubKakaoUserInfo("member@example.com", "홍길동");
+        when(memberMapper.findActiveKakaoByProviderId("kakao-id")).thenReturn(null);
+        when(memberMapper.findActiveByEmail("member@example.com")).thenReturn(null);
+        when(memberMapper.findInactiveKakaoByProviderIdForUpdate("kakao-id"))
+                .thenReturn(null);
+        when(memberMapper.existsInactiveKakaoByProviderId("kakao-id")).thenReturn(true);
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.kakaoLogin("authorization-code"));
+
+        assertEquals(401, exception.getStatus().value());
+        verify(memberMapper, never()).restoreKakaoMember(org.mockito.ArgumentMatchers.anyLong());
         verifyKakaoAuthenticationWasNotCreated();
     }
 
@@ -385,6 +472,37 @@ class AuthServiceImplInactiveMemberTest {
         Map<String, Object> member = member(active);
         member.put("withdrawn_at_epoch", withdrawnAtEpoch);
         return member;
+    }
+
+    private Map<String, Object> recoverableInactiveKakaoMember() {
+        Map<String, Object> member = member(0, 1_000L);
+        member.put("member_id", 7L);
+        member.put("provider", "KAKAO");
+        member.put("provider_id", "kakao-id");
+        member.put("email", "member@example.com");
+        member.put("recoverable_within_30_days", 1);
+        return member;
+    }
+
+    private void assertInvalidRecoveryRole(String role) {
+        stubKakaoUserInfo("member@example.com", "홍길동");
+        when(memberMapper.findActiveKakaoByProviderId("kakao-id")).thenReturn(null);
+        when(memberMapper.findActiveByEmail("member@example.com")).thenReturn(null);
+        Map<String, Object> inactive = recoverableInactiveKakaoMember();
+        inactive.put("role", role);
+        when(memberMapper.findInactiveKakaoByProviderIdForUpdate("kakao-id"))
+                .thenReturn(inactive);
+
+        assertThrows(IllegalStateException.class,
+                () -> service.kakaoLogin("authorization-code"));
+
+        verify(memberMapper, never()).restoreKakaoMember(
+                org.mockito.ArgumentMatchers.anyLong());
+        verify(notificationSettingMapper, never()).ensureForRecovery(
+                org.mockito.ArgumentMatchers.anyLong());
+        verify(jwtUtil, never()).generateAccessToken(
+                org.mockito.ArgumentMatchers.anyString(),
+                org.mockito.ArgumentMatchers.anyString());
     }
 
     private Claims refreshClaims(Date issuedAt) {
