@@ -111,6 +111,7 @@ public class PetServiceImpl implements PetService {
         pet.put("weight", request.getWeight());
         pet.put("neutered", request.getNeutered());
         pet.put("medicalHistory", request.getMedicalHistory());
+        pet.put("instagramId", normalizeInstagramId(request.getInstagramId()));
         petMapper.update(pet);
         if (registrationNumberToVerify != null) {
             petRegistrationService.verify(memberId, petId,
@@ -444,5 +445,25 @@ public class PetServiceImpl implements PetService {
         if (value instanceof Boolean) return (Boolean) value;
         if (value instanceof Number) return ((Number) value).intValue() == 1;
         return false;
+    }
+
+    /**
+     * 인스타그램 핸들을 저장 형태로 맞춘다.
+     *
+     * <p>사용자는 {@code @보리}처럼 앞에 {@code @}를 붙여 적기도 하고 대소문자를 섞어
+     * 적기도 한다. 인스타그램 핸들은 대소문자를 구분하지 않으므로, 저장은 {@code @} 없이
+     * 소문자로 통일한다. 링크를 만들 때마다 형태가 달라지면 같은 계정이 다르게 보인다.
+     *
+     * <p>빈 문자열은 null로 바꾼다. 지우려고 비운 것과 처음부터 없는 것을 DB에서 같게 둔다.
+     */
+    private static String normalizeInstagramId(String rawHandle) {
+        if (rawHandle == null) {
+            return null;
+        }
+        String handle = rawHandle.trim();
+        if (handle.startsWith("@")) {
+            handle = handle.substring(1);
+        }
+        return handle.isEmpty() ? null : handle.toLowerCase(java.util.Locale.ROOT);
     }
 }
