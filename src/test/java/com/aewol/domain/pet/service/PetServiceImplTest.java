@@ -224,6 +224,7 @@ class PetServiceImplTest {
         PetServiceImpl service = service();
         when(petMapper.findById("pet-1")).thenReturn(pet("member-1"));
         when(petDocumentMapper.findByPetId("pet-1")).thenReturn(List.of());
+        when(petMapper.updateRegistrationNumber("pet-1", "member-1", null)).thenReturn(1);
         when(petMapper.deactivate("pet-1", "member-1")).thenReturn(1);
 
         service.deactivatePet("member-1", "pet-1");
@@ -250,6 +251,7 @@ class PetServiceImplTest {
         when(petDocumentMapper.findByIdAndPetIdForUpdate("doc-2", "pet-1")).thenReturn(vaccinationDoc);
         when(petDocumentMapper.deleteByIdAndPetId("doc-1", "pet-1")).thenReturn(1);
         when(petDocumentMapper.deleteByIdAndPetId("doc-2", "pet-1")).thenReturn(1);
+        when(petMapper.updateRegistrationNumber("pet-1", "member-1", null)).thenReturn(1);
         when(petMapper.deactivate("pet-1", "member-1")).thenReturn(1);
 
         service.deactivatePet("member-1", "pet-1");
@@ -260,7 +262,7 @@ class PetServiceImplTest {
         verify(petDocumentMapper).deleteByIdAndPetId("doc-2", "pet-1");
         verify(insuranceMapper).deleteClaimsByPetId("pet-1");
         verify(insuranceMapper).deleteSimulationsByPetId("pet-1");
-        verify(recurringMapper).deleteByPetId("pet-1");
+        verify(recurringMapper).deactivateByPetId("pet-1");
         verify(petMapper).updateRegistrationNumber("pet-1", "member-1", null);
         verify(petMapper).deactivate("pet-1", "member-1");
     }
@@ -282,12 +284,29 @@ class PetServiceImplTest {
         PetServiceImpl service = service();
         when(petMapper.findById("pet-1")).thenReturn(pet("member-1"));
         when(petDocumentMapper.findByPetId("pet-1")).thenReturn(List.of());
+        when(petMapper.updateRegistrationNumber("pet-1", "member-1", null)).thenReturn(1);
         when(petMapper.deactivate("pet-1", "member-1")).thenReturn(0);
 
         BusinessException exception = assertThrows(BusinessException.class,
                 () -> service.deactivatePet("member-1", "pet-1"));
 
         assertEquals(HttpStatus.NOT_FOUND, exception.getStatus());
+    }
+
+    // #291: updateRegistrationNumber가 0행을 반환하면(예: 동시에 다른 요청이 먼저 처리)
+    // deactivate까지 가지 않고 즉시 실패해야 한다.
+    @Test
+    void should_throwNotFound_when_regNumberClearFailsConcurrently() {
+        PetServiceImpl service = service();
+        when(petMapper.findById("pet-1")).thenReturn(pet("member-1"));
+        when(petDocumentMapper.findByPetId("pet-1")).thenReturn(List.of());
+        when(petMapper.updateRegistrationNumber("pet-1", "member-1", null)).thenReturn(0);
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.deactivatePet("member-1", "pet-1"));
+
+        assertEquals(HttpStatus.NOT_FOUND, exception.getStatus());
+        verify(petMapper, never()).deactivate(anyString(), anyString());
     }
 
     private static Map<String, Object> pet(String ownerId) {

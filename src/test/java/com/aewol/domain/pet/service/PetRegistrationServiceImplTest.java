@@ -35,6 +35,9 @@ class PetRegistrationServiceImplTest {
     void setUp() {
         service = new PetRegistrationServiceImpl(
                 petMapper, petDocumentMapper, petRegistrationMapper, apmsClient);
+        // 성공 경로의 verify() 호출 대부분이 여기까지 도달하므로 기본값을 lenient로 깔아두고,
+        // breed/neutered 동기화 자체를 검증하는 테스트는 개별적으로 verify()로 인자를 확인한다.
+        lenient().when(petMapper.updateRegistrationDetails(anyString(), any(), any())).thenReturn(1);
     }
 
     @Test
