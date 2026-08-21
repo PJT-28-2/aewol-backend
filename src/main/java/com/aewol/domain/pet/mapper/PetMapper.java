@@ -17,6 +17,11 @@ public interface PetMapper {
                                  @Param("memberId") String memberId,
                                  @Param("regNumber") String regNumber);
 
+    /** 동물등록증 연동 성공 시 견종/중성화 여부를 등록증 값으로 동기화한다. APMS가 값을 안 주면(null) 기존 값을 유지한다. */
+    int updateRegistrationDetails(@Param("petId") String petId,
+                                  @Param("breed") String breed,
+                                  @Param("neutered") String neutered);
+
     /** AI가 생성한 캐릭터 이미지 경로를 저장한다. */
     int updateCharacterImages(@Param("petId") String petId,
                               @Param("memberId") String memberId,

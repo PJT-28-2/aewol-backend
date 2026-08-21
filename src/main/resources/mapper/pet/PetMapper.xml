@@ -56,4 +56,10 @@
         WHERE pet_id = #{petId} AND member_id = #{memberId} AND is_active = 1
     </update>
 
+    <update id="updateRegistrationDetails">
+        UPDATE pet
+        SET breed = COALESCE(#{breed}, breed), neutered = COALESCE(#{neutered}, neutered), updated_at = NOW()
+        WHERE pet_id = #{petId}
+    </update>
+
 </mapper>
