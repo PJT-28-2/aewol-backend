@@ -50,3 +50,7 @@ donation:
 
 cookie:
   secure: ${COOKIE_SECURE:false}
+
+# Toss 없이 MAIN 지갑을 올리는 POST /api/wallet/deposit. 운영 기본값은 차단이다.
+wallet:
+  allow-unverified-deposit: ${WALLET_ALLOW_UNVERIFIED_DEPOSIT:false}

@@ -53,6 +53,10 @@ security:
     encryption-key: ${ACCOUNT_ENCRYPTION_KEY}
     hash-key: ${ACCOUNT_HASH_KEY}
 
+# Toss 없이 MAIN 지갑을 올리는 로컬 데모 API(#298). 운영에서는 켜지 않는다.
+wallet:
+  allow-unverified-deposit: true
+
 external:
   solapi:
     api-key: ${SOLAPI_API_KEY}

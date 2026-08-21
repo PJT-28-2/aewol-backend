@@ -73,6 +73,9 @@ demo:
   # 끄지 않아도 자동으로 차단된다.
   expose-depositor-name: ${DEMO_EXPOSE_DEPOSITOR_NAME:false}
 
+wallet:
+  allow-unverified-deposit: false
+
 # External APIs
 external:
   solapi:
