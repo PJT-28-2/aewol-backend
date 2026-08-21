@@ -4,9 +4,12 @@
     <!-- V1 transaction: 금액 컴럼은 price, 반려동물 태그는 t.pet_id (버킷 폐기) -->
 
     <!-- 세 쿼리 모두 환불(REFUND)된 원래 PAYMENT row를 제외한다 — 환불은 공동구매 경로에서만
-         발생하고, 참여자 취소/작성자 취소/마감 미달 자동환불 세 경로 전부 동일하게
+         발생하고(2026-08-21 기준 grep "REFUND" 전체 결과: GroupPurchaseServiceImpl, GroupPurchaseRefundExecutor
+         두 곳뿐 — 다른 도메인이 REFUND를 만들게 되면 이 전제와 아래 서브쿼리를 재검토해야 한다),
+         참여자 취소/작성자 취소/마감 미달 자동환불 세 경로 전부 동일하게
          group_purchase_participant.payment_status를 CANCELLED로 남기므로 이 서브쿼리 하나로 세 경로를
-         모두 커버한다. -->
+         모두 커버한다. group_purchase_participant.txn_id는 idx_gpp_txn 인덱스가 있어(V1__init_schema.sql)
+         상관 서브쿼리 성능 문제는 없다. -->
     <select id="getMonthlyTotal" resultType="java.math.BigDecimal">
         SELECT COALESCE(SUM(price), 0)
         FROM `transaction` t
