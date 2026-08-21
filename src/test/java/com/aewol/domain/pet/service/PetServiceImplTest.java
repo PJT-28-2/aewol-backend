@@ -144,6 +144,25 @@ class PetServiceImplTest {
     }
 
     @Test
+    void should_reverifyExistingRegistration_when_ownerNameIsProvided() {
+        PetServiceImpl service = service();
+        PetCreateRequest request = mock(PetCreateRequest.class);
+        Map<String, Object> existing = pet("member-1");
+        existing.put("reg_number", "410000012345678");
+        when(request.getRegNumber()).thenReturn("410000012345678");
+        when(request.getRegistrationOwnerName()).thenReturn("새소유자");
+        when(request.getName()).thenReturn("애월");
+        when(petMapper.findById("pet-1")).thenReturn(existing);
+
+        service.updatePet("member-1", "pet-1", request);
+
+        verify(petRegistrationService).verify(eq("member-1"), eq("pet-1"),
+                argThat(verifyRequest ->
+                        "410000012345678".equals(verifyRequest.getRegNumber())
+                                && "새소유자".equals(verifyRequest.getUserName())));
+    }
+
+    @Test
     void should_notDisconnectRegistration_when_registrationDoesNotExist() {
         PetServiceImpl service = service();
         when(petMapper.findById("pet-1")).thenReturn(pet("member-1"));
