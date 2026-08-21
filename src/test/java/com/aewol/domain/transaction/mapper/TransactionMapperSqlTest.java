@@ -55,6 +55,16 @@ class TransactionMapperSqlTest {
         assertTrue(withdrawBlock.contains("gpp.payment_status = 'CANCELLED'"));
     }
 
+    @Test
+    void should_excludeRefundedPayments_forFindRecentByWalletIdPaymentFilter() throws Exception {
+        String select = selectBody("findRecentByWalletId");
+
+        assertTrue(select.contains("txnFilter == 'PAYMENT'"));
+        String paymentBlock = ifBlock(select, "PAYMENT");
+        assertTrue(paymentBlock.contains("t.txn_type = 'PAYMENT'"));
+        assertTrue(paymentBlock.contains("gpp.payment_status = 'CANCELLED'"));
+    }
+
     private static String selectBody(String selectId) throws Exception {
         String sql = Files.readString(
                 Path.of("src/main/resources/mapper/transaction/TransactionMapper.xml"),
