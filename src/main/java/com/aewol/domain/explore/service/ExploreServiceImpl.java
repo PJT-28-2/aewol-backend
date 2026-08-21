@@ -48,6 +48,17 @@ public class ExploreServiceImpl implements ExploreService {
         return toPage(exploreMapper.findPublicPostsByPet(petId, parsed[0], parsed[1], limit + 1), limit);
     }
 
+    /** 비공개 글의 id를 알아도 열리지 않는다. 조회 조건이 목록과 같다. */
+    @Override
+    @Transactional(readOnly = true)
+    public ExplorePostResponse getPost(String diaryId) {
+        Map<String, Object> row = exploreMapper.findPublicPost(diaryId);
+        if (row == null) {
+            throw BusinessException.notFound("게시물을 찾을 수 없습니다.");
+        }
+        return toPost(row, loadImages(List.of(row)));
+    }
+
     @Override
     @Transactional(readOnly = true)
     public PetPublicProfileResponse getPetProfile(String petId) {

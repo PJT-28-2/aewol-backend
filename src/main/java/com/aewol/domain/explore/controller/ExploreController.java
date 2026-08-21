@@ -2,6 +2,7 @@ package com.aewol.domain.explore.controller;
 
 import com.aewol.common.response.ApiResponse;
 import com.aewol.domain.explore.dto.ExplorePageResponse;
+import com.aewol.domain.explore.dto.ExplorePostResponse;
 import com.aewol.domain.explore.dto.PetPublicProfileResponse;
 import com.aewol.domain.explore.service.ExploreService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -30,6 +31,12 @@ public class ExploreController {
             @RequestParam(required = false) String cursor,
             @RequestParam(defaultValue = "0") int size) {
         return ResponseEntity.ok(ApiResponse.success(exploreService.getExploreFeed(cursor, size)));
+    }
+
+    @Operation(summary = "공개 게시물 상세")
+    @GetMapping("/diaries/{diaryId}")
+    public ResponseEntity<ApiResponse<ExplorePostResponse>> getPost(@PathVariable String diaryId) {
+        return ResponseEntity.ok(ApiResponse.success(exploreService.getPost(diaryId)));
     }
 
     @Operation(summary = "반려동물 계정의 공개 게시물")
