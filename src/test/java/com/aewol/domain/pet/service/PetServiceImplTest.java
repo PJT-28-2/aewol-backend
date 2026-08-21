@@ -6,11 +6,14 @@ import static org.mockito.Mockito.*;
 
 import com.aewol.common.exception.BusinessException;
 import com.aewol.common.storage.FileStorage;
+import com.aewol.domain.insurance.mapper.InsuranceMapper;
 import com.aewol.domain.pet.dto.PetCreateRequest;
 import com.aewol.domain.pet.dto.PetResponse;
 import com.aewol.domain.pet.mapper.PetMapper;
 import com.aewol.domain.pet.mapper.PetDocumentMapper;
+import com.aewol.domain.recurring.mapper.RecurringMapper;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -24,9 +27,12 @@ class PetServiceImplTest {
     @Mock PetMapper petMapper;
     @Mock PetDocumentMapper petDocumentMapper;    @Mock FileStorage fileStorage;
     @Mock PetRegistrationService petRegistrationService;
+    @Mock InsuranceMapper insuranceMapper;
+    @Mock RecurringMapper recurringMapper;
 
     private PetServiceImpl service() {
-        return new PetServiceImpl(petMapper, petDocumentMapper, fileStorage, petRegistrationService);
+        return new PetServiceImpl(petMapper, petDocumentMapper, fileStorage, petRegistrationService,
+                insuranceMapper, recurringMapper);
     }
 
     @Test
@@ -217,11 +223,79 @@ class PetServiceImplTest {
     void should_deactivatePet_when_memberOwnsPet() {
         PetServiceImpl service = service();
         when(petMapper.findById("pet-1")).thenReturn(pet("member-1"));
+        when(petDocumentMapper.findByPetId("pet-1")).thenReturn(List.of());
+        when(petMapper.updateRegistrationNumber("pet-1", "member-1", null)).thenReturn(1);
         when(petMapper.deactivate("pet-1", "member-1")).thenReturn(1);
 
         service.deactivatePet("member-1", "pet-1");
 
         verify(petMapper).deactivate("pet-1", "member-1");
+    }
+
+    // #291: pet 행은 남기고 소유자 개인 데이터(등록증/문서/보험/정기결제)만 하드 삭제하며,
+    // reg_number를 null로 초기화한다. care_diary/shared_access는 이번 변경으로 손대지 않는다.
+    @Test
+    void should_deleteOwnerPersonalDataAndClearRegNumber_when_deactivatingPet() {
+        PetServiceImpl service = service();
+        when(petMapper.findById("pet-1")).thenReturn(pet("member-1"));
+        Map<String, Object> registrationDoc = new HashMap<>();
+        registrationDoc.put("doc_id", "doc-1");
+        registrationDoc.put("doc_type", "REGISTRATION");
+        registrationDoc.put("file_url", null);
+        Map<String, Object> vaccinationDoc = new HashMap<>();
+        vaccinationDoc.put("doc_id", "doc-2");
+        vaccinationDoc.put("doc_type", "VACCINATION");
+        vaccinationDoc.put("file_url", "pet-documents/vaccine.jpg");
+        when(petDocumentMapper.findByPetId("pet-1")).thenReturn(List.of(registrationDoc, vaccinationDoc));
+        when(petDocumentMapper.findByIdAndPetIdForUpdate("doc-1", "pet-1")).thenReturn(registrationDoc);
+        when(petDocumentMapper.findByIdAndPetIdForUpdate("doc-2", "pet-1")).thenReturn(vaccinationDoc);
+        when(petDocumentMapper.deleteByIdAndPetId("doc-1", "pet-1")).thenReturn(1);
+        when(petDocumentMapper.deleteByIdAndPetId("doc-2", "pet-1")).thenReturn(1);
+        Map<String, Object> claim = new HashMap<>();
+        claim.put("claim_id", "claim-1");
+        claim.put("receipt_image_url", "receipts/claim-1.jpg");
+        claim.put("claim_document_url", "claim-documents/claim-1.pdf");
+        when(insuranceMapper.findClaimsByPetId("pet-1")).thenReturn(List.of(claim));
+        when(petMapper.updateRegistrationNumber("pet-1", "member-1", null)).thenReturn(1);
+        when(petMapper.deactivate("pet-1", "member-1")).thenReturn(1);
+
+        service.deactivatePet("member-1", "pet-1");
+
+        verify(petRegistrationService).cancel("member-1", "pet-1", "doc-1");
+        verify(petRegistrationService, never()).cancel(eq("member-1"), eq("pet-1"), eq("doc-2"));
+        verify(petDocumentMapper).deleteByIdAndPetId("doc-1", "pet-1");
+        verify(petDocumentMapper).deleteByIdAndPetId("doc-2", "pet-1");
+        // 보험 청구는 pet_document와 달리 첨부 파일 키를 자체 컬럼에 들고 있어서,
+        // 행 삭제와 별개로 파일 정리도 함께 이뤄져야 한다.
+        verify(fileStorage).delete("receipts/claim-1.jpg");
+        verify(fileStorage).delete("claim-documents/claim-1.pdf");
+        verify(insuranceMapper).deleteClaimsByPetId("pet-1");
+        verify(insuranceMapper).deleteSimulationsByPetId("pet-1");
+        verify(recurringMapper).deactivateByPetId("pet-1");
+        verify(petMapper).updateRegistrationNumber("pet-1", "member-1", null);
+        verify(petMapper).deactivate("pet-1", "member-1");
+    }
+
+    // 영수증만 올리고 아직 청구서류(claim_document_url)는 없는 DRAFT 상태 클레임이 흔하다 —
+    // 이 경우 arrangeDeletedFileCleanup(null)이 예외 없이 조용히 넘어가야 한다.
+    @Test
+    void should_skipCleanup_when_claimHasNoDocumentUrlYet() {
+        PetServiceImpl service = service();
+        when(petMapper.findById("pet-1")).thenReturn(pet("member-1"));
+        when(petDocumentMapper.findByPetId("pet-1")).thenReturn(List.of());
+        Map<String, Object> draftClaim = new HashMap<>();
+        draftClaim.put("claim_id", "claim-2");
+        draftClaim.put("receipt_image_url", "receipts/claim-2.jpg");
+        draftClaim.put("claim_document_url", null);
+        when(insuranceMapper.findClaimsByPetId("pet-1")).thenReturn(List.of(draftClaim));
+        when(petMapper.updateRegistrationNumber("pet-1", "member-1", null)).thenReturn(1);
+        when(petMapper.deactivate("pet-1", "member-1")).thenReturn(1);
+
+        service.deactivatePet("member-1", "pet-1");
+
+        verify(fileStorage).delete("receipts/claim-2.jpg");
+        verify(fileStorage, never()).delete(null);
+        verify(insuranceMapper).deleteClaimsByPetId("pet-1");
     }
 
     @Test
@@ -240,12 +314,30 @@ class PetServiceImplTest {
     void should_throwNotFound_when_petIsAlreadyDeactivatedConcurrently() {
         PetServiceImpl service = service();
         when(petMapper.findById("pet-1")).thenReturn(pet("member-1"));
+        when(petDocumentMapper.findByPetId("pet-1")).thenReturn(List.of());
+        when(petMapper.updateRegistrationNumber("pet-1", "member-1", null)).thenReturn(1);
         when(petMapper.deactivate("pet-1", "member-1")).thenReturn(0);
 
         BusinessException exception = assertThrows(BusinessException.class,
                 () -> service.deactivatePet("member-1", "pet-1"));
 
         assertEquals(HttpStatus.NOT_FOUND, exception.getStatus());
+    }
+
+    // #291: updateRegistrationNumber가 0행을 반환하면(예: 동시에 다른 요청이 먼저 처리)
+    // deactivate까지 가지 않고 즉시 실패해야 한다.
+    @Test
+    void should_throwNotFound_when_regNumberClearFailsConcurrently() {
+        PetServiceImpl service = service();
+        when(petMapper.findById("pet-1")).thenReturn(pet("member-1"));
+        when(petDocumentMapper.findByPetId("pet-1")).thenReturn(List.of());
+        when(petMapper.updateRegistrationNumber("pet-1", "member-1", null)).thenReturn(0);
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.deactivatePet("member-1", "pet-1"));
+
+        assertEquals(HttpStatus.NOT_FOUND, exception.getStatus());
+        verify(petMapper, never()).deactivate(anyString(), anyString());
     }
 
     private static Map<String, Object> pet(String ownerId) {

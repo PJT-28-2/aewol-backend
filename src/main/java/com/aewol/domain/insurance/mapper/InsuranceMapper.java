@@ -13,6 +13,15 @@ public interface InsuranceMapper {
     Map<String, Object> findClaimById(@Param("claimId") String claimId);
     List<Map<String, Object>> findClaimsByMemberId(@Param("memberId") String memberId);
 
+    /** 펫 등록해제(#291) 전용 — 삭제 전 첨부 파일(receipt_image_url/claim_document_url) 정리를 위해 조회한다. */
+    List<Map<String, Object>> findClaimsByPetId(@Param("petId") String petId);
+
+    /** 펫 등록해제(#291) 전용. petId만으로 매칭하므로 호출 전 소유권 검증(assertOwner 등)이 선행돼야 한다. */
+    int deleteClaimsByPetId(@Param("petId") String petId);
+
+    /** 펫 등록해제(#291) 전용. petId만으로 매칭하므로 호출 전 소유권 검증(assertOwner 등)이 선행돼야 한다. */
+    int deleteSimulationsByPetId(@Param("petId") String petId);
+
     List<Map<String, Object>> findProductsBySpecies(@Param("species") String species);
     List<Map<String, Object>> findCoveragesByProductIds(@Param("productIds") List<Long> productIds);
     List<Map<String, Object>> findPlanTiersByProductIds(@Param("productIds") List<Long> productIds);
