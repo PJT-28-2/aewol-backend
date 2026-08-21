@@ -152,6 +152,12 @@ public class PetServiceImpl implements PetService {
         for (Map<String, Object> document : petDocumentMapper.findByPetId(petId)) {
             deletePetDocument(memberId, petId, String.valueOf(value(document, "doc_id", "docId")));
         }
+        // insurance_claim은 pet_document와 달리 첨부 파일 키를 자체 컬럼(receipt_image_url/
+        // claim_document_url)에 들고 있어서, 행을 지우기 전에 먼저 조회해 정리 대상 키를 확보한다.
+        for (Map<String, Object> claim : insuranceMapper.findClaimsByPetId(petId)) {
+            arrangeDeletedFileCleanup((String) value(claim, "receipt_image_url", "receiptImageUrl"));
+            arrangeDeletedFileCleanup((String) value(claim, "claim_document_url", "claimDocumentUrl"));
+        }
         insuranceMapper.deleteClaimsByPetId(petId);
         insuranceMapper.deleteSimulationsByPetId(petId);
         recurringMapper.deactivateByPetId(petId);
