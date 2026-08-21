@@ -6,6 +6,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
+import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 
@@ -14,8 +15,12 @@ import java.util.Map;
 @RequiredArgsConstructor
 public class GroupPurchaseRefundJob {
 
+    static final String LOCK_KEY = "lock:batch:group-purchase-refund";
+    static final Duration LOCK_TTL = Duration.ofMinutes(15);
+
     private final GroupPurchaseMapper groupPurchaseMapper;
     private final GroupPurchaseRefundExecutor executor;
+    private final ScheduledJobLock scheduledJobLock;
 
     /**
      * 10분마다 — 마감이 지났는데 목표 수량을 못 채운 공동구매의 결제 완료(PAID) 참여자를 자동 환불.
@@ -23,6 +28,10 @@ public class GroupPurchaseRefundJob {
      */
     @Scheduled(cron = "0 */10 * * * *", zone = "Asia/Seoul")
     public void refundExpiredGroupPurchases() {
+        scheduledJobLock.runExclusive(LOCK_KEY, LOCK_TTL, this::runRefunds);
+    }
+
+    private void runRefunds() {
         List<Map<String, Object>> candidates = groupPurchaseMapper.findExpiredUnfulfilledPaidParticipants();
         log.info("[Batch] 공동구매 마감 미달 자동 환불 시작 — 대상 {}건", candidates.size());
 
