@@ -55,6 +55,7 @@ class GroupPurchaseMapperTest {
                     -- 필터·정렬 검증에 쓰지는 않지만 findList가 컬럼을 명시해 조회하므로
                     -- 픽스처에도 있어야 한다.
                     category VARCHAR(20) NULL,
+                    image VARCHAR(500) NULL,
                     unit_price DECIMAL(12,2) NULL,
                     group_price DECIMAL(12,2) NULL,
                     status VARCHAR(20) NOT NULL DEFAULT 'OPEN',
@@ -124,6 +125,18 @@ class GroupPurchaseMapperTest {
 
         assertEquals(1, findMyGroupPurchases("1", "OPEN").size());
         assertEquals(0, findMyGroupPurchases("1", "COMPLETED").size());
+    }
+
+    @Test
+    @DisplayName("findList는 image 컬럼을 목록 카드 썸네일용으로 함께 반환한다")
+    void should_includeImageColumn_inFindListResult() {
+        long gpId = insertGroupPurchase(99L, "OPEN", 3, 10, LocalDateTime.now().plusDays(5));
+        jdbcTemplate.update("UPDATE group_purchase SET image = ? WHERE gp_id = ?",
+                "group-purchase/sample.png", gpId);
+
+        List<Map<String, Object>> result = findList(null, null, null, 10, 0);
+
+        assertEquals("group-purchase/sample.png", result.get(0).get("image"));
     }
 
     @Test

@@ -557,6 +557,7 @@ public class GroupPurchaseServiceImpl implements GroupPurchaseService {
                 .memberId(toLong(gp.get("member_id")))
                 .productName((String) gp.get("product_name"))
                 .category((String) gp.get("category"))
+                .image(fileStorage.signedUrl((String) gp.get("image")))
                 .status(computeStatus(cancelled, deadline, currentQuantity, targetQuantity))
                 .unitPrice(unitPrice)
                 .groupPrice(groupPrice)
