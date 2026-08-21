@@ -26,9 +26,9 @@ docker-compose up -d
   파일에는 항목 자체가 없다. 빠져 있으면 기동 시 `AccountNumberCrypto` 빈 생성에서 멈춘다.
 
   ```bash
-  # 두 값 모두 32바이트(base64 인코딩 전) 이상이어야 한다
-  openssl rand -base64 32   # security.account.encryption-key
-  openssl rand -base64 32   # security.account.hash-key
+  # 암호화 키는 정확히 32바이트, 해시 키는 32바이트 이상이어야 한다(base64 인코딩 전)
+  openssl rand -base64 32   # ACCOUNT_ENCRYPTION_KEY
+  openssl rand -base64 32   # ACCOUNT_HASH_KEY
   ```
 
 - 개인 설정 없이 docker-compose 기본값으로 바로 띄우려면 `-Dspring.profiles.active=dev`를 사용해도 된다 (`application-dev.yml`의 기본값이 위 계정/포트와 일치).

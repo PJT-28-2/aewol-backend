@@ -120,6 +120,15 @@ class AccountNumberCryptoTest {
     }
 
     @Test
+    void should_nameTheActualEnvVariable_when_propertyPlaceholderNotResolved() {
+        IllegalStateException e = assertThrows(IllegalStateException.class,
+                () -> new AccountNumberCrypto("${security.account.encryption-key}", randomKey()));
+
+        assertTrue(e.getMessage().contains("ACCOUNT_ENCRYPTION_KEY"), e.getMessage());
+        assertFalse(e.getMessage().contains("환경변수 security.account.encryption-key"), e.getMessage());
+    }
+
+    @Test
     void should_stripDefaultValue_when_placeholderHasFallback() {
         IllegalStateException e = assertThrows(IllegalStateException.class,
                 () -> new AccountNumberCrypto("${ACCOUNT_ENCRYPTION_KEY:}", randomKey()));
