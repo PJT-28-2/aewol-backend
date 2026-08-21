@@ -49,8 +49,8 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-gradle-
 
-      - name: Clean build and test
-        run: ./gradlew clean build
-
       - name: Migrate DB schema
         run: ./gradlew flywayMigrate
+
+      - name: Clean build and test
+        run: ./gradlew clean build
