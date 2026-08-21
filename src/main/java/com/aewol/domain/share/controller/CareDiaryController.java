@@ -1,6 +1,8 @@
 package com.aewol.domain.share.controller;
 
 import com.aewol.common.response.ApiResponse;
+import com.aewol.domain.share.dto.CareDiaryReportRequest;
+import com.aewol.domain.share.dto.CareDiaryReportResponse;
 import com.aewol.domain.share.dto.CareDiaryResponse;
 import com.aewol.domain.share.dto.CareDiaryUpdateRequest;
 import com.aewol.domain.share.dto.CareDiaryVisibilityRequest;
@@ -73,6 +75,17 @@ public class CareDiaryController {
             @Valid @RequestBody CareDiaryVisibilityRequest request) {
         return ResponseEntity.ok(ApiResponse.success(
                 careDiaryService.changeVisibility(memberId, diaryId, request)));
+    }
+
+    @Operation(summary = "공개 게시물 신고",
+            description = "접수 즉시 노출이 멈추고 고객센터 문의로 이어진다.")
+    @PostMapping("/diaries/{diaryId}/report")
+    public ResponseEntity<ApiResponse<CareDiaryReportResponse>> report(
+            @AuthenticationPrincipal String memberId,
+            @PathVariable String diaryId,
+            @Valid @RequestBody CareDiaryReportRequest request) {
+        return ResponseEntity.ok(ApiResponse.success(
+                careDiaryService.report(memberId, diaryId, request)));
     }
 
     @Operation(summary = "공동육아 일기 삭제")

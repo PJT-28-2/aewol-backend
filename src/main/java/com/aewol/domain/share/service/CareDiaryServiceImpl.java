@@ -4,6 +4,10 @@ import com.aewol.common.exception.BusinessException;
 import com.aewol.common.storage.FileStorage;
 import com.aewol.domain.activity.mapper.ActivityLogMapper;
 import com.aewol.domain.pet.mapper.PetMapper;
+import com.aewol.domain.share.dto.CareDiaryReportRequest;
+import com.aewol.domain.share.dto.CareDiaryReportResponse;
+import com.aewol.domain.inquiry.mapper.InquiryMapper;
+import java.time.format.DateTimeFormatter;
 import com.aewol.domain.share.dto.CareDiaryResponse;
 import com.aewol.domain.share.dto.CareDiaryUpdateRequest;
 import com.aewol.domain.share.dto.CareDiaryVisibilityRequest;
@@ -50,6 +54,7 @@ public class CareDiaryServiceImpl implements CareDiaryService {
     private final PetMapper petMapper;
     private final ActivityLogMapper activityLogMapper;
     private final FileStorage fileStorage;
+    private final InquiryMapper inquiryMapper;
 
     @Override
     @Transactional
@@ -230,6 +235,81 @@ public class CareDiaryServiceImpl implements CareDiaryService {
                 fileStorage.unpublish(publicKey);
                 careDiaryMapper.updatePublicImageKey(imageId, null);
             }
+        }
+    }
+
+    /**
+     * 신고 접수. 즉시 노출을 멈추고 고객센터 문의로 잇는다.
+     *
+     * <p>고객센터에는 아직 답변 API가 없어 처리까지 시간이 걸린다. 그동안 글이 계속 보이면
+     * 신고의 의미가 없으므로 <b>먼저 내리고</b> 나중에 판단한다. 오탐이면 관리자가 되돌린다.
+     *
+     * <p>공개된 글만 신고 대상이다. 비공개 일기는 신고자가 볼 수 없고, 볼 수 있다면 이미
+     * 그 가족이라 신고가 아니라 대화로 풀 일이다.
+     */
+    @Override
+    @Transactional
+    public CareDiaryReportResponse report(String memberId, String diaryId,
+                                          CareDiaryReportRequest request) {
+        memberId = requireMemberId(memberId);
+        Map<String, Object> row = findDiary(diaryId);
+
+        if (!PUBLIC.equals(text(row, "visibility"))) {
+            throw BusinessException.notFound("신고할 수 있는 게시물이 아닙니다.");
+        }
+        // 자기 글은 신고가 아니라 비공개로 내리면 된다. 신고로 내리면 관리자만 되돌릴 수
+        // 있어 스스로를 잠그는 셈이 된다.
+        if (memberId.equals(text(row, "authorMemberId"))) {
+            throw new BusinessException("자기가 쓴 글은 신고할 수 없어요. 비공개로 바꿔 주세요.");
+        }
+
+        Map<String, Object> report = new HashMap<>();
+        report.put("diaryId", diaryId);
+        report.put("reporterId", memberId);
+        report.put("reason", request.getReason());
+        if (careDiaryMapper.insertReport(report) == 0) {
+            throw BusinessException.conflict("이미 신고한 게시물이에요. 처리 결과를 기다려 주세요.");
+        }
+        String reportId = String.valueOf(report.get("reportId"));
+
+        boolean hidden = careDiaryMapper.hideByReport(diaryId) == 1;
+        String inquiryNumber = createReportInquiry(memberId, diaryId, request.getReason(), reportId);
+
+        return CareDiaryReportResponse.builder()
+                .reportId(reportId)
+                .inquiryNumber(inquiryNumber)
+                .hidden(hidden)
+                .build();
+    }
+
+    /**
+     * 신고를 고객센터 문의로 남긴다. 신고자가 자기 문의 내역에서 진행 상태를 볼 수 있게 된다.
+     *
+     * <p>사용자 입력을 받는 경로가 아니라 매퍼를 직접 쓴다. InquiryService의 카테고리 검증을
+     * 타면 ALLOWED_CATEGORIES에 '신고'를 넣어야 하고, 그러면 프론트 카테고리 목록과도 다시
+     * 맞춰야 한다. 내부 생성이라 그럴 이유가 없다.
+     */
+    private String createReportInquiry(String memberId, String diaryId, String reason, String reportId) {
+        try {
+            Map<String, Object> inquiry = new HashMap<>();
+            inquiry.put("memberId", memberId);
+            inquiry.put("category", "신고");
+            inquiry.put("title", "게시물 신고 (일기 " + diaryId + ")");
+            inquiry.put("content", "신고 사유: " + reason + "\n대상 일기 ID: " + diaryId);
+            inquiry.put("replyEmail", null);
+            inquiryMapper.insert(inquiry);
+
+            String inquiryId = String.valueOf(inquiry.get("inquiryId"));
+            String inquiryNumber = "AEW-" + LocalDate.now().format(DateTimeFormatter.ofPattern("yyyyMMdd"))
+                    + "-" + String.format("%04d", Long.parseLong(inquiryId));
+            inquiryMapper.updateInquiryNumber(inquiryId, inquiryNumber);
+            careDiaryMapper.linkReportInquiry(reportId, inquiryId);
+            return inquiryNumber;
+        } catch (RuntimeException e) {
+            // 문의 생성이 실패해도 신고와 비공개 처리는 남아야 한다. 노출을 멈추는 것이
+            // 접수번호를 주는 것보다 중요하다.
+            log.warn("[REPORT_INQUIRY_FAILED] 신고 문의 생성 실패 - reportId: {}", reportId, e);
+            return null;
         }
     }
 
