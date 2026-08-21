@@ -308,7 +308,7 @@ public class GroupPurchaseServiceImpl implements GroupPurchaseService {
         BigDecimal refundedAmount = toDecimal(participant.get("paid_amount"));
         BigDecimal refundedWalletBalance = null;
         if (GroupPurchaseParticipantStatus.PAID.equals(participant.get("payment_status")) && refundedAmount != null) {
-            refundedWalletBalance = refundWallet(memberId, gpId, gp, refundedAmount);
+            refundedWalletBalance = refundWallet(memberId, gp, refundedAmount);
         }
 
         Map<String, Object> updatedGp = groupPurchaseMapper.findById(gpId);
@@ -392,7 +392,7 @@ public class GroupPurchaseServiceImpl implements GroupPurchaseService {
             return null;
         }
         BigDecimal paidAmount = toDecimal(participant.get("paid_amount"));
-        BigDecimal refundedWalletBalance = refundWallet(participantMemberId, gpId, gp, paidAmount);
+        BigDecimal refundedWalletBalance = refundWallet(participantMemberId, gp, paidAmount);
         return GroupPurchaseCancelParticipantResponse.builder()
                 .participantId(toLong(participant.get("participant_id")))
                 .memberId(participantMemberId)
@@ -403,7 +403,7 @@ public class GroupPurchaseServiceImpl implements GroupPurchaseService {
     }
 
     /** 지갑 잔액을 환급하고 REFUND 타입 환불 거래내역을 생성한 뒤 갱신된 지갑 잔액을 반환한다. */
-    private BigDecimal refundWallet(String memberId, String gpId, Map<String, Object> gp, BigDecimal amount) {
+    private BigDecimal refundWallet(String memberId, Map<String, Object> gp, BigDecimal amount) {
         Map<String, Object> wallet = walletMapper.findByMemberId(memberId);
         if (wallet == null) {
             throw BusinessException.notFound("지갑을 찾을 수 없습니다.");
