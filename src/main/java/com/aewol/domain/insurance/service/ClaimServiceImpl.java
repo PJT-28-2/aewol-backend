@@ -36,21 +36,22 @@ public class ClaimServiceImpl implements ClaimService {
         if (petMapper.findByIdAndMemberId(petId, memberId) == null) {
             throw BusinessException.notFound("반려동물을 찾을 수 없습니다.");
         }
+        String receiptKey = null;
         try {
             // 저장 위치는 FileStorage가 정한다. 예전에는 여기서 디스크에 직접 쓰고
             // "/uploads/receipts/..." 형태의 URL을 DB에 넣었는데, 조회는 이미
             // fileStorage.signedUrl로 하고 있어 저장소를 옮기면 읽기와 어긋났다.
-            String imageUrl = fileStorage.store(receipt.getBytes(), "receipts",
+            byte[] bytes = receipt.getBytes();
+            receiptKey = fileStorage.store(bytes, "receipts",
                     extensionOf(receipt.getOriginalFilename()));
 
             // PaddleOCR (트랜잭션 밖에서 호출 - 응답 지연이 DB 커넥션을 점유하지 않도록)
-            String extractedJson = paddleOcrClient.extractReceiptData(
-                    receipt.getBytes(), receipt.getContentType());
+            String extractedJson = paddleOcrClient.extractReceiptData(bytes, receipt.getContentType());
 
             Map<String, Object> claim = new HashMap<>();
             claim.put("petId", petId);
             claim.put("memberId", memberId);
-            claim.put("receiptImageUrl", imageUrl);
+            claim.put("receiptImageUrl", receiptKey);
             claim.put("extractedData", extractedJson);
             claim.put("hospitalName", null);
             claim.put("treatmentDate", null);
@@ -60,7 +61,11 @@ public class ClaimServiceImpl implements ClaimService {
 
             return toResponse(insuranceMapper.findClaimById(String.valueOf(claim.get("claimId"))));
         } catch (IOException e) {
+            deleteReceiptQuietly(receiptKey);
             throw new BusinessException("영수증 업로드에 실패했습니다.");
+        } catch (RuntimeException e) {
+            deleteReceiptQuietly(receiptKey);
+            throw e;
         }
     }
 
@@ -120,6 +125,14 @@ public class ClaimServiceImpl implements ClaimService {
                 .receiptImageUrl(fileStorage.signedUrl((String) claim.get("receipt_image_url")))
                 .extractedData(claim.get("extracted_data"))
                 .build();
+    }
+
+    /** DB insert나 OCR이 실패하면 방금 올린 영수증만 지운다. 삭제 실패는 FileStorage가 삼킨다. */
+    private void deleteReceiptQuietly(String receiptKey) {
+        if (receiptKey == null || receiptKey.isBlank()) {
+            return;
+        }
+        fileStorage.delete(receiptKey);
     }
 
     /**
