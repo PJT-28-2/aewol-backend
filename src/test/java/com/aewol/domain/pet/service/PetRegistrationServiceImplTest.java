@@ -68,6 +68,35 @@ class PetRegistrationServiceImplTest {
         assertEquals("2022-08-01T12:00:00", response.getRegTm());
         verify(petRegistrationMapper).insert(argThat(row ->
                 "410000012345678".equals(row.get("regNumber")) && Long.valueOf(31L).equals(row.get("docId"))));
+        verify(petMapper).updateRegistrationDetails("pet-1", "말티즈", "Y");
+    }
+
+    // #291 후속: breed/neutered는 validateMatch()의 검증 대상이 아니라서 사용자가 입력한 값이
+    // 등록증과 달라도 여기까지 통과하는데, 등록증(진실 원천) 값으로 자동 동기화되어야 한다.
+    @Test
+    void should_overwritePetBreedAndNeutered_when_differentFromRequestedRegistration() {
+        PetRegistrationVerifyRequest request = request("410000012345678", "홍길동", "1990.01.01");
+        Map<String, Object> pet = pet("member-1");
+        pet.put("breed", "푸들"); // 등록증의 "말티즈"와 다르게 입력된 상태
+        when(petMapper.findById("pet-1")).thenReturn(pet);
+        when(apmsClient.verifyRegistration("410000012345678", "홍길동", "19900101"))
+                .thenReturn(registration());
+        when(petDocumentMapper.findByPetIdAndTypeForUpdate("pet-1", "REGISTRATION")).thenReturn(null);
+        doAnswer(invocation -> {
+            invocation.<Map<String, Object>>getArgument(0).put("docId", 31L);
+            return null;
+        }).when(petDocumentMapper).insert(any());
+        when(petMapper.updateRegistrationNumber("pet-1", "member-1", "410000012345678")).thenReturn(1);
+        when(petRegistrationMapper.findByPetIdAndDocId("pet-1", "31")).thenReturn(map(
+                "doc_id", 31L, "pet_id", "pet-1", "reg_number", "410000012345678",
+                "name", "몽이", "breed", "말티즈", "gender", "MALE", "neutered", "Y",
+                "birth_date", "20220101"));
+
+        service.verify("member-1", "pet-1", request);
+
+        // validateMatch()는 breed를 검증하지 않으므로 "푸들" 입력이 mismatch로 막히지 않고,
+        // 대신 등록증 값("말티즈")으로 덮어써져야 한다.
+        verify(petMapper).updateRegistrationDetails("pet-1", "말티즈", "Y");
     }
 
     @Test
