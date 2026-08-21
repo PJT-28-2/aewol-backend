@@ -360,6 +360,7 @@ public class PetServiceImpl implements PetService {
         String requestedRegNumber = hasText(request.getRegNumber()) ? request.getRegNumber() : existingRegNumber;
         if (!hasText(requestedRegNumber)) return null;
         if (!Objects.equals(requestedRegNumber, existingRegNumber)) return requestedRegNumber;
+        if (hasText(request.getRegistrationOwnerName())) return requestedRegNumber;
         if (!Objects.equals(request.getName(), existingPet.get("name"))) return requestedRegNumber;
         if (!Objects.equals(request.getBirthDate(), stringValue(existingPet.get("birth_date")))) {
             return requestedRegNumber;
