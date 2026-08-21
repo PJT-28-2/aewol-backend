@@ -6,11 +6,14 @@ import static org.mockito.Mockito.*;
 
 import com.aewol.common.exception.BusinessException;
 import com.aewol.common.storage.FileStorage;
+import com.aewol.domain.insurance.mapper.InsuranceMapper;
 import com.aewol.domain.pet.dto.PetCreateRequest;
 import com.aewol.domain.pet.dto.PetResponse;
 import com.aewol.domain.pet.mapper.PetMapper;
 import com.aewol.domain.pet.mapper.PetDocumentMapper;
+import com.aewol.domain.recurring.mapper.RecurringMapper;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -24,9 +27,12 @@ class PetServiceImplTest {
     @Mock PetMapper petMapper;
     @Mock PetDocumentMapper petDocumentMapper;    @Mock FileStorage fileStorage;
     @Mock PetRegistrationService petRegistrationService;
+    @Mock InsuranceMapper insuranceMapper;
+    @Mock RecurringMapper recurringMapper;
 
     private PetServiceImpl service() {
-        return new PetServiceImpl(petMapper, petDocumentMapper, fileStorage, petRegistrationService);
+        return new PetServiceImpl(petMapper, petDocumentMapper, fileStorage, petRegistrationService,
+                insuranceMapper, recurringMapper);
     }
 
     @Test
@@ -217,10 +223,45 @@ class PetServiceImplTest {
     void should_deactivatePet_when_memberOwnsPet() {
         PetServiceImpl service = service();
         when(petMapper.findById("pet-1")).thenReturn(pet("member-1"));
+        when(petDocumentMapper.findByPetId("pet-1")).thenReturn(List.of());
         when(petMapper.deactivate("pet-1", "member-1")).thenReturn(1);
 
         service.deactivatePet("member-1", "pet-1");
 
+        verify(petMapper).deactivate("pet-1", "member-1");
+    }
+
+    // #291: pet 행은 남기고 소유자 개인 데이터(등록증/문서/보험/정기결제)만 하드 삭제하며,
+    // reg_number를 null로 초기화한다. care_diary/shared_access는 이번 변경으로 손대지 않는다.
+    @Test
+    void should_deleteOwnerPersonalDataAndClearRegNumber_when_deactivatingPet() {
+        PetServiceImpl service = service();
+        when(petMapper.findById("pet-1")).thenReturn(pet("member-1"));
+        Map<String, Object> registrationDoc = new HashMap<>();
+        registrationDoc.put("doc_id", "doc-1");
+        registrationDoc.put("doc_type", "REGISTRATION");
+        registrationDoc.put("file_url", null);
+        Map<String, Object> vaccinationDoc = new HashMap<>();
+        vaccinationDoc.put("doc_id", "doc-2");
+        vaccinationDoc.put("doc_type", "VACCINATION");
+        vaccinationDoc.put("file_url", "pet-documents/vaccine.jpg");
+        when(petDocumentMapper.findByPetId("pet-1")).thenReturn(List.of(registrationDoc, vaccinationDoc));
+        when(petDocumentMapper.findByIdAndPetIdForUpdate("doc-1", "pet-1")).thenReturn(registrationDoc);
+        when(petDocumentMapper.findByIdAndPetIdForUpdate("doc-2", "pet-1")).thenReturn(vaccinationDoc);
+        when(petDocumentMapper.deleteByIdAndPetId("doc-1", "pet-1")).thenReturn(1);
+        when(petDocumentMapper.deleteByIdAndPetId("doc-2", "pet-1")).thenReturn(1);
+        when(petMapper.deactivate("pet-1", "member-1")).thenReturn(1);
+
+        service.deactivatePet("member-1", "pet-1");
+
+        verify(petRegistrationService).cancel("member-1", "pet-1", "doc-1");
+        verify(petRegistrationService, never()).cancel(eq("member-1"), eq("pet-1"), eq("doc-2"));
+        verify(petDocumentMapper).deleteByIdAndPetId("doc-1", "pet-1");
+        verify(petDocumentMapper).deleteByIdAndPetId("doc-2", "pet-1");
+        verify(insuranceMapper).deleteClaimsByPetId("pet-1");
+        verify(insuranceMapper).deleteSimulationsByPetId("pet-1");
+        verify(recurringMapper).deleteByPetId("pet-1");
+        verify(petMapper).updateRegistrationNumber("pet-1", "member-1", null);
         verify(petMapper).deactivate("pet-1", "member-1");
     }
 
@@ -240,6 +281,7 @@ class PetServiceImplTest {
     void should_throwNotFound_when_petIsAlreadyDeactivatedConcurrently() {
         PetServiceImpl service = service();
         when(petMapper.findById("pet-1")).thenReturn(pet("member-1"));
+        when(petDocumentMapper.findByPetId("pet-1")).thenReturn(List.of());
         when(petMapper.deactivate("pet-1", "member-1")).thenReturn(0);
 
         BusinessException exception = assertThrows(BusinessException.class,
