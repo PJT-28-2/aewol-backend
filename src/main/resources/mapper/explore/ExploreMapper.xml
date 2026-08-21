@@ -1,0 +1,84 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.aewol.domain.explore.mapper.ExploreMapper">
+
+    <!--
+        공개 조건. 세 가지를 모두 만족해야 노출한다.
+          visibility = 'PUBLIC'        작성자가 직접 공개로 바꾼 것만
+          deleted_at IS NULL           지운 글은 제외
+          hidden_by_report_at IS NULL  신고로 내려간 글은 제외
+
+        이 sql 조각을 모든 공개 조회에서 재사용해, 조건을 빠뜨린 쿼리가 생기지 않게 한다.
+    -->
+    <sql id="publicOnly">
+        d.visibility = 'PUBLIC'
+        AND d.deleted_at IS NULL
+        AND d.hidden_by_report_at IS NULL
+    </sql>
+
+    <!-- 커서는 거래내역 목록과 같은 규약이다: 정렬 키가 같을 때 id로 한 번 더 가른다. -->
+    <sql id="cursorCondition">
+        <if test="cursorCreatedAt != null and cursorDiaryId != null">
+            AND (d.created_at &lt; #{cursorCreatedAt}
+                 OR (d.created_at = #{cursorCreatedAt} AND d.diary_id &lt; #{cursorDiaryId}))
+        </if>
+    </sql>
+
+    <select id="findPublicPosts" resultType="map">
+        SELECT d.diary_id   AS diaryId,
+               d.pet_id     AS petId,
+               p.name       AS petName,
+               d.content    AS content,
+               d.diary_date AS diaryDate,
+               d.created_at AS createdAt
+        FROM care_diary d
+        JOIN pet p ON p.pet_id = d.pet_id
+        WHERE <include refid="publicOnly"/>
+        <include refid="cursorCondition"/>
+        ORDER BY d.created_at DESC, d.diary_id DESC
+        LIMIT #{limit}
+    </select>
+
+    <select id="findPublicPostsByPet" resultType="map">
+        SELECT d.diary_id   AS diaryId,
+               d.pet_id     AS petId,
+               p.name       AS petName,
+               d.content    AS content,
+               d.diary_date AS diaryDate,
+               d.created_at AS createdAt
+        FROM care_diary d
+        JOIN pet p ON p.pet_id = d.pet_id
+        WHERE <include refid="publicOnly"/>
+          AND d.pet_id = #{petId}
+        <include refid="cursorCondition"/>
+        ORDER BY d.created_at DESC, d.diary_id DESC
+        LIMIT #{limit}
+    </select>
+
+    <!-- 게시물 수도 공개분만 센다. 비공개 개수가 드러나면 그 자체가 정보다. -->
+    <select id="findPublicProfile" resultType="map">
+        SELECT p.pet_id       AS petId,
+               p.name         AS name,
+               p.species      AS species,
+               p.breed        AS breed,
+               p.character_img AS characterImg,
+               p.profile_img  AS profileImg,
+               p.instagram_id AS instagramId,
+               (SELECT COUNT(*)
+                  FROM care_diary d
+                 WHERE d.pet_id = p.pet_id
+                   AND <include refid="publicOnly"/>) AS postCount
+        FROM pet p
+        WHERE p.pet_id = #{petId}
+          AND p.is_active = 1
+    </select>
+
+    <select id="findImagesByDiaryIds" resultType="map">
+        SELECT diary_id AS diaryId, image_url AS imageUrl
+        FROM care_diary_image
+        WHERE diary_id IN
+        <foreach item="id" collection="diaryIds" open="(" separator="," close=")">#{id}</foreach>
+        ORDER BY image_id
+    </select>
+</mapper>
