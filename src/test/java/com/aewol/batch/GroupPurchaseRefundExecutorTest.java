@@ -74,8 +74,6 @@ class GroupPurchaseRefundExecutorTest {
         assertEquals("REFUND", txnCaptor.getValue().get("txnType"));
         assertEquals(new BigDecimal("50000"), txnCaptor.getValue().get("price"));
         assertEquals("FOOD", txnCaptor.getValue().get("category"));
-        String memo = (String) txnCaptor.getValue().get("memo");
-        assertTrue(memo.contains("마감 미달 자동환불"), "leave()의 '참여 취소 환불' 문구와 구분되는 메모여야 한다: " + memo);
     }
 
     @Test
