@@ -29,6 +29,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.core.env.Environment;
 import org.springframework.core.env.Profiles;
+import org.springframework.test.util.ReflectionTestUtils;
 @ExtendWith(MockitoExtension.class)
 class AccountServiceImplTest {
     @Mock AccountMapper accountMapper;
@@ -54,35 +55,71 @@ private static final String ACCOUNT_ID = "1";
         lenient().when(accountNumberCrypto.hash(anyString())).thenAnswer(inv -> "hash-" + inv.getArgument(0));
     }
 
-    @Test
-    @DisplayName("local 프로파일에서는 1원 인증 응답에 테스트용 입금자명이 포함된다")
-    void should_includeDepositorNameForTest_when_localProfile() {
+    /** verify-deposit 호출에 공통으로 필요한 스텁 — 각 테스트는 노출 조건에만 집중한다. */
+    private void stubDepositVerificationFlow() {
         when(redisRateLimiter.incrementWithExpiry(anyString(), anyLong())).thenReturn(1L);
         when(codefClient.requestAccountTransferAuth("004", "1234567890")).thenReturn(CORRECT_CODE);
         when(accountNumberCrypto.encrypt("1234567890")).thenReturn("encrypted-1234567890");
+    }
+
+    private void stubActiveProfile(String profile) {
         when(environment.acceptsProfiles(any(Profiles.class)))
-                .thenAnswer(inv -> inv.<Profiles>getArgument(0).matches("local"::equals));
+                .thenAnswer(inv -> inv.<Profiles>getArgument(0).matches(profile::equals));
+    }
 
-        DepositVerificationResponse response = service.requestDepositVerification(
+    private DepositVerificationResponse requestVerification() {
+        return service.requestDepositVerification(
                 MEMBER_ID, new DepositVerificationRequest("004", "1234567890"));
+    }
 
-        assertEquals(CORRECT_CODE, response.getDepositorNameForTest());
+    @Test
+    @DisplayName("local 프로파일에서는 1원 인증 응답에 테스트용 입금자명이 포함된다")
+    void should_includeDepositorNameForTest_when_localProfile() {
+        stubDepositVerificationFlow();
+        when(codefClient.isDemoServer()).thenReturn(true);
+        stubActiveProfile("local");
+
+        assertEquals(CORRECT_CODE, requestVerification().getDepositorNameForTest());
     }
 
     @ParameterizedTest
     @ValueSource(strings = {"dev", "prod"})
-    @DisplayName("dev/prod 프로파일에서는 1원 인증 응답에 테스트용 입금자명을 내려주지 않는다 - dev도 API 응답 노출 범위에서는 제외한다(2026-08-19, PR #236 리뷰)")
-    void should_notIncludeDepositorNameForTest_when_devOrProdProfile(String profile) {
-        when(redisRateLimiter.incrementWithExpiry(anyString(), anyLong())).thenReturn(1L);
-        when(codefClient.requestAccountTransferAuth("004", "1234567890")).thenReturn(CORRECT_CODE);
-        when(accountNumberCrypto.encrypt("1234567890")).thenReturn("encrypted-1234567890");
-        when(environment.acceptsProfiles(any(Profiles.class)))
-                .thenAnswer(inv -> inv.<Profiles>getArgument(0).matches(profile::equals));
+    @DisplayName("dev/prod 프로파일에서는 시연 플래그를 켜지 않는 한 테스트용 입금자명을 내려주지 않는다 - 프로파일만으로는 노출되지 않는다(PR #236)")
+    void should_notIncludeDepositorNameForTest_when_devOrProdProfileWithoutDemoFlag(String profile) {
+        stubDepositVerificationFlow();
+        when(codefClient.isDemoServer()).thenReturn(true);
+        stubActiveProfile(profile);
 
-        DepositVerificationResponse response = service.requestDepositVerification(
-                MEMBER_ID, new DepositVerificationRequest("004", "1234567890"));
+        assertNull(requestVerification().getDepositorNameForTest());
+    }
 
-        assertNull(response.getDepositorNameForTest());
+    @Test
+    @DisplayName("CODEF 데모 서버에 붙어 있고 시연 플래그가 켜져 있으면 prod 프로파일에서도 입금자명을 내려준다(#290)")
+    void should_includeDepositorNameForTest_when_demoServerAndDemoFlagEnabled() {
+        stubDepositVerificationFlow();
+        when(codefClient.isDemoServer()).thenReturn(true);
+        ReflectionTestUtils.setField(service, "exposeDepositorNameForDemo", true);
+
+        assertEquals(CORRECT_CODE, requestVerification().getDepositorNameForTest());
+    }
+
+    @Test
+    @DisplayName("CODEF 정식 서버에서는 시연 플래그가 켜져 있어도 입금자명을 내려주지 않는다 - 실제 1원이 오가는 환경에서는 구조적으로 차단한다(#290)")
+    void should_notIncludeDepositorNameForTest_when_productionCodefServerEvenWithDemoFlag() {
+        stubDepositVerificationFlow();
+        when(codefClient.isDemoServer()).thenReturn(false);
+        ReflectionTestUtils.setField(service, "exposeDepositorNameForDemo", true);
+
+        assertNull(requestVerification().getDepositorNameForTest());
+    }
+
+    @Test
+    @DisplayName("CODEF 정식 서버에서는 local 프로파일이어도 입금자명을 내려주지 않는다(#290)")
+    void should_notIncludeDepositorNameForTest_when_productionCodefServerOnLocalProfile() {
+        stubDepositVerificationFlow();
+        when(codefClient.isDemoServer()).thenReturn(false);
+
+        assertNull(requestVerification().getDepositorNameForTest());
     }
 
     @Test

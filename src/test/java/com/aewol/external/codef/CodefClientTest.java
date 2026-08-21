@@ -1,6 +1,7 @@
 package com.aewol.external.codef;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.lang.reflect.Field;
@@ -10,6 +11,9 @@ import java.util.HashSet;
 import java.util.Set;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
+import org.springframework.test.util.ReflectionTestUtils;
 
 /**
  * randomDepositorName()은 2026-08-07엔 brute-force 방어를 위해 완성형 한글 음절 전체
@@ -90,6 +94,43 @@ class CodefClientTest {
         // 기대하면 새 구현에서 항상 실패하므로, 넉넉한 하한선(450개, 90%)으로 검증한다.
         assertTrue(generated.size() >= 450,
                 "고유 조합 수가 예상보다 너무 적습니다: " + generated.size());
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {
+            "https://development.codef.io",
+            "https://development.codef.io/",
+            "http://development.codef.io",
+    })
+    @DisplayName("데모 서버 주소에 붙어 있으면 isDemoServer()가 true다")
+    void should_returnTrue_when_apiBaseUrlIsDemoServer(String apiBaseUrl) {
+        assertTrue(codefClientWithApiBaseUrl(apiBaseUrl).isDemoServer());
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {
+            "https://api.codef.io",
+            "https://api.codef.io/",
+    })
+    @DisplayName("정식 서버 주소에 붙어 있으면 isDemoServer()가 false다 - 실제 1원이 오가므로 시연용 노출이 차단되어야 한다(#290)")
+    void should_returnFalse_when_apiBaseUrlIsProductionServer(String apiBaseUrl) {
+        assertFalse(codefClientWithApiBaseUrl(apiBaseUrl).isDemoServer());
+    }
+
+    @Test
+    @DisplayName("api-base-url이 설정되지 않았으면 isDemoServer()가 false다 - 판단할 수 없을 땐 노출하지 않는 쪽으로 닫는다")
+    void should_returnFalse_when_apiBaseUrlIsNull() {
+        assertFalse(codefClientWithApiBaseUrl(null).isDemoServer());
+    }
+
+    /**
+     * isDemoServer()는 apiBaseUrl 문자열만 보는 순수 판별 로직이라 협력 객체가 필요 없다.
+     * 생성자 인자는 모두 null로 두고 @Value 필드만 리플렉션으로 채운다.
+     */
+    private static CodefClient codefClientWithApiBaseUrl(String apiBaseUrl) {
+        CodefClient client = new CodefClient(null, null, null, null);
+        ReflectionTestUtils.setField(client, "apiBaseUrl", apiBaseUrl);
+        return client;
     }
 
     private static Method randomDepositorNameMethod() throws NoSuchMethodException {
