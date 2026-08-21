@@ -12,6 +12,7 @@ public interface PetService {
     List<PetResponse> getPetsByMember(String memberId);
     PetResponse getPet(String memberId, String petId);
     void updatePet(String memberId, String petId, PetCreateRequest request);
+    void disconnectRegistration(String memberId, String petId);
     void deactivatePet(String memberId, String petId);
     PetDocumentResponse uploadPetDocument(String memberId, String petId, String docType,
                                           MultipartFile file, LocalDate issuedDate);
