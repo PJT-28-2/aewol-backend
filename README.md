@@ -110,17 +110,18 @@ docker-compose up -d
 ```yaml
 spring:
   datasource:
-    url: jdbc:mysql://localhost:3306/aewol?useSSL=false&serverTimezone=Asia/Seoul&characterEncoding=UTF-8
+    url: jdbc:mysql://localhost:3307/aewol?useSSL=false&serverTimezone=Asia/Seoul&characterEncoding=UTF-8
     username: aewol
     password: aewol1234
-  redis:
-    host: localhost
-    port: 6379
+  data:
+    redis:
+      host: localhost
+      port: 6379
 
 external:
   kakao:
     client-id: {카카오 REST API 키}
-    redirect-uri: http://localhost:8080/api/auth/kakao/callback
+    redirect-uri: http://localhost:5173/callback/kakao
   gemini:
     api-key: {Gemini API 키}
   codef:
@@ -134,8 +135,8 @@ external:
 
 jwt:
   secret: {JWT 시크릿 키 (256비트 이상)}
-  access-expiration: 1800000
-  refresh-expiration: 604800000
+  access-token-expiry: 1800000
+  refresh-token-expiry: 604800000
 ```
 
 ### 애플리케이션 실행
@@ -220,8 +221,8 @@ PR은 `feature/{기능명}` → `develop` → `main` 순서로 병합합니다.
 |--------|--------|------|------|
 | 인증 | POST | `/api/auth/signup` | 이메일 회원가입 |
 | 인증 | POST | `/api/auth/login` | 로그인 (JWT 발급) |
-| 인증 | GET | `/api/auth/kakao/callback` | 카카오 OAuth 콜백 |
-| 인증 | POST | `/api/auth/reissue` | 토큰 재발급 (RTR) |
+| 인증 | POST | `/api/auth/oauth/kakao` | 카카오 OAuth 로그인 |
+| 인증 | POST | `/api/auth/refresh` | 토큰 재발급 (RTR) |
 | 반려동물 | GET | `/api/pets` | 반려동물 목록 조회 |
 | 반려동물 | POST | `/api/pets` | 반려동물 등록 |
 | 반려동물 | GET | `/api/pets/{petId}` | 반려동물 상세 조회 |
