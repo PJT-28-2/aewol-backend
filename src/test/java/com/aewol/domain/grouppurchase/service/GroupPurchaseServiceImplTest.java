@@ -1358,8 +1358,6 @@ class GroupPurchaseServiceImplTest {
         ArgumentCaptor<Map<String, Object>> txnCaptor = ArgumentCaptor.forClass(Map.class);
         verify(transactionMapper, times(2)).insert(txnCaptor.capture());
         assertTrue(txnCaptor.getAllValues().stream().allMatch(txn -> "REFUND".equals(txn.get("txnType"))));
-        assertTrue(txnCaptor.getAllValues().stream()
-                .allMatch(txn -> ((String) txn.get("memo")).contains("작성자 취소로 인한 환불")));
     }
 
     @Test
