@@ -38,6 +38,8 @@
                d.diary_date       AS diaryDate,
                d.content          AS content,
                d.version          AS version,
+               d.visibility       AS visibility,
+               d.hidden_by_report_at AS hiddenByReportAt,
                d.created_at       AS createdAt,
                d.updated_at       AS updatedAt
         FROM care_diary d
@@ -75,6 +77,20 @@
         <if test="version != null">
           AND version = #{version}
         </if>
+    </update>
+
+    <!--
+        신고로 내려간 일기(hidden_by_report_at)는 여기서 다시 공개되지 않는다. 작성자가
+        스스로 내린 것과 구분하는 이유가 이것이다. 되돌리는 것은 관리자만 할 수 있다.
+    -->
+    <update id="updateVisibility">
+        UPDATE care_diary
+           SET visibility = #{visibility}
+        WHERE diary_id = #{diaryId}
+          AND deleted_at IS NULL
+          <if test="visibility == 'PUBLIC'">
+          AND hidden_by_report_at IS NULL
+          </if>
     </update>
 
     <update id="softDelete">

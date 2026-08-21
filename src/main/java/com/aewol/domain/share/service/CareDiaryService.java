@@ -2,6 +2,7 @@ package com.aewol.domain.share.service;
 
 import com.aewol.domain.share.dto.CareDiaryResponse;
 import com.aewol.domain.share.dto.CareDiaryUpdateRequest;
+import com.aewol.domain.share.dto.CareDiaryVisibilityRequest;
 import java.util.List;
 import org.springframework.web.multipart.MultipartFile;
 
@@ -15,6 +16,9 @@ public interface CareDiaryService {
     CareDiaryResponse getDetail(String memberId, String diaryId);
 
     CareDiaryResponse update(String memberId, String diaryId, CareDiaryUpdateRequest request);
+
+    CareDiaryResponse changeVisibility(String memberId, String diaryId,
+                                       CareDiaryVisibilityRequest request);
 
     void delete(String memberId, String diaryId);
 }
