@@ -251,6 +251,11 @@ class PetServiceImplTest {
         when(petDocumentMapper.findByIdAndPetIdForUpdate("doc-2", "pet-1")).thenReturn(vaccinationDoc);
         when(petDocumentMapper.deleteByIdAndPetId("doc-1", "pet-1")).thenReturn(1);
         when(petDocumentMapper.deleteByIdAndPetId("doc-2", "pet-1")).thenReturn(1);
+        Map<String, Object> claim = new HashMap<>();
+        claim.put("claim_id", "claim-1");
+        claim.put("receipt_image_url", "receipts/claim-1.jpg");
+        claim.put("claim_document_url", "claim-documents/claim-1.pdf");
+        when(insuranceMapper.findClaimsByPetId("pet-1")).thenReturn(List.of(claim));
         when(petMapper.updateRegistrationNumber("pet-1", "member-1", null)).thenReturn(1);
         when(petMapper.deactivate("pet-1", "member-1")).thenReturn(1);
 
@@ -260,6 +265,10 @@ class PetServiceImplTest {
         verify(petRegistrationService, never()).cancel(eq("member-1"), eq("pet-1"), eq("doc-2"));
         verify(petDocumentMapper).deleteByIdAndPetId("doc-1", "pet-1");
         verify(petDocumentMapper).deleteByIdAndPetId("doc-2", "pet-1");
+        // 보험 청구는 pet_document와 달리 첨부 파일 키를 자체 컬럼에 들고 있어서,
+        // 행 삭제와 별개로 파일 정리도 함께 이뤄져야 한다.
+        verify(fileStorage).delete("receipts/claim-1.jpg");
+        verify(fileStorage).delete("claim-documents/claim-1.pdf");
         verify(insuranceMapper).deleteClaimsByPetId("pet-1");
         verify(insuranceMapper).deleteSimulationsByPetId("pet-1");
         verify(recurringMapper).deactivateByPetId("pet-1");
