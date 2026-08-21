@@ -7,6 +7,7 @@ import static org.mockito.Mockito.*;
 import com.aewol.common.exception.BusinessException;
 import com.aewol.common.storage.FileStorage;
 import com.aewol.domain.explore.dto.ExplorePageResponse;
+import com.aewol.domain.explore.dto.ExplorePostResponse;
 import com.aewol.domain.explore.dto.PetPublicProfileResponse;
 import com.aewol.domain.explore.mapper.ExploreMapper;
 import java.sql.Timestamp;
@@ -113,6 +114,31 @@ class ExploreServiceImplTest {
         service().getExploreFeed("쓰레기값", 10);
 
         verify(exploreMapper).findPublicPosts(isNull(), isNull(), anyInt());
+    }
+
+    @Test
+    @DisplayName("공개 게시물 상세를 사진과 함께 준다")
+    void should_returnPublicPostDetail() {
+        when(exploreMapper.findPublicPost("d-1")).thenReturn(postRow("d-1", "2026-08-21 10:00:00"));
+        when(exploreMapper.findImagesByDiaryIds(List.of("d-1"))).thenReturn(List.of(
+                Map.of("diaryId", "d-1", "imageUrl", "diary/a.png", "publicImageKey", "public/x.png")));
+        when(fileStorage.publicUrl("public/x.png")).thenReturn("https://cdn.test/public/x.png");
+
+        ExplorePostResponse post = service().getPost("d-1");
+
+        assertEquals("보리", post.getPetName());
+        assertEquals("https://cdn.test/public/x.png", post.getImageUrl());
+    }
+
+    // 비공개 글의 id를 알아내도 열리면 안 된다. 조회 조건이 목록과 같아야 한다.
+    @Test
+    @DisplayName("공개되지 않은 게시물은 상세도 404")
+    void should_throwNotFound_when_postIsNotPublic() {
+        when(exploreMapper.findPublicPost("secret")).thenReturn(null);
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service().getPost("secret"));
+        assertEquals(404, exception.getStatus().value());
     }
 
     @Test
