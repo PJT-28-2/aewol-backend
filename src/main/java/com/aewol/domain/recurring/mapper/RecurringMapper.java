@@ -14,5 +14,6 @@ public interface RecurringMapper {
     int updateNextPaymentDate(@Param("recurringId") String recurringId,
                               @Param("nextPaymentDate") java.time.LocalDate nextPaymentDate);
     int deactivate(@Param("recurringId") String recurringId);
+    int deleteByPetId(@Param("petId") String petId);
     List<Map<String, Object>> findDuePayments(@Param("date") String date);
 }

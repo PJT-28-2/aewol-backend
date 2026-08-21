@@ -12,6 +12,8 @@ public interface InsuranceMapper {
     void updateClaim(Map<String, Object> claim);
     Map<String, Object> findClaimById(@Param("claimId") String claimId);
     List<Map<String, Object>> findClaimsByMemberId(@Param("memberId") String memberId);
+    int deleteClaimsByPetId(@Param("petId") String petId);
+    int deleteSimulationsByPetId(@Param("petId") String petId);
 
     List<Map<String, Object>> findProductsBySpecies(@Param("species") String species);
     List<Map<String, Object>> findCoveragesByProductIds(@Param("productIds") List<Long> productIds);

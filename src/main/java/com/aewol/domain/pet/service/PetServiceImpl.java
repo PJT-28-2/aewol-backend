@@ -7,8 +7,10 @@ import com.aewol.domain.pet.dto.PetCreateRequest;
 import com.aewol.domain.pet.dto.PetDocumentResponse;
 import com.aewol.domain.pet.dto.PetRegistrationVerifyRequest;
 import com.aewol.domain.pet.dto.PetResponse;
+import com.aewol.domain.insurance.mapper.InsuranceMapper;
 import com.aewol.domain.pet.mapper.PetDocumentMapper;
 import com.aewol.domain.pet.mapper.PetMapper;
+import com.aewol.domain.recurring.mapper.RecurringMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
@@ -47,6 +49,8 @@ public class PetServiceImpl implements PetService {
     private final PetDocumentMapper petDocumentMapper;
     private final FileStorage fileStorage;
     private final PetRegistrationService petRegistrationService;
+    private final InsuranceMapper insuranceMapper;
+    private final RecurringMapper recurringMapper;
 
     @Override
     @Transactional
@@ -129,10 +133,29 @@ public class PetServiceImpl implements PetService {
         }
     }
 
+    /**
+     * 반려동물 등록해제(#291): pet 행 자체는 지우지 않는다 — care_diary(ON DELETE CASCADE)와
+     * shared_access(ON DELETE NO ACTION)가 pet_id를 참조하고 있어서, pet 행을 하드 삭제하면
+     * 공동육아 구성원이 쓴 다이어리가 강제로 함께 삭제되거나 shared_access를 먼저 지워야만
+     * 삭제가 가능해져 다른 구성원의 접근 권한이 끊긴다. 그래서 소유자 개인 데이터(등록증/문서/
+     * 보험/정기결제)만 하드 삭제하고, 공동 데이터(care_diary/shared_access)는 그대로 둔다.
+     * transaction은 감사 추적성 때문에 이번 범위에서 제외한다.
+     * reg_number 초기화는 deactivate보다 먼저 해야 한다 — updateRegistrationNumber는
+     * is_active = 1 조건으로 매칭하므로, deactivate 이후에 호출하면 0행이 되어 반영되지 않는다.
+     */
     @Override
     @Transactional
     public void deactivatePet(String memberId, String petId) {
         assertOwner(memberId, petId);
+
+        for (Map<String, Object> document : petDocumentMapper.findByPetId(petId)) {
+            deletePetDocument(memberId, petId, String.valueOf(value(document, "doc_id", "docId")));
+        }
+        insuranceMapper.deleteClaimsByPetId(petId);
+        insuranceMapper.deleteSimulationsByPetId(petId);
+        recurringMapper.deleteByPetId(petId);
+        petMapper.updateRegistrationNumber(petId, memberId, null);
+
         if (petMapper.deactivate(petId, memberId) != 1) {
             throw BusinessException.notFound("반려동물을 찾을 수 없습니다.");
         }
