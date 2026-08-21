@@ -360,6 +360,63 @@ class CareDiaryServiceImplTest {
         assertEquals(3L, response.getVersion());
     }
 
+    @Test
+    @DisplayName("공개로 바꾸면 사진의 공개 사본을 만들어 키를 저장한다")
+    void should_createPublicImageCopy_when_publishing() {
+        CareDiaryServiceImpl service = service();
+        givenPetOwnedBy("pet-1", "owner-1");
+        when(careDiaryMapper.findById("diary-1"))
+                .thenReturn(diaryRow("diary-1", "pet-1", "owner-1", "2026-08-10", "산책"));
+        when(careDiaryMapper.updateVisibility("diary-1", "PUBLIC")).thenReturn(1);
+        when(careDiaryMapper.findImagesForPublish("diary-1")).thenReturn(List.of(
+                map("imageId", "img-1", "imageUrl", "diary/a.png")));
+        when(fileStorage.publish("diary/a.png")).thenReturn("public/xyz.png");
+        when(careDiaryMapper.findImagesByDiaryIds(List.of("diary-1"))).thenReturn(List.of());
+
+        service.changeVisibility("owner-1", "diary-1", visibilityRequest("PUBLIC"));
+
+        verify(fileStorage).publish("diary/a.png");
+        verify(careDiaryMapper).updatePublicImageKey("img-1", "public/xyz.png");
+    }
+
+    @Test
+    @DisplayName("비공개로 되돌리면 공개 사본을 지우고 키를 비운다")
+    void should_removePublicImageCopy_when_unpublishing() {
+        CareDiaryServiceImpl service = service();
+        givenPetOwnedBy("pet-1", "owner-1");
+        when(careDiaryMapper.findById("diary-1"))
+                .thenReturn(diaryRow("diary-1", "pet-1", "owner-1", "2026-08-10", "산책"));
+        when(careDiaryMapper.updateVisibility("diary-1", "PRIVATE")).thenReturn(1);
+        when(careDiaryMapper.findImagesForPublish("diary-1")).thenReturn(List.of(
+                map("imageId", "img-1", "imageUrl", "diary/a.png", "publicImageKey", "public/xyz.png")));
+        when(careDiaryMapper.findImagesByDiaryIds(List.of("diary-1"))).thenReturn(List.of());
+
+        service.changeVisibility("owner-1", "diary-1", visibilityRequest("PRIVATE"));
+
+        verify(fileStorage).unpublish("public/xyz.png");
+        verify(careDiaryMapper).updatePublicImageKey("img-1", null);
+        // 원본은 건드리지 않는다. 지우면 일기 자체가 깨진다.
+        verify(fileStorage, never()).delete("diary/a.png");
+    }
+
+    // 사본 만들기가 실패해도 공개 전환 자체는 진행된다. 그 글은 사진이 없어 피드에서 빠진다.
+    @Test
+    @DisplayName("공개 사본 생성이 실패해도 공개 전환은 막지 않는다")
+    void should_notFail_when_publishReturnsNull() {
+        CareDiaryServiceImpl service = service();
+        givenPetOwnedBy("pet-1", "owner-1");
+        when(careDiaryMapper.findById("diary-1"))
+                .thenReturn(diaryRow("diary-1", "pet-1", "owner-1", "2026-08-10", "산책"));
+        when(careDiaryMapper.updateVisibility("diary-1", "PUBLIC")).thenReturn(1);
+        when(careDiaryMapper.findImagesForPublish("diary-1")).thenReturn(List.of(
+                map("imageId", "img-1", "imageUrl", "diary/a.png")));
+        when(fileStorage.publish("diary/a.png")).thenReturn(null);
+        when(careDiaryMapper.findImagesByDiaryIds(List.of("diary-1"))).thenReturn(List.of());
+
+        assertDoesNotThrow(() -> service.changeVisibility("owner-1", "diary-1", visibilityRequest("PUBLIC")));
+        verify(careDiaryMapper, never()).updatePublicImageKey(anyString(), anyString());
+    }
+
     private static CareDiaryVisibilityRequest visibilityRequest(String visibility) {
         CareDiaryVisibilityRequest request = new CareDiaryVisibilityRequest();
         ReflectionTestUtils.setField(request, "visibility", visibility);

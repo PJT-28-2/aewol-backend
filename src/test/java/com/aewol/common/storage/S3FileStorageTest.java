@@ -35,7 +35,7 @@ class S3FileStorageTest {
 
         FileSignature signature =
                 new FileSignature("test-secret-key-for-file-signature-256bit", 3600, 600);
-        storage = new S3FileStorage(s3, presigner, BUCKET, signature);
+        storage = new S3FileStorage(s3, presigner, BUCKET, "public", "https://cdn.test", signature);
     }
 
     @Test
