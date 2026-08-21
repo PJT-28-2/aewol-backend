@@ -38,6 +38,12 @@ class ExploreServiceImplTest {
         return new ExploreServiceImpl(exploreMapper, fileStorage);
     }
 
+    /** 공개 사본이 있는 이미지 행. 피드는 사본 없는 글을 빼므로 대부분의 테스트에 필요하다. */
+    private static Map<String, Object> imageRow(String diaryId) {
+        return Map.of("diaryId", diaryId, "imageUrl", "diary/" + diaryId + ".png",
+                "publicImageKey", "public/" + diaryId + ".png");
+    }
+
     private static Map<String, Object> postRow(String diaryId, String createdAt) {
         Map<String, Object> row = new HashMap<>();
         row.put("diaryId", diaryId);
@@ -55,7 +61,8 @@ class ExploreServiceImplTest {
     void should_notExposeHumanIdentity() {
         when(exploreMapper.findPublicPosts(isNull(), isNull(), anyInt()))
                 .thenReturn(List.of(postRow("d-1", "2026-08-21 10:00:00")));
-        when(exploreMapper.findImagesByDiaryIds(List.of("d-1"))).thenReturn(List.of());
+        when(exploreMapper.findImagesByDiaryIds(List.of("d-1"))).thenReturn(List.of(imageRow("d-1")));
+        when(fileStorage.publicUrl(anyString())).thenReturn("https://cdn.test/x.png");
 
         ExplorePageResponse page = service().getExploreFeed(null, 10);
 
@@ -66,6 +73,24 @@ class ExploreServiceImplTest {
                         || field.getName().toLowerCase().contains("member")));
     }
 
+    // 공개 사본이 아직 없는 글이 섞이면 그리드에 빈 칸이 생긴다. #309 배포 전이나 복사
+    // 실패 시에도 깨진 피드가 나가지 않아야 한다.
+    @Test
+    @DisplayName("공개 사진이 없는 글은 피드에서 뺀다")
+    void should_excludePosts_when_publicImageMissing() {
+        when(exploreMapper.findPublicPosts(isNull(), isNull(), anyInt())).thenReturn(List.of(
+                postRow("d-1", "2026-08-21 10:00:00"),
+                postRow("d-2", "2026-08-21 09:00:00")));
+        when(exploreMapper.findImagesByDiaryIds(anyList())).thenReturn(List.of(
+                Map.of("diaryId", "d-1", "imageUrl", "diary/a.png", "publicImageKey", "public/x.png")));
+        when(fileStorage.publicUrl("public/x.png")).thenReturn("https://cdn.test/public/x.png");
+
+        ExplorePageResponse page = service().getExploreFeed(null, 10);
+
+        assertEquals(1, page.getPosts().size());
+        assertEquals("d-1", page.getPosts().get(0).getDiaryId());
+    }
+
     @Test
     @DisplayName("다음 장이 있으면 마지막 행으로 커서를 만든다")
     void should_returnNextCursor_when_moreRowsExist() {
@@ -73,7 +98,9 @@ class ExploreServiceImplTest {
                 postRow("d-3", "2026-08-21 12:00:00"),
                 postRow("d-2", "2026-08-21 11:00:00"),
                 postRow("d-1", "2026-08-21 10:00:00")));
-        when(exploreMapper.findImagesByDiaryIds(anyList())).thenReturn(List.of());
+        when(exploreMapper.findImagesByDiaryIds(anyList()))
+                .thenReturn(List.of(imageRow("d-3"), imageRow("d-2"), imageRow("d-1")));
+        when(fileStorage.publicUrl(anyString())).thenReturn("https://cdn.test/x.png");
 
         ExplorePageResponse page = service().getExploreFeed(null, 2);
 
