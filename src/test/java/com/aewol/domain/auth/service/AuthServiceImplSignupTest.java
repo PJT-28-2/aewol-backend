@@ -28,6 +28,7 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionSynchronizationUtils;
+import org.springframework.transaction.support.TransactionOperations;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -64,6 +65,7 @@ class AuthServiceImplSignupTest {
     @Mock KakaoAuthClient kakaoAuthClient;
     @Mock AuthCredentialStore authCredentialStore;
     @Mock KakaoRegistrationStore kakaoRegistrationStore;
+    @Mock TransactionOperations transactionOperations;
 
     private AuthServiceImpl authService;
 
@@ -71,7 +73,8 @@ class AuthServiceImplSignupTest {
     void setUp() {
         authService = new AuthServiceImpl(memberMapper, walletMapper, notificationSettingMapper,
                 jwtUtil, passwordEncoder, redisTemplate, redisRateLimiter, emailService,
-                kakaoAuthClient, authCredentialStore, kakaoRegistrationStore);
+                kakaoAuthClient, authCredentialStore, kakaoRegistrationStore,
+                transactionOperations);
         when(redisTemplate.opsForValue()).thenReturn(valueOperations);
         TransactionSynchronizationManager.initSynchronization();
     }

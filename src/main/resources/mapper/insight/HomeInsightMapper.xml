@@ -36,7 +36,6 @@
           FROM member m
           JOIN pet p ON p.member_id = m.member_id AND p.is_active = 1
          WHERE m.is_active = 1
-           AND m.withdrawn_at IS NULL
          ORDER BY m.member_id
     </select>
 </mapper>

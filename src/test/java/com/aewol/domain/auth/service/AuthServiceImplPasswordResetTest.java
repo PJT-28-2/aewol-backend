@@ -33,6 +33,7 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
+import org.springframework.transaction.support.TransactionOperations;
 import org.springframework.transaction.support.TransactionSynchronizationUtils;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
@@ -69,6 +70,7 @@ class AuthServiceImplPasswordResetTest {
     @Mock KakaoAuthClient kakaoAuthClient;
     @Mock AuthCredentialStore authCredentialStore;
     @Mock KakaoRegistrationStore kakaoRegistrationStore;
+    @Mock TransactionOperations transactionOperations;
 
     private AuthServiceImpl service;
 
@@ -77,7 +79,7 @@ class AuthServiceImplPasswordResetTest {
         service = new AuthServiceImpl(
                 memberMapper, walletMapper, notificationSettingMapper, jwtUtil, passwordEncoder,
                 redisTemplate, redisRateLimiter, emailService, kakaoAuthClient, authCredentialStore,
-                kakaoRegistrationStore);
+                kakaoRegistrationStore, transactionOperations);
     }
 
     @AfterEach

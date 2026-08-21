@@ -30,4 +30,13 @@ public class KakaoOAuthResponse {
                 .registrationToken(registrationToken)
                 .build();
     }
+
+    public static KakaoOAuthResponse accountRestored(TokenResponse tokens) {
+        return KakaoOAuthResponse.builder()
+                .authStatus(KakaoAuthStatus.ACCOUNT_RESTORED)
+                .accessToken(tokens.getAccessToken())
+                .refreshToken(tokens.getRefreshToken())
+                .registrationToken(null)
+                .build();
+    }
 }

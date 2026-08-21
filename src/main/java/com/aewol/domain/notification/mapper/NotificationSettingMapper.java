@@ -18,4 +18,5 @@ public interface NotificationSettingMapper {
     void upsertForRecovery(
             @Param("memberId") Long memberId,
             @Param("marketingEnabled") boolean marketingEnabled);
+    void ensureForRecovery(@Param("memberId") Long memberId);
 }
