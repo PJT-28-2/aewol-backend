@@ -111,6 +111,66 @@ class PetServiceImplTest {
     }
 
     @Test
+    void should_verifyRegistration_when_registrationNumberIsAdded() {
+        PetServiceImpl service = service();
+        PetCreateRequest request = mock(PetCreateRequest.class);
+        when(request.getRegNumber()).thenReturn("410000012345678");
+        when(request.getRegistrationOwnerName()).thenReturn("홍길동");
+        when(petMapper.findById("pet-1")).thenReturn(pet("member-1"));
+
+        service.updatePet("member-1", "pet-1", request);
+
+        verify(petRegistrationService).verify(eq("member-1"), eq("pet-1"),
+                argThat(verifyRequest ->
+                        "410000012345678".equals(verifyRequest.getRegNumber())
+                                && "홍길동".equals(verifyRequest.getUserName())));
+    }
+
+    @Test
+    void should_reverifyExistingRegistration_when_identityChangesAndNumberIsOmitted() {
+        PetServiceImpl service = service();
+        PetCreateRequest request = mock(PetCreateRequest.class);
+        Map<String, Object> existing = pet("member-1");
+        existing.put("reg_number", "410000012345678");
+        existing.put("birth_date", "2020-01-01");
+        when(request.getName()).thenReturn("바뀐이름");
+        when(request.getBirthDate()).thenReturn("2020-01-01");
+        when(petMapper.findById("pet-1")).thenReturn(existing);
+
+        service.updatePet("member-1", "pet-1", request);
+
+        verify(petRegistrationService).verify(eq("member-1"), eq("pet-1"),
+                argThat(verifyRequest -> "410000012345678".equals(verifyRequest.getRegNumber())));
+    }
+
+    @Test
+    void should_notDisconnectRegistration_when_registrationDoesNotExist() {
+        PetServiceImpl service = service();
+        when(petMapper.findById("pet-1")).thenReturn(pet("member-1"));
+        when(petDocumentMapper.findByPetIdAndTypeForUpdate("pet-1", "REGISTRATION"))
+                .thenReturn(null);
+
+        assertThrows(BusinessException.class,
+                () -> service.disconnectRegistration("member-1", "pet-1"));
+
+        verify(petRegistrationService, never()).cancel(anyString(), anyString(), anyString());
+    }
+
+    @Test
+    void should_disconnectRegistrationAndDocument_when_registrationExists() {
+        PetServiceImpl service = service();
+        when(petMapper.findById("pet-1")).thenReturn(pet("member-1"));
+        when(petDocumentMapper.findByPetIdAndTypeForUpdate("pet-1", "REGISTRATION"))
+                .thenReturn(map("doc_id", "doc-1", "pet_id", "pet-1"));
+        when(petDocumentMapper.deleteByIdAndPetId("doc-1", "pet-1")).thenReturn(1);
+
+        service.disconnectRegistration("member-1", "pet-1");
+
+        verify(petRegistrationService).cancel("member-1", "pet-1", "doc-1");
+        verify(petDocumentMapper).deleteByIdAndPetId("doc-1", "pet-1");
+    }
+
+    @Test
     void should_throwNotFound_when_updatingMissingPet() {
         PetServiceImpl service = service();
         when(petMapper.findById("pet-404")).thenReturn(null);
