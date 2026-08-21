@@ -26,6 +26,11 @@ public interface CareDiaryMapper {
                @Param("content") String content,
                @Param("version") Long version);
 
+    List<Map<String, Object>> findImagesForPublish(@Param("diaryId") String diaryId);
+
+    int updatePublicImageKey(@Param("imageId") String imageId,
+                             @Param("publicImageKey") String publicImageKey);
+
     int updateVisibility(@Param("diaryId") String diaryId,
                          @Param("visibility") String visibility);
 
