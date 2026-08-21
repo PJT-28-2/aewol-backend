@@ -360,6 +360,7 @@ public class AuthServiceImpl implements AuthService {
     }
 
     @Override
+    @Transactional
     public KakaoOAuthResponse kakaoLogin(String code) {
         String kakaoAccessToken = kakaoAuthClient.getAccessToken(code);
         KakaoUserInfo userInfo = kakaoAuthClient.getUserInfo(kakaoAccessToken);
@@ -375,6 +376,20 @@ public class AuthServiceImpl implements AuthService {
         Map<String, Object> activeEmailMember = memberMapper.findActiveByEmail(userInfo.getEmail());
         if (activeEmailMember != null && "LOCAL".equals(activeEmailMember.get("provider"))) {
             throw BusinessException.conflict("이미 가입된 이메일입니다.");
+        }
+        Map<String, Object> inactiveKakao =
+                memberMapper.findInactiveKakaoByProviderIdForUpdate(userInfo.getProviderId());
+        if (inactiveKakao != null
+                && booleanValue(inactiveKakao,
+                "recoverable_within_30_days", "recoverableWithin30Days")) {
+            Long memberId = numberValue(inactiveKakao, "member_id", "memberId").longValue();
+            if (memberMapper.restoreKakaoMember(memberId) != 1) {
+                throw BusinessException.conflict("이미 활성화된 회원입니다.");
+            }
+            notificationSettingMapper.ensureForRecovery(memberId);
+            String role = String.valueOf(value(inactiveKakao, "role", "role"));
+            return KakaoOAuthResponse.accountRestored(
+                    generateTokens(String.valueOf(memberId), role));
         }
         if (memberMapper.existsInactiveKakaoByProviderId(userInfo.getProviderId())) {
             throw BusinessException.unauthorized("카카오 로그인에 실패했습니다.");

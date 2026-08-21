@@ -92,6 +92,10 @@ class KakaoPhoneVerificationStoreTest {
                 script.capture(), anyList(), anyString(), eq("300000"));
         assertTrue(script.getAllValues().get(0).getScriptAsString()
                 .contains("redis.call('SET', KEYS[2], ARGV[1]"));
+        assertTrue(script.getAllValues().get(0).getScriptAsString()
+                .contains("registration['verifiedPhone'] = nil"));
+        assertTrue(script.getAllValues().get(0).getScriptAsString()
+                .contains("redis.call('SET', KEYS[1], cjson.encode(registration), 'KEEPTTL')"));
     }
 
     @Test

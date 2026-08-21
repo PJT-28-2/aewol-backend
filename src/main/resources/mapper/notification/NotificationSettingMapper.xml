@@ -50,4 +50,13 @@
         ON DUPLICATE KEY UPDATE
             marketing_enabled = #{marketingEnabled}
     </insert>
+
+    <insert id="ensureForRecovery">
+        INSERT IGNORE INTO notification_setting (
+            member_id, payment_enabled, recurring_payment_enabled,
+            family_share_enabled, community_enabled, marketing_enabled
+        ) VALUES (
+            #{memberId}, TRUE, TRUE, TRUE, TRUE, FALSE
+        )
+    </insert>
 </mapper>
