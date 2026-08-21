@@ -75,7 +75,9 @@ public class HomeInsightServiceImpl implements HomeInsightService {
                 cards.add(toResponse(card, hit));
                 continue;
             }
-            cards.add(generateAndStore(memberId, card));
+            // 홈을 연 스레드에서 LLM을 부르면 캐시 미스마다 수 초가 붙는다.
+            // 문구는 배치 warmUp이 채우고, 여기선 데이터로 만든 대체 문장만 바로 돌려준다.
+            cards.add(fallbackResponse(card));
         }
         return cards;
     }
@@ -150,6 +152,18 @@ public class HomeInsightServiceImpl implements HomeInsightService {
                 .fallback(fallback)
                 .recommendedProducts(card.getRecommendedProducts())
                 .categoryBreakdown(card.getCategoryBreakdown())
+                .build();
+    }
+
+    private static HomeInsightResponse fallbackResponse(InsightCard card) {
+        return HomeInsightResponse.builder()
+                .type(card.getType().name())
+                .headline(card.getHeadline())
+                .body(trimToColumn(card.getFallbackBody()))
+                .projection(card.getProjection())
+                .ctaLabel(card.getCtaLabel())
+                .ctaPath(card.getCtaPath())
+                .fallback(true)
                 .build();
     }
 

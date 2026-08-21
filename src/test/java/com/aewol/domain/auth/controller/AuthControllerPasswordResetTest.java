@@ -6,6 +6,7 @@ import com.aewol.domain.auth.dto.PasswordResetVerifyResponse;
 import com.aewol.domain.auth.dto.SignupEmailCodeResponse;
 import com.aewol.domain.auth.service.AuthService;
 import com.aewol.domain.auth.service.AccountFindService;
+import com.aewol.domain.auth.support.KakaoRegistrationCookie;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.nio.charset.StandardCharsets;
@@ -39,7 +40,7 @@ class AuthControllerPasswordResetTest {
         LocalValidatorFactoryBean validator = new LocalValidatorFactoryBean();
         validator.afterPropertiesSet();
         mockMvc = MockMvcBuilders.standaloneSetup(
-                        new AuthController(authService, mock(AccountFindService.class)))
+                        new AuthController(authService, mock(AccountFindService.class), new KakaoRegistrationCookie(false)))
                 .setControllerAdvice(new GlobalExceptionHandler())
                 .setValidator(validator)
                 .build();

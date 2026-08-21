@@ -118,8 +118,10 @@ public class SupportServiceImpl implements SupportService {
 
         switch (type) {
             case "REGION":
-                // V1 member에는 region 컬럼이 없다 — 주소(address) 접두 비교로 대체
-                return compareRegion(text(member, "region", "address"), expected, operator);
+                // member에는 region 컬럼이 없어 주소를 쓴다. 사업 쪽은 정부24 기관명이라
+                // 정식 표기고 회원 주소는 축약 표기여서, 문자열이 아니라
+                // (시도, 시군구)로 끊어 맞춘다.
+                return RegionMatcher.matches(text(member, "region", "address"), expected, operator);
             case "PET_SPECIES":
                 return compareText(text(pet, "species"), expected, operator);
             case "PET_AGE_MONTHS":
@@ -160,26 +162,8 @@ public class SupportServiceImpl implements SupportService {
                 || targetSpecies.equalsIgnoreCase(petSpecies);
     }
 
-    private boolean compareRegion(String actual, String expected, String operator) {
-        if (actual == null) return false;
-        if ("IN".equals(operator)) {
-            return Arrays.stream(expected.split(","))
-                    .map(this::normalizeRegion)
-                    .anyMatch(region -> normalizeRegion(actual).startsWith(region));
-        }
-        return normalizeRegion(actual).startsWith(normalizeRegion(expected));
-    }
-
-    private String normalizeRegion(String region) {
-        if (region == null) return "";
-        return region.replaceAll("\\s", "")
-                .replace("특별자치시", "")
-                .replace("특별자치도", "")
-                .replace("특별시", "")
-                .replace("광역시", "")
-                .replaceAll("시$", "")
-                .replaceAll("도$", "");
-    }
+    // 지역 비교는 RegionMatcher로 옮겼다. 문자열 접두 비교로는 표기가 다른 같은 지역을
+    // 걸러내고(경기 수원시 vs 경기도 수원시), 시군구를 붙이는 순간 어긋났다.
 
     private boolean compareText(String actual, String expected, String operator) {
         if (actual == null) return false;

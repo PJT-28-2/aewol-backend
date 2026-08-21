@@ -578,6 +578,34 @@ class GroupPurchaseServiceImplTest {
     }
 
     @Test
+    @DisplayName("목록 항목의 image는 저장 키를 signedUrl로 감싼 값이 내려간다")
+    void should_returnSignedImageUrl_onList() {
+        GroupPurchaseServiceImpl service = service();
+        LocalDateTime deadline = LocalDateTime.now().plusDays(5);
+        when(groupPurchaseMapper.findList(isNull(), isNull(), isNull(), eq(11), eq(0), isNull()))
+                .thenReturn(List.of(listRow(1L, "OPEN", deadline, 30000, 25000)));
+
+        GroupPurchaseListResponse result = service.list(null, null, null, null, 0, 10);
+
+        assertEquals("group-purchase/sample.png", result.getItems().get(0).getImage());
+    }
+
+    @Test
+    @DisplayName("image가 없는 게시글은 목록 항목의 image가 null로 내려간다")
+    void should_returnNullImage_when_rowHasNoImage() {
+        GroupPurchaseServiceImpl service = service();
+        LocalDateTime deadline = LocalDateTime.now().plusDays(5);
+        Map<String, Object> row = listRow(1L, "OPEN", deadline, 30000, 25000);
+        row.put("image", null);
+        when(groupPurchaseMapper.findList(isNull(), isNull(), isNull(), eq(11), eq(0), isNull()))
+                .thenReturn(List.of(row));
+
+        GroupPurchaseListResponse result = service.list(null, null, null, null, 0, 10);
+
+        assertNull(result.getItems().get(0).getImage());
+    }
+
+    @Test
     @DisplayName("로그인한 유저가 이미 참여한 게시글은 isParticipating이 true로 내려간다")
     void should_returnIsParticipatingTrue_when_memberAlreadyJoined() {
         GroupPurchaseServiceImpl service = service();
@@ -1496,6 +1524,7 @@ class GroupPurchaseServiceImplTest {
         row.put("member_id", 3L);
         row.put("product_name", "사료 5kg");
         row.put("category", "사료");
+        row.put("image", "group-purchase/sample.png");
         row.put("status", status);
         row.put("current_quantity", currentQuantity);
         row.put("target_quantity", targetQuantity);

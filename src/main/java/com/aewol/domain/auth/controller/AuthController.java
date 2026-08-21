@@ -20,6 +20,7 @@ import com.aewol.domain.auth.dto.SignupEmailVerificationRequest;
 import com.aewol.domain.auth.dto.TokenResponse;
 import com.aewol.domain.auth.service.AuthService;
 import com.aewol.domain.auth.service.AccountFindService;
+import com.aewol.domain.auth.support.KakaoRegistrationCookie;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import javax.validation.Valid;
@@ -30,6 +31,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.util.StringUtils;
 import org.springframework.web.bind.annotation.*;
+import javax.servlet.http.HttpServletResponse;
 
 @Tag(name = "Auth", description = "인증/인가 API")
 @RestController
@@ -41,6 +43,7 @@ public class AuthController {
 
     private final AuthService authService;
     private final AccountFindService accountFindService;
+    private final KakaoRegistrationCookie kakaoRegistrationCookie;
 
     @Operation(summary = "계정 찾기 SMS 인증번호 발송")
     @PostMapping("/account/find/send-code")
@@ -91,8 +94,15 @@ public class AuthController {
 
     @Operation(summary = "카카오 소셜 로그인")
     @PostMapping("/oauth/kakao")
-    public ResponseEntity<ApiResponse<KakaoOAuthResponse>> kakaoLogin(@RequestParam String code) {
-        return ResponseEntity.ok(ApiResponse.success(authService.kakaoLogin(code)));
+    public ResponseEntity<ApiResponse<KakaoOAuthResponse>> kakaoLogin(
+            @RequestParam String code, HttpServletResponse response) {
+        KakaoOAuthResponse result = authService.kakaoLogin(code);
+        if (result.getRegistrationToken() != null) {
+            kakaoRegistrationCookie.write(response, result.getRegistrationToken());
+        } else {
+            kakaoRegistrationCookie.clear(response);
+        }
+        return ResponseEntity.ok(ApiResponse.success(result));
     }
 
     @Operation(summary = "토큰 재발급")

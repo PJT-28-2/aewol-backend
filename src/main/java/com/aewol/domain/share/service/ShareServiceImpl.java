@@ -20,6 +20,17 @@ import org.springframework.transaction.annotation.Transactional;
 @RequiredArgsConstructor
 public class ShareServiceImpl implements ShareService {
 
+    /**
+     * 링크 초대 기본 유효시간.
+     *
+     * <p>받는 사람을 지정하지 않는 초대라, 링크가 살아 있는 동안은 그것을 본 누구나
+     * 들어올 수 있다. 짧게 잡아 두고 필요하면 다시 만들게 하는 편이 안전하다.
+     */
+    private static final int DEFAULT_LINK_TTL_MINUTES = 10;
+
+    /** 받는 사람을 지정한 초대는 그 계정만 수락할 수 있어 길게 열어둬도 된다. */
+    private static final int RECIPIENT_INVITE_TTL_MINUTES = 7 * 24 * 60;
+
     private static final Set<String> ROLES = Set.of("VIEWER", "MANAGER", "ADMIN");
     private static final Set<String> RESPONSES = Set.of("REJECTED", "REVOKED");
     private static final Pattern EMAIL_PATTERN = Pattern.compile("^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$");
@@ -63,13 +74,16 @@ public class ShareServiceImpl implements ShareService {
         }
 
         String targetMemberId = targetMember == null ? null : text(targetMember, "member_id", "memberId");
-        return createInvite(memberId, request.getPetId(), targetMemberId, recipientType, normalized, request.getRole());
+        return createInvite(memberId, request.getPetId(), targetMemberId, recipientType, normalized,
+                request.getRole(), RECIPIENT_INVITE_TTL_MINUTES);
     }
 
     @Override
     @Transactional
     public ShareInviteResponse createLinkInvite(String memberId, ShareLinkInviteRequest request) {
-        return createInvite(memberId, request.getPetId(), null, "LINK", null, request.getRole());
+        Integer requested = request.getExpiresInMinutes();
+        return createInvite(memberId, request.getPetId(), null, "LINK", null, request.getRole(),
+                requested == null ? DEFAULT_LINK_TTL_MINUTES : requested);
     }
 
     @Override
@@ -205,7 +219,8 @@ public class ShareServiceImpl implements ShareService {
     }
 
     private ShareInviteResponse createInvite(String inviterId, String petId, String targetMemberId,
-                                               String recipientType, String recipientValue, String role) {
+                                               String recipientType, String recipientValue, String role,
+                                               int ttlMinutes) {
         inviterId = requireMemberId(inviterId);
         Map<String, Object> pet = assertOwner(inviterId, petId);
         if (inviterId.equals(targetMemberId)) {
@@ -228,10 +243,15 @@ public class ShareServiceImpl implements ShareService {
         access.put("recipientType", recipientType);
         access.put("recipientValue", recipientValue);
         access.put("role", normalizeRole(role));
-        access.put("expiresAt", LocalDateTime.now().plusDays(7));
+        LocalDateTime expiresAt = LocalDateTime.now().plusMinutes(ttlMinutes);
+        access.put("expiresAt", expiresAt);
         shareMapper.insert(access);
         // access_id는 AUTO_INCREMENT — useGeneratedKeys가 파라미터 맵에 채워준다
-        return ShareInviteResponse.builder().accessId(text(access, "accessId")).inviteCode(inviteCode).build();
+        return ShareInviteResponse.builder()
+                .accessId(text(access, "accessId"))
+                .inviteCode(inviteCode)
+                .expiresAt(dateTimeText(expiresAt))
+                .build();
     }
 
     private Map<String, Object> getValidInvite(String inviteCode) {

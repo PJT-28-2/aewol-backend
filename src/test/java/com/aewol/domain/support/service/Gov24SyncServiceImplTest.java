@@ -94,10 +94,29 @@ class Gov24SyncServiceImplTest {
         verify(gov24SyncMapper).insertProgramCondition(captor.capture());
         Map<String, Object> condition = captor.getValue();
         assertEquals("REGION", condition.get("conditionType"));
-        assertEquals("서울특별시", condition.get("conditionValue"));
+        // 구민 전용 사업이 그 시도 주민 전체에게 열리지 않도록 시군구까지 남긴다.
+        assertEquals("서울특별시 동대문구", condition.get("conditionValue"));
         assertEquals(7L, condition.get("programId"));
         // 재동기화 시 자동 생성 조건은 먼저 지운다
         verify(gov24SyncMapper).deleteGeneratedConditions(7L);
+    }
+
+    // 기관명 둘째 어절이 늘 시군구인 것은 아니다. 부서명을 지역으로 쓰면 그 조건은
+    // 아무와도 맞지 않아 사업이 조용히 묻힌다.
+    @Test
+    @DisplayName("기관명 둘째 어절이 부서명이면 광역 단위로 남긴다")
+    void should_keepSidoOnly_when_secondTokenIsDepartment() {
+        when(gov24Client.isConfigured()).thenReturn(true);
+        when(gov24Client.findServicesByName(anyString())).thenReturn(List.of());
+        when(gov24Client.findServicesByName("반려동물"))
+                .thenReturn(List.of(listRow("D1", "반려동물 의료비 지원", "서울특별시 동물복지과")));
+        when(gov24SyncMapper.findProgramIdBySourceServiceId("D1")).thenReturn(11L);
+
+        service().syncPetSupportPrograms();
+
+        ArgumentCaptor<Map<String, Object>> captor = ArgumentCaptor.forClass(Map.class);
+        verify(gov24SyncMapper).insertProgramCondition(captor.capture());
+        assertEquals("서울특별시", captor.getValue().get("conditionValue"));
     }
 
     @Test
@@ -128,7 +147,7 @@ class Gov24SyncServiceImplTest {
         ArgumentCaptor<Map<String, Object>> captor = ArgumentCaptor.forClass(Map.class);
         verify(gov24SyncMapper).upsertCuratedProgram(captor.capture());
         assertEquals("DOG", captor.getValue().get("targetSpecies"));
-        assertEquals("경기도", captor.getValue().get("region"));
+        assertEquals("경기도 수원시", captor.getValue().get("region"));
     }
 
     @Test

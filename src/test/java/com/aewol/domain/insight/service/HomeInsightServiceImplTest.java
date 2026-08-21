@@ -60,19 +60,31 @@ class HomeInsightServiceImplTest {
     }
 
     @Test
-    @DisplayName("생성된 문구를 캐시에 저장한다")
-    void should_storeGeneratedBody() {
+    @DisplayName("캐시가 없으면 요청 경로에서 LLM을 부르지 않고 대체 문구를 바로 돌려준다")
+    void should_returnFallbackWithoutLlm_when_cacheMisses() {
         when(homeInsightMapper.findFreshByMemberId("m1")).thenReturn(List.of());
-        when(openAiChatClient.complete(anyString(), anyString())).thenReturn("모델이 쓴 문장입니다.");
 
         List<HomeInsightResponse> cards =
                 service(List.of(collector(InsightCardType.SUPPORT, card(InsightCardType.SUPPORT, "d1"))), true)
                         .getCards("m1", null);
 
         assertEquals(1, cards.size());
-        assertEquals("모델이 쓴 문장입니다.", cards.get(0).getBody());
-        assertFalse(cards.get(0).isFallback());
+        assertEquals("데이터로 만든 대체 문구입니다.", cards.get(0).getBody());
+        assertTrue(cards.get(0).isFallback());
+        verify(openAiChatClient, never()).complete(anyString(), anyString());
+        verify(homeInsightMapper, never()).upsert(any());
+    }
 
+    @Test
+    @DisplayName("생성된 문구를 캐시에 저장한다")
+    void should_storeGeneratedBody() {
+        when(homeInsightMapper.findFreshByMemberId("m1")).thenReturn(List.of());
+        when(openAiChatClient.complete(anyString(), anyString())).thenReturn("모델이 쓴 문장입니다.");
+
+        int generated = service(List.of(collector(InsightCardType.SUPPORT, card(InsightCardType.SUPPORT, "d1"))), true)
+                .warmUp("m1", null);
+
+        assertEquals(1, generated);
         ArgumentCaptor<Map<String, Object>> captor = ArgumentCaptor.forClass(Map.class);
         verify(homeInsightMapper).upsert(captor.capture());
         assertEquals("SUPPORT", captor.getValue().get("cardType"));
@@ -80,10 +92,9 @@ class HomeInsightServiceImplTest {
     }
 
     @Test
-    @DisplayName("예측은 LLM 본문 재료에서 빼고 별도 응답 필드로만 전달한다")
+    @DisplayName("예측은 요청 경로에서도 카드 재료에서 별도 필드로만 전달한다")
     void should_exposeProjectionSeparately_withoutSendingItToLlm() {
         when(homeInsightMapper.findFreshByMemberId("m1")).thenReturn(List.of());
-        when(openAiChatClient.complete(anyString(), anyString())).thenReturn("모델 본문");
         InsightCard card = InsightCard.builder()
                 .type(InsightCardType.SPENDING)
                 .headline("이번 달 지출 100,000원")
@@ -98,10 +109,9 @@ class HomeInsightServiceImplTest {
         List<HomeInsightResponse> cards =
                 service(List.of(collector(InsightCardType.SPENDING, card)), true).getCards("m1", null);
 
-        ArgumentCaptor<String> factsCaptor = ArgumentCaptor.forClass(String.class);
-        verify(openAiChatClient).complete(anyString(), factsCaptor.capture());
-        assertEquals("총 지출: 100,000원", factsCaptor.getValue());
+        verify(openAiChatClient, never()).complete(anyString(), anyString());
         assertEquals("이 속도면 이달 말 약 310,000원", cards.get(0).getProjection());
+        assertEquals("대체 문구", cards.get(0).getBody());
     }
 
     // 외부 호출이 실패해도 홈 화면은 떠야 한다. 카드가 사라지거나 빈 문구가 되면
@@ -142,7 +152,7 @@ class HomeInsightServiceImplTest {
     }
 
     @Test
-    @DisplayName("재료가 바뀌면 캐시가 있어도 다시 만든다")
+    @DisplayName("재료가 바뀌면 홈 요청은 대체 문구를 주고, 배치는 LLM으로 다시 만든다")
     void should_regenerate_when_sourceChanged() {
         Map<String, Object> cached = new HashMap<>();
         cached.put("card_type", "SUPPORT");
@@ -151,12 +161,14 @@ class HomeInsightServiceImplTest {
         cached.put("fallback", "N");
         when(homeInsightMapper.findFreshByMemberId("m1")).thenReturn(List.of(cached));
         when(openAiChatClient.complete(anyString(), anyString())).thenReturn("새 문장");
+        HomeInsightServiceImpl service =
+                service(List.of(collector(InsightCardType.SUPPORT, card(InsightCardType.SUPPORT, "d1"))), true);
 
-        List<HomeInsightResponse> cards =
-                service(List.of(collector(InsightCardType.SUPPORT, card(InsightCardType.SUPPORT, "d1"))), true)
-                        .getCards("m1", null);
+        List<HomeInsightResponse> cards = service.getCards("m1", null);
+        assertEquals("데이터로 만든 대체 문구입니다.", cards.get(0).getBody());
+        verify(openAiChatClient, never()).complete(anyString(), anyString());
 
-        assertEquals("새 문장", cards.get(0).getBody());
+        service.warmUp("m1", null);
         verify(homeInsightMapper).upsert(any());
     }
 
@@ -217,10 +229,11 @@ class HomeInsightServiceImplTest {
         when(homeInsightMapper.findFreshByMemberId("m1")).thenReturn(List.of());
         when(openAiChatClient.complete(anyString(), anyString())).thenReturn("가".repeat(500));
 
-        List<HomeInsightResponse> cards =
-                service(List.of(collector(InsightCardType.SUPPORT, card(InsightCardType.SUPPORT, "d1"))), true)
-                        .getCards("m1", null);
+        service(List.of(collector(InsightCardType.SUPPORT, card(InsightCardType.SUPPORT, "d1"))), true)
+                .warmUp("m1", null);
 
-        assertEquals(300, cards.get(0).getBody().length());
+        ArgumentCaptor<Map<String, Object>> captor = ArgumentCaptor.forClass(Map.class);
+        verify(homeInsightMapper).upsert(captor.capture());
+        assertEquals(300, String.valueOf(captor.getValue().get("body")).length());
     }
 }
