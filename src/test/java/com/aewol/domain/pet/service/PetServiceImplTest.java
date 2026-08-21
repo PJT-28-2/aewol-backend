@@ -276,6 +276,28 @@ class PetServiceImplTest {
         verify(petMapper).deactivate("pet-1", "member-1");
     }
 
+    // 영수증만 올리고 아직 청구서류(claim_document_url)는 없는 DRAFT 상태 클레임이 흔하다 —
+    // 이 경우 arrangeDeletedFileCleanup(null)이 예외 없이 조용히 넘어가야 한다.
+    @Test
+    void should_skipCleanup_when_claimHasNoDocumentUrlYet() {
+        PetServiceImpl service = service();
+        when(petMapper.findById("pet-1")).thenReturn(pet("member-1"));
+        when(petDocumentMapper.findByPetId("pet-1")).thenReturn(List.of());
+        Map<String, Object> draftClaim = new HashMap<>();
+        draftClaim.put("claim_id", "claim-2");
+        draftClaim.put("receipt_image_url", "receipts/claim-2.jpg");
+        draftClaim.put("claim_document_url", null);
+        when(insuranceMapper.findClaimsByPetId("pet-1")).thenReturn(List.of(draftClaim));
+        when(petMapper.updateRegistrationNumber("pet-1", "member-1", null)).thenReturn(1);
+        when(petMapper.deactivate("pet-1", "member-1")).thenReturn(1);
+
+        service.deactivatePet("member-1", "pet-1");
+
+        verify(fileStorage).delete("receipts/claim-2.jpg");
+        verify(fileStorage, never()).delete(null);
+        verify(insuranceMapper).deleteClaimsByPetId("pet-1");
+    }
+
     @Test
     void should_throwNotFound_when_deletingMissingPet() {
         PetServiceImpl service = service();
