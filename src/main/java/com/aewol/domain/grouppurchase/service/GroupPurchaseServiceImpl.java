@@ -437,7 +437,7 @@ public class GroupPurchaseServiceImpl implements GroupPurchaseService {
         return (BigDecimal) updatedWallet.get("balance");
     }
 
-    /** 지갑 잔액을 차감하고 거래내역을 생성한 뒤 생성된 txn_id를 반환한다. TransactionServiceImpl#processPayment와 동일한 차감·기록 패턴을 따른다. */
+    /** 지갑 잔액을 차감하고 거래내역을 생성한 뒤 생성된 txn_id를 반환한다. TransactionServiceImpl#processPayment와 동일한 차감·기록 패턴을 따른다. memo는 호출부에서 넘긴 문구를 그대로 기록한다. */
     private Long chargeWallet(String memberId, Map<String, Object> gp, BigDecimal amount, String memo) {
         Map<String, Object> wallet = walletMapper.findByMemberId(memberId);
         if (wallet == null) {
