@@ -56,6 +56,13 @@
                 WHERE gpp.txn_id = t.txn_id AND gpp.payment_status = 'CANCELLED'
             )
         </if>
+        <if test="txnFilter == 'PAYMENT'">
+            AND t.txn_type = 'PAYMENT'
+            AND NOT EXISTS (
+                SELECT 1 FROM group_purchase_participant gpp
+                WHERE gpp.txn_id = t.txn_id AND gpp.payment_status = 'CANCELLED'
+            )
+        </if>
         ORDER BY t.txn_date DESC, t.txn_id DESC
         LIMIT #{limit}
     </select>
