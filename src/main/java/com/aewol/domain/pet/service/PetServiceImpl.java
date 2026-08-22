@@ -65,6 +65,7 @@ public class PetServiceImpl implements PetService {
         pet.put("weight", request.getWeight());
         pet.put("neutered", request.getNeutered());
         pet.put("medicalHistory", request.getMedicalHistory());
+        pet.put("instagramId", normalizeInstagramId(request.getInstagramId()));
         petMapper.insert(pet); // pet_id AUTO_INCREMENT
 
         String petId = String.valueOf(pet.get("petId"));
