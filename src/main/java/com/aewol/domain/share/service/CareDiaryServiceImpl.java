@@ -6,6 +6,7 @@ import com.aewol.domain.activity.mapper.ActivityLogMapper;
 import com.aewol.domain.pet.mapper.PetMapper;
 import com.aewol.domain.share.dto.CareDiaryResponse;
 import com.aewol.domain.share.dto.CareDiaryUpdateRequest;
+import com.aewol.domain.share.dto.CareDiaryVisibilityRequest;
 import com.aewol.domain.share.mapper.CareDiaryMapper;
 import com.aewol.domain.share.mapper.ShareMapper;
 import java.io.IOException;
@@ -34,6 +35,7 @@ import org.springframework.web.multipart.MultipartFile;
 @RequiredArgsConstructor
 public class CareDiaryServiceImpl implements CareDiaryService {
 
+    private static final String PUBLIC = "PUBLIC";
     private static final int MAX_CONTENT_LENGTH = 500;
     private static final String UPLOAD_SUB_DIR = "diary";
     /** 업로드 경로로 공개되므로 스크립트가 실행될 수 있는 형식(svg, html 등)은 받지 않는다. */
@@ -154,6 +156,48 @@ public class CareDiaryServiceImpl implements CareDiaryService {
                         "다른 곳에서 이 일기를 먼저 수정했어요. 최신 내용을 불러온 뒤 다시 저장해 주세요.");
             }
             throw BusinessException.notFound("수정할 일기를 찾을 수 없습니다.");
+        }
+        return getDetail(memberId, diaryId);
+    }
+
+    /**
+     * 공개 여부 전환. 올리는 권한과 내리는 권한이 다르다.
+     *
+     * <p>일기는 공동 작성이라 여러 가족이 한 반려동물의 일기에 쓴다. 대표 보호자가 남이 쓴
+     * 글을 마음대로 공개하면 "내가 쓴 글인데 내 통제 밖에서 공개됐다"가 된다. 그래서 공개는
+     * 작성자만 하고, 내리는 것은 작성자와 대표 보호자 둘 다 할 수 있게 한다.
+     *
+     * <p>신고로 내려간 글은 작성자도 다시 공개하지 못한다. 되돌리는 것은 관리자 몫이다.
+     */
+    @Override
+    @Transactional
+    public CareDiaryResponse changeVisibility(String memberId, String diaryId,
+                                              CareDiaryVisibilityRequest request) {
+        memberId = requireMemberId(memberId);
+        Map<String, Object> row = findDiary(diaryId);
+        String petId = text(row, "petId");
+        Map<String, Object> pet = assertCanAccess(memberId, petId);
+
+        String visibility = request.getVisibility();
+        boolean isAuthor = memberId.equals(text(row, "authorMemberId"));
+        // petMapper.findById는 SELECT * 라 컬럼명이 그대로 온다. assertCanAccess와 동일하게
+        // 두 표기를 모두 받는다.
+        boolean isPetOwner = memberId.equals(text(pet, "member_id", "memberId"));
+
+        if (PUBLIC.equals(visibility)) {
+            if (!isAuthor) {
+                throw BusinessException.forbidden("일기를 공개하는 것은 작성자만 할 수 있습니다.");
+            }
+            if (value(row, "hiddenByReportAt") != null) {
+                throw BusinessException.conflict(
+                        "신고로 노출이 중단된 일기예요. 고객센터 확인 후에 다시 공개할 수 있어요.");
+            }
+        } else if (!isAuthor && !isPetOwner) {
+            throw BusinessException.forbidden("작성자 또는 대표 보호자만 일기를 비공개로 바꿀 수 있습니다.");
+        }
+
+        if (careDiaryMapper.updateVisibility(diaryId, visibility) != 1) {
+            throw BusinessException.notFound("공개 여부를 바꿀 일기를 찾을 수 없습니다.");
         }
         return getDetail(memberId, diaryId);
     }
@@ -352,6 +396,8 @@ public class CareDiaryServiceImpl implements CareDiaryService {
                 .authorName(text(row, "authorName"))
                 .createdAt(dateTimeText(value(row, "createdAt")))
                 .version(longValue(row, "version"))
+                .visibility(text(row, "visibility"))
+                .hiddenByReport(value(row, "hiddenByReportAt") != null)
                 .editable(isAuthor)
                 .deletable(isAuthor || requesterId.equals(ownerId))
                 .build();

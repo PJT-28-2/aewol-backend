@@ -10,6 +10,7 @@ import com.aewol.domain.activity.mapper.ActivityLogMapper;
 import com.aewol.domain.pet.mapper.PetMapper;
 import com.aewol.domain.share.dto.CareDiaryResponse;
 import com.aewol.domain.share.dto.CareDiaryUpdateRequest;
+import com.aewol.domain.share.dto.CareDiaryVisibilityRequest;
 import com.aewol.domain.share.mapper.CareDiaryMapper;
 import com.aewol.domain.share.mapper.ShareMapper;
 import java.io.IOException;
@@ -357,6 +358,92 @@ class CareDiaryServiceImplTest {
         CareDiaryResponse response = service.getDetail("owner-1", "diary-1");
 
         assertEquals(3L, response.getVersion());
+    }
+
+    private static CareDiaryVisibilityRequest visibilityRequest(String visibility) {
+        CareDiaryVisibilityRequest request = new CareDiaryVisibilityRequest();
+        ReflectionTestUtils.setField(request, "visibility", visibility);
+        return request;
+    }
+
+    @Test
+    @DisplayName("작성자는 자기 일기를 공개로 바꿀 수 있다")
+    void should_allowAuthorToPublish() {
+        CareDiaryServiceImpl service = service();
+        givenPetOwnedBy("pet-1", "owner-1");
+        when(careDiaryMapper.findById("diary-1"))
+                .thenReturn(diaryRow("diary-1", "pet-1", "member-2", "2026-08-10", "산책"));
+        when(careDiaryMapper.updateVisibility("diary-1", "PUBLIC")).thenReturn(1);
+        when(careDiaryMapper.findImagesByDiaryIds(List.of("diary-1"))).thenReturn(List.of());
+        when(shareMapper.findAcceptedAccess("pet-1", "member-2")).thenReturn(map("access_id", "access-1"));
+
+        service.changeVisibility("member-2", "diary-1", visibilityRequest("PUBLIC"));
+
+        verify(careDiaryMapper).updateVisibility("diary-1", "PUBLIC");
+    }
+
+    // 대표 보호자가 남이 쓴 글을 마음대로 공개하면 "내가 쓴 글인데 내 통제 밖에서
+    // 공개됐다"가 된다. 올리는 것은 쓴 사람만 한다.
+    @Test
+    @DisplayName("대표 보호자라도 남이 쓴 일기를 공개할 수는 없다")
+    void should_rejectPublish_when_notAuthorEvenIfPetOwner() {
+        CareDiaryServiceImpl service = service();
+        givenPetOwnedBy("pet-1", "owner-1");
+        when(careDiaryMapper.findById("diary-1"))
+                .thenReturn(diaryRow("diary-1", "pet-1", "member-2", "2026-08-10", "산책"));
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.changeVisibility("owner-1", "diary-1", visibilityRequest("PUBLIC")));
+
+        assertEquals(403, exception.getStatus().value());
+        verify(careDiaryMapper, never()).updateVisibility(anyString(), anyString());
+    }
+
+    @Test
+    @DisplayName("대표 보호자는 남이 쓴 일기를 비공개로 내릴 수 있다")
+    void should_allowPetOwnerToUnpublishOthersDiary() {
+        CareDiaryServiceImpl service = service();
+        givenPetOwnedBy("pet-1", "owner-1");
+        when(careDiaryMapper.findById("diary-1"))
+                .thenReturn(diaryRow("diary-1", "pet-1", "member-2", "2026-08-10", "산책"));
+        when(careDiaryMapper.updateVisibility("diary-1", "PRIVATE")).thenReturn(1);
+        when(careDiaryMapper.findImagesByDiaryIds(List.of("diary-1"))).thenReturn(List.of());
+
+        service.changeVisibility("owner-1", "diary-1", visibilityRequest("PRIVATE"));
+
+        verify(careDiaryMapper).updateVisibility("diary-1", "PRIVATE");
+    }
+
+    @Test
+    @DisplayName("작성자도 대표 보호자도 아니면 비공개로 내릴 수 없다")
+    void should_rejectUnpublish_when_neitherAuthorNorPetOwner() {
+        CareDiaryServiceImpl service = service();
+        givenPetOwnedBy("pet-1", "owner-1");
+        when(careDiaryMapper.findById("diary-1"))
+                .thenReturn(diaryRow("diary-1", "pet-1", "member-2", "2026-08-10", "산책"));
+        when(shareMapper.findAcceptedAccess("pet-1", "member-3")).thenReturn(map("access_id", "access-2"));
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.changeVisibility("member-3", "diary-1", visibilityRequest("PRIVATE")));
+
+        assertEquals(403, exception.getStatus().value());
+    }
+
+    // 신고로 내려간 글을 작성자가 되살릴 수 있으면 신고가 무력해진다.
+    @Test
+    @DisplayName("신고로 내려간 일기는 작성자도 다시 공개할 수 없다")
+    void should_rejectPublish_when_hiddenByReport() {
+        CareDiaryServiceImpl service = service();
+        givenPetOwnedBy("pet-1", "owner-1");
+        Map<String, Object> row = diaryRow("diary-1", "pet-1", "owner-1", "2026-08-10", "산책");
+        row.put("hiddenByReportAt", java.sql.Timestamp.valueOf("2026-08-21 10:00:00"));
+        when(careDiaryMapper.findById("diary-1")).thenReturn(row);
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.changeVisibility("owner-1", "diary-1", visibilityRequest("PUBLIC")));
+
+        assertEquals(409, exception.getStatus().value());
+        verify(careDiaryMapper, never()).updateVisibility(anyString(), anyString());
     }
 
     private static Map<String, Object> diaryRow(String diaryId, String petId, String authorId,

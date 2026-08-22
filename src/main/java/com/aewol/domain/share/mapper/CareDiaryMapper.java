@@ -26,5 +26,8 @@ public interface CareDiaryMapper {
                @Param("content") String content,
                @Param("version") Long version);
 
+    int updateVisibility(@Param("diaryId") String diaryId,
+                         @Param("visibility") String visibility);
+
     int softDelete(@Param("diaryId") String diaryId);
 }
