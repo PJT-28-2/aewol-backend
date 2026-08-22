@@ -79,8 +79,17 @@ public class S3FileStorage implements FileStorage {
         this(S3Client.builder().region(Region.of(region)).build(),
                 S3Presigner.builder().region(Region.of(region)).build(),
                 bucket, publicPrefix, publicBaseUrl, signature);
-        log.info("S3 파일 저장소 사용 - bucket: {}, region: {}, 공개 서빙: {}",
-                bucket, region, StringUtils.hasText(publicBaseUrl) ? publicBaseUrl : "꺼짐");
+        if (StringUtils.hasText(publicBaseUrl)) {
+            log.info("S3 파일 저장소 사용 - bucket: {}, region: {}, 공개 서빙: {}",
+                    bucket, region, publicBaseUrl);
+        } else {
+            // 조용히 꺼진 채로 배포되면 탐색 피드가 이유 없이 비어 보인다. 원인을 바로
+            // 짚을 수 있게 경고로 남긴다.
+            log.warn("S3 파일 저장소 사용 - bucket: {}, region: {}. "
+                    + "[PUBLIC_SERVING_DISABLED] S3_PUBLIC_BASE_URL이 비어 있어 공개 사본을 만들지 않는다. "
+                    + "멍스타그램 탐색 피드가 비어 보인다면 이 설정과 버킷 공개 prefix 정책을 확인할 것.",
+                    bucket, region);
+        }
     }
 
     /** 테스트에서 S3 클라이언트를 직접 주입하기 위한 생성자다. */
