@@ -8,9 +8,12 @@ import com.aewol.common.exception.BusinessException;
 import com.aewol.common.storage.FileStorage;
 import com.aewol.domain.activity.mapper.ActivityLogMapper;
 import com.aewol.domain.pet.mapper.PetMapper;
+import com.aewol.domain.share.dto.CareDiaryReportRequest;
+import com.aewol.domain.share.dto.CareDiaryReportResponse;
 import com.aewol.domain.share.dto.CareDiaryResponse;
 import com.aewol.domain.share.dto.CareDiaryUpdateRequest;
 import com.aewol.domain.share.dto.CareDiaryVisibilityRequest;
+import com.aewol.domain.inquiry.mapper.InquiryMapper;
 import com.aewol.domain.share.mapper.CareDiaryMapper;
 import com.aewol.domain.share.mapper.ShareMapper;
 import java.io.IOException;
@@ -37,6 +40,7 @@ class CareDiaryServiceImplTest {
     @Mock PetMapper petMapper;
     @Mock ActivityLogMapper activityLogMapper;
     @Mock FileStorage fileStorage;
+    @Mock InquiryMapper inquiryMapper;
 
     @BeforeEach
     void setUp() {
@@ -287,7 +291,7 @@ class CareDiaryServiceImplTest {
     // ── helpers ──────────────────────────────────────────────────
 
     private CareDiaryServiceImpl service() {
-        return new CareDiaryServiceImpl(careDiaryMapper, shareMapper, petMapper, activityLogMapper, fileStorage);
+        return new CareDiaryServiceImpl(careDiaryMapper, shareMapper, petMapper, activityLogMapper, fileStorage, inquiryMapper);
     }
 
     private void givenPetOwnedBy(String petId, String ownerId) {
@@ -415,6 +419,100 @@ class CareDiaryServiceImplTest {
 
         assertDoesNotThrow(() -> service.changeVisibility("owner-1", "diary-1", visibilityRequest("PUBLIC")));
         verify(careDiaryMapper, never()).updatePublicImageKey(anyString(), anyString());
+    }
+
+    private static CareDiaryReportRequest reportRequest(String reason) {
+        CareDiaryReportRequest request = new CareDiaryReportRequest();
+        ReflectionTestUtils.setField(request, "reason", reason);
+        return request;
+    }
+
+    private static Map<String, Object> publicDiaryRow(String authorId) {
+        Map<String, Object> row = diaryRow("diary-1", "pet-1", authorId, "2026-08-10", "산책");
+        row.put("visibility", "PUBLIC");
+        return row;
+    }
+
+    // 고객센터에 답변 API가 없어 처리까지 시간이 걸린다. 그동안 글이 계속 보이면 신고가
+    // 의미를 잃는다.
+    @Test
+    @DisplayName("신고하면 즉시 노출을 멈추고 문의로 잇는다")
+    void should_hideImmediately_and_createInquiry() {
+        CareDiaryServiceImpl service = service();
+        when(careDiaryMapper.findById("diary-1")).thenReturn(publicDiaryRow("author-1"));
+        when(careDiaryMapper.insertReport(anyMap())).thenAnswer(invocation -> {
+            ((Map<String, Object>) invocation.getArgument(0)).put("reportId", 77L);
+            return 1;
+        });
+        when(careDiaryMapper.hideByReport("diary-1")).thenReturn(1);
+        doAnswer(invocation -> {
+            ((Map<String, Object>) invocation.getArgument(0)).put("inquiryId", 55L);
+            return null;
+        }).when(inquiryMapper).insert(anyMap());
+
+        CareDiaryReportResponse response = service.report("reporter-1", "diary-1", reportRequest("SPAM"));
+
+        verify(careDiaryMapper).hideByReport("diary-1");
+        verify(careDiaryMapper).linkReportInquiry("77", "55");
+        assertTrue(response.isHidden());
+        assertTrue(response.getInquiryNumber().startsWith("AEW-"));
+    }
+
+    @Test
+    @DisplayName("같은 사람이 다시 신고하면 409로 막는다")
+    void should_rejectDuplicateReport() {
+        CareDiaryServiceImpl service = service();
+        when(careDiaryMapper.findById("diary-1")).thenReturn(publicDiaryRow("author-1"));
+        when(careDiaryMapper.insertReport(anyMap())).thenReturn(0);
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.report("reporter-1", "diary-1", reportRequest("SPAM")));
+
+        assertEquals(409, exception.getStatus().value());
+        verify(careDiaryMapper, never()).hideByReport(anyString());
+    }
+
+    // 신고로 내리면 관리자만 되돌릴 수 있어 스스로를 잠그는 셈이 된다.
+    @Test
+    @DisplayName("자기가 쓴 글은 신고할 수 없다")
+    void should_rejectSelfReport() {
+        CareDiaryServiceImpl service = service();
+        when(careDiaryMapper.findById("diary-1")).thenReturn(publicDiaryRow("author-1"));
+
+        assertThrows(BusinessException.class,
+                () -> service.report("author-1", "diary-1", reportRequest("SPAM")));
+        verify(careDiaryMapper, never()).insertReport(anyMap());
+    }
+
+    @Test
+    @DisplayName("공개되지 않은 일기는 신고 대상이 아니다")
+    void should_rejectReport_when_diaryIsPrivate() {
+        CareDiaryServiceImpl service = service();
+        when(careDiaryMapper.findById("diary-1"))
+                .thenReturn(diaryRow("diary-1", "pet-1", "author-1", "2026-08-10", "산책"));
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.report("reporter-1", "diary-1", reportRequest("SPAM")));
+        assertEquals(404, exception.getStatus().value());
+    }
+
+    // 접수번호를 주는 것보다 노출을 멈추는 것이 중요하다.
+    @Test
+    @DisplayName("문의 생성이 실패해도 신고와 비공개 처리는 남는다")
+    void should_keepReport_when_inquiryCreationFails() {
+        CareDiaryServiceImpl service = service();
+        when(careDiaryMapper.findById("diary-1")).thenReturn(publicDiaryRow("author-1"));
+        when(careDiaryMapper.insertReport(anyMap())).thenAnswer(invocation -> {
+            ((Map<String, Object>) invocation.getArgument(0)).put("reportId", 77L);
+            return 1;
+        });
+        when(careDiaryMapper.hideByReport("diary-1")).thenReturn(1);
+        doThrow(new RuntimeException("DB 장애")).when(inquiryMapper).insert(anyMap());
+
+        CareDiaryReportResponse response = service.report("reporter-1", "diary-1", reportRequest("ABUSE"));
+
+        assertTrue(response.isHidden());
+        assertNull(response.getInquiryNumber());
     }
 
     private static CareDiaryVisibilityRequest visibilityRequest(String visibility) {

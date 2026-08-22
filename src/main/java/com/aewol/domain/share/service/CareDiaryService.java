@@ -1,5 +1,7 @@
 package com.aewol.domain.share.service;
 
+import com.aewol.domain.share.dto.CareDiaryReportRequest;
+import com.aewol.domain.share.dto.CareDiaryReportResponse;
 import com.aewol.domain.share.dto.CareDiaryResponse;
 import com.aewol.domain.share.dto.CareDiaryUpdateRequest;
 import com.aewol.domain.share.dto.CareDiaryVisibilityRequest;
@@ -19,6 +21,8 @@ public interface CareDiaryService {
 
     CareDiaryResponse changeVisibility(String memberId, String diaryId,
                                        CareDiaryVisibilityRequest request);
+
+    CareDiaryReportResponse report(String memberId, String diaryId, CareDiaryReportRequest request);
 
     void delete(String memberId, String diaryId);
 }
