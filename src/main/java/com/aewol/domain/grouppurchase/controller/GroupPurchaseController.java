@@ -42,10 +42,10 @@ public class GroupPurchaseController {
             @RequestParam(required = false) String status,
             @RequestParam(required = false) String keyword,
             @RequestParam(required = false) String category,
-            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(required = false) String cursor,
             @RequestParam(defaultValue = "10") int size) {
         return ResponseEntity.ok(ApiResponse.success("공동구매 목록 조회 성공",
-                groupPurchaseService.list(memberId, status, keyword, category, page, size)));
+                groupPurchaseService.list(memberId, status, keyword, category, cursor, size)));
     }
 
     /** 일반 유저(role=USER) 전용. SecurityConfig에서 GET /api/group-purchase/my에 ROLE_USER를 요구한다(관리자의 작성글 관리는 별도 엔드포인트 예정). */

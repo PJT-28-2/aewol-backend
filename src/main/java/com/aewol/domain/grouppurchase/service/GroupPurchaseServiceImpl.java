@@ -68,19 +68,29 @@ public class GroupPurchaseServiceImpl implements GroupPurchaseService {
         return status;
     }
 
+    // 검색어는 FULLTEXT(ngram) 인덱스로 찾는다. ngram_token_size 기본값 2 미만인 검색어는
+    // 색인되지 않아 매칭되지 않으므로(조용히 0건이 되는 것을 막기 위해) 여기서 미리 거절한다.
+    private static final int MIN_KEYWORD_LENGTH = 2;
+
     @Override
-    public GroupPurchaseListResponse list(String memberId, String status, String keyword, String category, int page, int size) {
-        return list(memberId, status, keyword, category, page, size, null);
+    public GroupPurchaseListResponse list(String memberId, String status, String keyword, String category, String cursor, int size) {
+        return list(memberId, status, keyword, category, cursor, size, null);
     }
 
     @Override
-    public GroupPurchaseListResponse list(String memberId, String status, String keyword, String category, int page, int size, String sort) {
-        int safePage = Math.max(page, 0);
+    public GroupPurchaseListResponse list(String memberId, String status, String keyword, String category, String cursor, int size, String sort) {
         int safeSize = size <= 0 ? 10 : size;
         String dbStatus = validateListStatus(status);
+        String matchKeyword = toMatchKeyword(keyword);
+        GroupPurchaseCursor decoded = (cursor == null || cursor.isBlank()) ? null : GroupPurchaseCursor.decode(cursor);
 
         List<Map<String, Object>> rows = groupPurchaseMapper.findList(
-                dbStatus, keyword, category, safeSize + 1, safePage * safeSize, sort);
+                dbStatus, matchKeyword, category, safeSize + 1,
+                decoded == null ? null : decoded.isUrgentActive(),
+                decoded == null ? null : decoded.deadline(),
+                decoded == null ? null : decoded.createdAt(),
+                decoded == null ? null : decoded.gpId(),
+                sort);
 
         boolean hasNext = rows.size() > safeSize;
         List<Map<String, Object>> pageRows = hasNext ? rows.subList(0, safeSize) : rows;
@@ -90,10 +100,36 @@ public class GroupPurchaseServiceImpl implements GroupPurchaseService {
                 .map(gp -> toListItemResponse(gp, participatingGpIds.contains(String.valueOf(gp.get("gp_id")))))
                 .collect(Collectors.toList());
 
+        String nextCursor = hasNext ? toCursor(pageRows.get(pageRows.size() - 1)).encode() : null;
+
         return GroupPurchaseListResponse.builder()
                 .items(items)
                 .hasNext(hasNext)
+                .nextCursor(nextCursor)
                 .build();
+    }
+
+    /**
+     * LIKE '%키워드%' 대신 MATCH...AGAINST(... IN BOOLEAN MODE)로 넘길 검색어를 만든다.
+     * boolean mode 예약문자(+ - * " ( ) ~ &lt; &gt; @)를 하나씩 이스케이프하는 대신 통째로
+     * 큰따옴표 phrase 검색으로 감싼다 — 안에 있는 문자는 연산자로 해석되지 않고 그대로
+     * 문자열로 취급되므로, LIKE '%...%'와 같은 "포함 검색" 의미가 유지된다. phrase 안의
+     * 큰따옴표만 공백으로 치환하면(그대로 두면 phrase가 조기 종료됨) 이스케이프가 끝난다.
+     */
+    private static String toMatchKeyword(String keyword) {
+        if (keyword == null || keyword.isBlank()) {
+            return null;
+        }
+        String trimmed = keyword.trim();
+        if (trimmed.length() < MIN_KEYWORD_LENGTH) {
+            throw new BusinessException("검색어는 " + MIN_KEYWORD_LENGTH + "자 이상 입력해주세요.");
+        }
+        return "\"" + trimmed.replace("\"", " ") + "\"";
+    }
+
+    private static GroupPurchaseCursor toCursor(Map<String, Object> gp) {
+        return GroupPurchaseCursor.of(toInt(gp.get("is_urgent_active")), toLocalDateTime(gp.get("deadline")),
+                toLocalDateTime(gp.get("created_at")), toLong(gp.get("gp_id")));
     }
 
     /**
@@ -104,10 +140,17 @@ public class GroupPurchaseServiceImpl implements GroupPurchaseService {
     @Override
     @Transactional
     public GroupPurchaseResponse create(String memberId, GroupPurchaseCreateRequest request) {
+        // 프론트는 날짜만 받아 그날 23:59:59를 마감으로 조립해 보낸다(GroupPurchaseCreateStep3.vue).
+        // 서버가 저장 시점에 같은 규칙을 강제해 불변식으로 만든다 — 이 불변식이 있어야 전체 탭
+        // is_urgent_active 배치(GroupPurchaseUrgentFlagJob)가 하루 1회 자정 실행만으로 충분하다.
+        // @Future(GroupPurchaseCreateRequest)는 시:분:초를 검증하지 않으므로 이 정규화가 없으면
+        // 임의 시각의 deadline이 들어와도 걸러지지 않는다.
+        LocalDateTime deadline = request.getDeadline().toLocalDate().atTime(23, 59, 59);
+
         Integer estimateDays = request.getDeliveryEstimateDays();
         LocalDate provisionalDeliveryDate = estimateDays == null
                 ? null
-                : request.getDeadline().toLocalDate().plusDays(estimateDays);
+                : deadline.toLocalDate().plusDays(estimateDays);
 
         Map<String, Object> gp = new HashMap<>();
         gp.put("memberId", memberId);
@@ -122,7 +165,7 @@ public class GroupPurchaseServiceImpl implements GroupPurchaseService {
         gp.put("deliveryEstimateDays", estimateDays);
         gp.put("description", request.getDescription());
         gp.put("targetQuantity", request.getTargetQuantity());
-        gp.put("deadline", request.getDeadline());
+        gp.put("deadline", deadline);
         groupPurchaseMapper.insert(gp); // gp_id AUTO_INCREMENT
         return toResponse(groupPurchaseMapper.findById(String.valueOf(gp.get("gpId"))), false);
     }

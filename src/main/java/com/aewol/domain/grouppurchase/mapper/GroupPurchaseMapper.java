@@ -11,7 +11,10 @@ import java.util.Map;
 public interface GroupPurchaseMapper {
     List<Map<String, Object>> findList(@Param("status") String status, @Param("keyword") String keyword,
                                         @Param("category") String category, @Param("limit") int limit,
-                                        @Param("offset") int offset, @Param("sort") String sort);
+                                        @Param("cursorIsUrgentActive") Integer cursorIsUrgentActive,
+                                        @Param("cursorDeadline") LocalDateTime cursorDeadline,
+                                        @Param("cursorCreatedAt") LocalDateTime cursorCreatedAt,
+                                        @Param("cursorGpId") Long cursorGpId, @Param("sort") String sort);
     Map<String, Object> findById(@Param("gpId") String gpId);
     void insert(Map<String, Object> groupPurchase);
     int updateQuantity(@Param("gpId") String gpId, @Param("quantity") int quantity);
@@ -26,4 +29,5 @@ public interface GroupPurchaseMapper {
     List<Map<String, Object>> findExpiredUnfulfilledPaidParticipants();
     int cancelGroupPurchase(@Param("gpId") String gpId);
     List<Map<String, Object>> findActiveParticipants(@Param("gpId") String gpId);
+    int deactivateExpiredUrgentFlags();
 }
