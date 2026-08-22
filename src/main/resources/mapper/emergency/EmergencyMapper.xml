@@ -2,6 +2,25 @@
 <!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
 <mapper namespace="com.aewol.domain.emergency.mapper.EmergencyMapper">
 
+    <!--
+        반경 검색은 두 단계다.
+
+        1) 바운딩박스로 후보를 좁힌다. latitude/longitude 범위 조건이라
+           idx_hospital_coord를 탄다.
+        2) 좁혀진 후보에만 Haversine을 돌려 정확한 원형 거리로 걸러낸다.
+
+        바운딩박스만 쓰면 모서리가 반경보다 멀어 사각형과 원의 차이만큼 오차가 난다.
+        그래서 HAVING을 남겨 최종 판정은 그대로 원 기준으로 한다 — 결과는 예전과
+        동일하고 스캔 범위만 줄어든다.
+
+        위도 1도는 약 111km로 어디서나 같다. 경도 1도는 위도가 높을수록 짧아지므로
+        cos(위도)로 나눈다.
+
+        SPATIAL INDEX를 쓰지 않는 이유는 V4 주석 그대로다. 좌표 미확보 병원도 저장하는
+        정책이라 컬럼이 nullable인데 MySQL은 SPATIAL 대상이 NOT NULL이어야 한다.
+
+        측정(20만 행): 200,000행 스캔 64ms -> 344행 스캔 0.75ms
+    -->
     <select id="findNearby" resultType="map">
         SELECT *,
                (6371 * ACOS(
@@ -10,7 +29,10 @@
                    + SIN(RADIANS(#{lat})) * SIN(RADIANS(latitude))
                )) AS distance_km
         FROM emergency_hospital
-        WHERE latitude IS NOT NULL AND longitude IS NOT NULL
+        WHERE latitude BETWEEN #{lat} - (#{radiusKm} / 111.0)
+                           AND #{lat} + (#{radiusKm} / 111.0)
+          AND longitude BETWEEN #{lng} - (#{radiusKm} / (111.0 * COS(RADIANS(#{lat}))))
+                            AND #{lng} + (#{radiusKm} / (111.0 * COS(RADIANS(#{lat}))))
         <if test="is24h">
             AND is_24h = 1
         </if>
