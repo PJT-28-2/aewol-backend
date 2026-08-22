@@ -52,8 +52,9 @@
 
     <!-- 목록 조회에서 일기마다 이미지를 따로 조회하지 않도록 한 번에 가져온다 (N+1 방지) -->
     <select id="findImagesByDiaryIds" resultType="map">
-        SELECT diary_id  AS diaryId,
-               image_url AS imageUrl
+        SELECT diary_id         AS diaryId,
+               image_url        AS imageUrl,
+               public_image_key AS publicImageKey
         FROM care_diary_image
         WHERE diary_id IN
         <foreach collection="diaryIds" item="diaryId" open="(" separator="," close=")">

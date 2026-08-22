@@ -273,6 +273,11 @@ public class CareDiaryServiceImpl implements CareDiaryService {
         String reportId = String.valueOf(report.get("reportId"));
 
         boolean hidden = careDiaryMapper.hideByReport(diaryId) == 1;
+        if (hidden) {
+            // 피드에서 빼는 것만으로는 부족하다. CDN 주소를 이미 아는 사람에게는 사진이
+            // 계속 보인다. 오탐이면 원본이 남아 있으니 사본을 다시 만들면 된다.
+            syncPublicImages(diaryId, false);
+        }
         String inquiryNumber = createReportInquiry(memberId, diaryId, request.getReason(), reportId);
 
         return CareDiaryReportResponse.builder()
@@ -326,14 +331,22 @@ public class CareDiaryServiceImpl implements CareDiaryService {
             throw BusinessException.forbidden("작성자 또는 대표 보호자만 일기를 삭제할 수 있습니다.");
         }
 
-        List<String> imageKeys = careDiaryMapper.findImagesByDiaryIds(List.of(diaryId)).stream()
+        List<Map<String, Object>> images = careDiaryMapper.findImagesByDiaryIds(List.of(diaryId));
+        List<String> imageKeys = images.stream()
                 .map(image -> text(image, "imageUrl"))
+                .filter(key -> key != null && !key.isBlank())
+                .collect(Collectors.toList());
+        // 공개했던 일기는 CDN에 사본이 남아 있다. 원본만 지우면 주소를 아는 사람에게는
+        // 사진이 영구히 보인다.
+        List<String> publicKeys = images.stream()
+                .map(image -> text(image, "publicImageKey"))
                 .filter(key -> key != null && !key.isBlank())
                 .collect(Collectors.toList());
         if (careDiaryMapper.softDelete(diaryId) != 1) {
             throw BusinessException.notFound("삭제할 일기를 찾을 수 없습니다.");
         }
         arrangeCommittedCleanup(imageKeys);
+        arrangeCommittedPublicCleanup(publicKeys);
     }
 
     /**
@@ -407,6 +420,21 @@ public class CareDiaryServiceImpl implements CareDiaryService {
     }
 
     /** 삭제 트랜잭션이 확정된 뒤에만 실제 파일을 제거한다. */
+    /** 공개 사본 정리. 원본 정리와 같은 이유로 커밋 이후에 돌린다. */
+    private void arrangeCommittedPublicCleanup(List<String> publicKeys) {
+        if (publicKeys.isEmpty()) return;
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    publicKeys.forEach(fileStorage::unpublish);
+                }
+            });
+        } else {
+            publicKeys.forEach(fileStorage::unpublish);
+        }
+    }
+
     private void arrangeCommittedCleanup(List<String> keys) {
         if (keys.isEmpty()) return;
         if (TransactionSynchronizationManager.isSynchronizationActive()) {
