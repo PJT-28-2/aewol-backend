@@ -206,7 +206,7 @@ jobs:
         run: |
           set -euo pipefail
           for i in $(seq 1 10); do
-            if curl -fsS --max-time 10 https://d2wzfpczojllq5.cloudfront.net/api/health >/dev/null; then
+            if curl -fsS --max-time 10 https://aewol.store/api/health >/dev/null; then
               echo "외부 헬스체크 통과"
               exit 0
             fi
