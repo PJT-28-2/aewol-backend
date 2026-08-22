@@ -1,5 +1,6 @@
 package com.aewol.domain.auth.service;
 
+import com.aewol.common.filter.MemberAuthStateCache;
 import com.aewol.common.exception.BusinessException;
 import com.aewol.common.util.JwtUtil;
 import com.aewol.common.util.RedisRateLimiter;
@@ -79,7 +80,8 @@ class AuthServiceImplPasswordResetTest {
         service = new AuthServiceImpl(
                 memberMapper, walletMapper, notificationSettingMapper, jwtUtil, passwordEncoder,
                 redisTemplate, redisRateLimiter, emailService, kakaoAuthClient, authCredentialStore,
-                kakaoRegistrationStore, transactionOperations);
+                kakaoRegistrationStore, transactionOperations,
+                MemberAuthStateCache.withoutCache(memberMapper));
     }
 
     @AfterEach

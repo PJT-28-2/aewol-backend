@@ -1,5 +1,6 @@
 package com.aewol.domain.member.service;
 
+import com.aewol.common.filter.MemberAuthStateCache;
 import com.aewol.common.exception.BusinessException;
 import com.aewol.domain.auth.service.AuthCredentialStore;
 import com.aewol.domain.member.dto.SimplePasswordRequest;
@@ -34,7 +35,8 @@ class MemberServiceImplSimplePasswordTest {
 
     @BeforeEach
     void setUp() {
-        service = new MemberServiceImpl(memberMapper, passwordEncoder, authCredentialStore);
+        service = new MemberServiceImpl(memberMapper, passwordEncoder, authCredentialStore,
+                MemberAuthStateCache.withoutCache(memberMapper));
     }
 
     @Test

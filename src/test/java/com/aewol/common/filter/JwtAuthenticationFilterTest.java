@@ -28,7 +28,7 @@ class JwtAuthenticationFilterTest {
     private static final long WITHDRAWN_AT = 1_000L;
     private final JwtUtil jwtUtil = mock(JwtUtil.class);
     private final MemberMapper memberMapper = mock(MemberMapper.class);
-    private final JwtAuthenticationFilter filter = new JwtAuthenticationFilter(jwtUtil, memberMapper);
+    private final JwtAuthenticationFilter filter = new JwtAuthenticationFilter(jwtUtil, MemberAuthStateCache.withoutCache(memberMapper));
 
     @AfterEach
     void clearContext() {

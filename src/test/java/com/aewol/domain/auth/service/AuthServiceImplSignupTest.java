@@ -1,5 +1,6 @@
 package com.aewol.domain.auth.service;
 
+import com.aewol.common.filter.MemberAuthStateCache;
 import com.aewol.common.exception.BusinessException;
 import com.aewol.common.util.JwtUtil;
 import com.aewol.common.util.RedisRateLimiter;
@@ -74,7 +75,8 @@ class AuthServiceImplSignupTest {
         authService = new AuthServiceImpl(memberMapper, walletMapper, notificationSettingMapper,
                 jwtUtil, passwordEncoder, redisTemplate, redisRateLimiter, emailService,
                 kakaoAuthClient, authCredentialStore, kakaoRegistrationStore,
-                transactionOperations);
+                transactionOperations,
+                MemberAuthStateCache.withoutCache(memberMapper));
         when(redisTemplate.opsForValue()).thenReturn(valueOperations);
         TransactionSynchronizationManager.initSynchronization();
     }
