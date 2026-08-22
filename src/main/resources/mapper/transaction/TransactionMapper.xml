@@ -10,6 +10,9 @@
     <!-- CHARGE 필터는 REFUND를 DEPOSIT과 함께 포함한다 — REFUND 타입 신설 전까지 환불이 DEPOSIT으로
          기록되어 CHARGE 필터에 잡히던 기존 노출 동작을 그대로 유지하기 위함이다(정책적으로 REFUND를
          별도 필터로 분리하기로 하면 이 부분만 바꾸면 된다). -->
+    <!-- WITHDRAW/PAYMENT 필터의 NOT EXISTS는 환불된 원래 결제(PAYMENT)를 제외한다. group_purchase_participant.txn_id는
+         공동구매 결제로 생성된 PAYMENT row만 가리키므로, WITHDRAW 필터에 포함되는 WITHDRAW/TRANSFER row는 애초에
+         이 서브쿼리에 매칭될 수 없어 별도 타입 분기 없이 안전하게 공용으로 쓸 수 있다. -->
     <select id="findByWalletId" resultType="map">
         SELECT t.* FROM `transaction` t
         WHERE t.wallet_id = #{walletId}
@@ -18,6 +21,17 @@
         </if>
         <if test="txnFilter == 'WITHDRAW'">
             AND t.txn_type IN ('PAYMENT', 'WITHDRAW', 'TRANSFER')
+            AND NOT EXISTS (
+                SELECT 1 FROM group_purchase_participant gpp
+                WHERE gpp.txn_id = t.txn_id AND gpp.payment_status = 'CANCELLED'
+            )
+        </if>
+        <if test="txnFilter == 'PAYMENT'">
+            AND t.txn_type = 'PAYMENT'
+            AND NOT EXISTS (
+                SELECT 1 FROM group_purchase_participant gpp
+                WHERE gpp.txn_id = t.txn_id AND gpp.payment_status = 'CANCELLED'
+            )
         </if>
         AND t.txn_date &gt;= #{startDate}
         AND t.txn_date &lt; #{endDate}
@@ -37,6 +51,17 @@
         </if>
         <if test="txnFilter == 'WITHDRAW'">
             AND t.txn_type IN ('PAYMENT', 'WITHDRAW', 'TRANSFER')
+            AND NOT EXISTS (
+                SELECT 1 FROM group_purchase_participant gpp
+                WHERE gpp.txn_id = t.txn_id AND gpp.payment_status = 'CANCELLED'
+            )
+        </if>
+        <if test="txnFilter == 'PAYMENT'">
+            AND t.txn_type = 'PAYMENT'
+            AND NOT EXISTS (
+                SELECT 1 FROM group_purchase_participant gpp
+                WHERE gpp.txn_id = t.txn_id AND gpp.payment_status = 'CANCELLED'
+            )
         </if>
         ORDER BY t.txn_date DESC, t.txn_id DESC
         LIMIT #{limit}
