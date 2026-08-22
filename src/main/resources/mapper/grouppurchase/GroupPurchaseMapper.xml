@@ -59,7 +59,13 @@
             </if>
             <!-- 커서(keyset) 페이지네이션. 정렬 기준과 정확히 같은 컬럼 순서로 "그 행보다 뒤에 오는
                  행"만 남긴다. OFFSET과 달리 앞선 행을 읽고 버리지 않아 페이지가 깊어져도 비용이
-                 늘지 않는다. 첫 페이지(cursorGpId == null)는 조건 없이 처음부터 조회한다. -->
+                 늘지 않는다. 첫 페이지(cursorGpId == null)는 조건 없이 처음부터 조회한다.
+
+                 주의: cursorGpId != null 하나로만 이 블록 전체를 게이팅하고, 안에서는
+                 cursorIsUrgentActive/cursorDeadline/cursorCreatedAt도 무조건 같이 참조한다.
+                 네 필드는 항상 함께 null이거나 함께 값이 있어야 한다(GroupPurchaseMapper.java
+                 참고) — 일부만 채워서 호출하면 예외 없이 조용히 빈 결과가 나온다(NULL 비교는
+                 항상 false). -->
             <if test="cursorGpId != null">
                 <choose>
                     <when test="status == null or status == ''">

@@ -9,6 +9,13 @@ import java.util.Map;
 
 @Mapper
 public interface GroupPurchaseMapper {
+    /**
+     * cursorIsUrgentActive/cursorDeadline/cursorCreatedAt/cursorGpId 네 필드는 항상 함께
+     * null이거나 함께 값이 있어야 한다(GroupPurchaseMapper.xml의 keyset 필터는 cursorGpId
+     * != null 하나만 게이팅 조건으로 보고 나머지 셋을 무조건 같이 참조한다). 일부만 채워서
+     * 넘기면 예외 없이 조용히 빈 결과가 나온다 — NULL 비교는 항상 false이기 때문이다.
+     * GroupPurchaseServiceImpl#list()가 GroupPurchaseCursor를 통해 이 계약을 지킨다.
+     */
     List<Map<String, Object>> findList(@Param("status") String status, @Param("keyword") String keyword,
                                         @Param("category") String category, @Param("limit") int limit,
                                         @Param("cursorIsUrgentActive") Integer cursorIsUrgentActive,
