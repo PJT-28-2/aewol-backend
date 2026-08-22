@@ -15,6 +15,7 @@ import com.aewol.domain.recurring.mapper.RecurringMapper;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
@@ -114,6 +115,35 @@ class PetServiceImplTest {
 
         verify(petMapper).update(argThat(row ->
                 "pet-1".equals(row.get("petId")) && !row.containsKey("regNumber")));
+    }
+
+    // 인스타그램 핸들은 대소문자를 구분하지 않는다. 저장 형태가 들쭉날쭉하면 같은 계정이
+    // 링크마다 다르게 보인다.
+    @Test
+    @DisplayName("인스타 핸들은 @를 떼고 소문자로 저장한다")
+    void should_normalizeInstagramHandle() {
+        PetServiceImpl service = service();
+        PetCreateRequest request = mock(PetCreateRequest.class);
+        when(request.getInstagramId()).thenReturn("@Bori_Daily");
+        when(petMapper.findById("pet-1")).thenReturn(pet("member-1"));
+
+        service.updatePet("member-1", "pet-1", request);
+
+        verify(petMapper).update(argThat(row -> "bori_daily".equals(row.get("instagramId"))));
+    }
+
+    // 지우려고 비운 것과 처음부터 없는 것을 DB에서 같게 둔다.
+    @Test
+    @DisplayName("빈 값으로 보내면 핸들을 지운다")
+    void should_clearInstagramHandle_when_blank() {
+        PetServiceImpl service = service();
+        PetCreateRequest request = mock(PetCreateRequest.class);
+        when(request.getInstagramId()).thenReturn("   ");
+        when(petMapper.findById("pet-1")).thenReturn(pet("member-1"));
+
+        service.updatePet("member-1", "pet-1", request);
+
+        verify(petMapper).update(argThat(row -> row.get("instagramId") == null));
     }
 
     @Test

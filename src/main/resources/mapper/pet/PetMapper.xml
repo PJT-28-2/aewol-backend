@@ -40,6 +40,7 @@
         SET name = #{name}, species = #{species}, breed = #{breed},
             birth_date = #{birthDate}, gender = #{gender}, weight = #{weight},
             neutered = #{neutered}, medical_history = #{medicalHistory},
+            instagram_id = #{instagramId},
             updated_at = NOW()
         WHERE pet_id = #{petId}
     </update>
