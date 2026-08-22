@@ -56,6 +56,20 @@
         LIMIT #{limit}
     </select>
 
+    <!-- 상세도 같은 공개 조건을 쓴다. 비공개 글의 id를 알아도 열 수 없다. -->
+    <select id="findPublicPost" resultType="map">
+        SELECT d.diary_id   AS diaryId,
+               d.pet_id     AS petId,
+               p.name       AS petName,
+               d.content    AS content,
+               d.diary_date AS diaryDate,
+               d.created_at AS createdAt
+        FROM care_diary d
+        JOIN pet p ON p.pet_id = d.pet_id
+        WHERE <include refid="publicOnly"/>
+          AND d.diary_id = #{diaryId}
+    </select>
+
     <!-- 게시물 수도 공개분만 센다. 비공개 개수가 드러나면 그 자체가 정보다. -->
     <select id="findPublicProfile" resultType="map">
         SELECT p.pet_id       AS petId,

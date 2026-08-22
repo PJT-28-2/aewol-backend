@@ -24,6 +24,8 @@ public interface ExploreMapper {
                                                    @Param("cursorDiaryId") String cursorDiaryId,
                                                    @Param("limit") int limit);
 
+    Map<String, Object> findPublicPost(@Param("diaryId") String diaryId);
+
     Map<String, Object> findPublicProfile(@Param("petId") String petId);
 
     List<Map<String, Object>> findImagesByDiaryIds(@Param("diaryIds") List<String> diaryIds);
