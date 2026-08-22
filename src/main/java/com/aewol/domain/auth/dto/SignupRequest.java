@@ -12,7 +12,7 @@ import lombok.NoArgsConstructor;
 @Getter
 @NoArgsConstructor
 public class SignupRequest {
-    @NotBlank @Email @Size(max = 200)
+    @NotBlank @Email @Size(max = 100)
     private String email;
     @NotBlank @Pattern(regexp = "\\d{6}")
     private String verificationCode;
