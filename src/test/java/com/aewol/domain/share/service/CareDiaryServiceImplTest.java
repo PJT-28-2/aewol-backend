@@ -421,6 +421,46 @@ class CareDiaryServiceImplTest {
         verify(careDiaryMapper, never()).updatePublicImageKey(anyString(), anyString());
     }
 
+    // 원본만 지우면 CDN 사본은 주소를 아는 사람에게 영구히 보인다.
+    @Test
+    @DisplayName("일기를 지우면 공개 사본까지 정리한다")
+    void should_removePublicCopy_when_diaryDeleted() {
+        CareDiaryServiceImpl service = service();
+        givenPetOwnedBy("pet-1", "owner-1");
+        when(careDiaryMapper.findById("diary-1"))
+                .thenReturn(diaryRow("diary-1", "pet-1", "owner-1", "2026-08-10", "산책"));
+        when(careDiaryMapper.findImagesByDiaryIds(List.of("diary-1"))).thenReturn(List.of(
+                map("diaryId", "diary-1", "imageUrl", "diary/a.png", "publicImageKey", "public/x.png")));
+        when(careDiaryMapper.softDelete("diary-1")).thenReturn(1);
+
+        service.delete("owner-1", "diary-1");
+
+        verify(fileStorage).delete("diary/a.png");
+        verify(fileStorage).unpublish("public/x.png");
+    }
+
+    // 피드에서 빼는 것만으로는 부족하다. 이미 아는 주소로는 계속 열린다.
+    @Test
+    @DisplayName("신고로 내려가면 공개 사본도 내린다")
+    void should_removePublicCopy_when_hiddenByReport() {
+        CareDiaryServiceImpl service = service();
+        when(careDiaryMapper.findById("diary-1")).thenReturn(publicDiaryRow("author-1"));
+        when(careDiaryMapper.insertReport(anyMap())).thenAnswer(invocation -> {
+            ((Map<String, Object>) invocation.getArgument(0)).put("reportId", 77L);
+            return 1;
+        });
+        when(careDiaryMapper.hideByReport("diary-1")).thenReturn(1);
+        when(careDiaryMapper.findImagesForPublish("diary-1")).thenReturn(List.of(
+                map("imageId", "img-1", "imageUrl", "diary/a.png", "publicImageKey", "public/x.png")));
+
+        service.report("reporter-1", "diary-1", reportRequest("PRIVACY"));
+
+        verify(fileStorage).unpublish("public/x.png");
+        verify(careDiaryMapper).updatePublicImageKey("img-1", null);
+        // 원본은 남긴다. 오탐이면 사본을 다시 만들어야 한다.
+        verify(fileStorage, never()).delete("diary/a.png");
+    }
+
     private static CareDiaryReportRequest reportRequest(String reason) {
         CareDiaryReportRequest request = new CareDiaryReportRequest();
         ReflectionTestUtils.setField(request, "reason", reason);
