@@ -1,0 +1,80 @@
+-- gp-perf-bench-after.sql.template — 개선 후(2장에서 채택한 해결책 적용 후) 쿼리 5개 시나리오 측정
+--
+-- 이 파일은 템플릿이다. gp-perf-bench.sh가 __CURSOR_*__ 자리표시자를 실제 커서 값으로
+-- 치환한 뒤 실행한다(딥 페이지네이션은 "이전 페이지 마지막 행" 커서가 있어야 재현할 수
+-- 있어서, before 쿼리로 1000번째 행을 먼저 읽어 그 값을 넣는다). 직접 열어서 실행하지
+-- 말고 gp-perf-bench.sh를 통해 실행할 것.
+--
+-- 전제(2장에서 채택한 해결책 — 구현 후에만 유효):
+--   - FULLTEXT 인덱스 ft_gp_product_name ON group_purchase(product_name) WITH PARSER ngram
+--   - group_purchase.is_urgent_active 컬럼 + 그 값을 앞세운 인덱스
+-- gp-perf-bench.sh가 INFORMATION_SCHEMA로 이 둘의 존재를 먼저 확인하고, 없으면 이
+-- 파일을 실행하지 않고 건너뛴다(실제 구현 전까지는 이 섹션이 항상 스킵된다).
+--
+-- 커서 페이지네이션은 정의상 "1페이지"에 OFFSET이 없으므로, 1페이지 시나리오는
+-- before와 동일한 쿼리(OFFSET 없이 LIMIT만)를 그대로 재사용한다 — 개선폭이 거의 0으로
+-- 나오는 것이 정상이며, 문서 3장 비고("1페이지는 개선폭이 작을 것으로 예상")와 일치한다.
+
+-- ── EXPLAIN ──────────────────────────────────────────────────────────────────
+
+-- GroupPurchaseServiceImpl#toMatchKeyword와 동일하게 boolean mode + phrase(큰따옴표)로 검색한다.
+-- NATURAL LANGUAGE MODE가 아니다 — 프로덕션 쿼리와 실행계획이 달라지면 이 측정치가 의미가 없다.
+EXPLAIN SELECT gp_id, member_id, product_name, category, image, unit_price, group_price,
+    target_quantity, current_quantity, status, deadline, created_at
+FROM group_purchase
+WHERE status != 'CANCELLED' AND target_quantity > 0
+  AND MATCH(product_name) AGAINST('"츄르"' IN BOOLEAN MODE)
+ORDER BY CASE WHEN current_quantity < target_quantity AND deadline >= NOW() THEN 0 ELSE 1 END,
+    deadline ASC, created_at DESC, gp_id DESC
+LIMIT 11;
+
+EXPLAIN SELECT gp_id, member_id, product_name, category, image, unit_price, group_price,
+    target_quantity, current_quantity, status, deadline, created_at
+FROM group_purchase
+WHERE status != 'CANCELLED' AND target_quantity > 0
+  AND category = '사료'
+  AND MATCH(product_name) AGAINST('"츄르"' IN BOOLEAN MODE)
+ORDER BY CASE WHEN current_quantity < target_quantity AND deadline >= NOW() THEN 0 ELSE 1 END,
+    deadline ASC, created_at DESC, gp_id DESC
+LIMIT 11;
+
+EXPLAIN SELECT gp_id, member_id, product_name, category, image, unit_price, group_price,
+    target_quantity, current_quantity, status, deadline, created_at
+FROM group_purchase
+WHERE status != 'CANCELLED' AND target_quantity > 0
+  AND current_quantity < target_quantity AND deadline >= NOW()
+ORDER BY deadline ASC, created_at DESC, gp_id DESC
+LIMIT 11;
+
+EXPLAIN SELECT gp_id, member_id, product_name, category, image, unit_price, group_price,
+    target_quantity, current_quantity, status, deadline, created_at
+FROM group_purchase
+WHERE status != 'CANCELLED' AND target_quantity > 0
+  AND current_quantity < target_quantity AND deadline >= NOW()
+  AND (deadline, created_at, gp_id) < ('__CURSOR_DEADLINE__', '__CURSOR_CREATED_AT__', __CURSOR_GPID__)
+ORDER BY deadline ASC, created_at DESC, gp_id DESC
+LIMIT 11;
+
+EXPLAIN SELECT gp_id, member_id, product_name, category, image, unit_price, group_price,
+    target_quantity, current_quantity, status, deadline, created_at
+FROM group_purchase
+WHERE status != 'CANCELLED' AND target_quantity > 0
+ORDER BY is_urgent_active DESC, deadline ASC, created_at DESC, gp_id DESC
+LIMIT 11;
+
+-- ── 타이밍 측정 (웜업 5 + 측정 10) ──────────────────────────────────────────────
+
+CALL gp_bench_run('키워드 검색 (FULLTEXT)',
+    'SELECT gp_id, member_id, product_name, category, image, unit_price, group_price, target_quantity, current_quantity, status, deadline, created_at FROM group_purchase WHERE status != ''CANCELLED'' AND target_quantity > 0 AND MATCH(product_name) AGAINST(''"츄르"'' IN BOOLEAN MODE) ORDER BY CASE WHEN current_quantity < target_quantity AND deadline >= NOW() THEN 0 ELSE 1 END, deadline ASC, created_at DESC, gp_id DESC LIMIT 11');
+
+CALL gp_bench_run('키워드 검색 + 카테고리 필터 (FULLTEXT)',
+    'SELECT gp_id, member_id, product_name, category, image, unit_price, group_price, target_quantity, current_quantity, status, deadline, created_at FROM group_purchase WHERE status != ''CANCELLED'' AND target_quantity > 0 AND category = ''사료'' AND MATCH(product_name) AGAINST(''"츄르"'' IN BOOLEAN MODE) ORDER BY CASE WHEN current_quantity < target_quantity AND deadline >= NOW() THEN 0 ELSE 1 END, deadline ASC, created_at DESC, gp_id DESC LIMIT 11');
+
+CALL gp_bench_run('목록 조회 1페이지 (커서 없음, status=OPEN)',
+    'SELECT gp_id, member_id, product_name, category, image, unit_price, group_price, target_quantity, current_quantity, status, deadline, created_at FROM group_purchase WHERE status != ''CANCELLED'' AND target_quantity > 0 AND current_quantity < target_quantity AND deadline >= NOW() ORDER BY deadline ASC, created_at DESC, gp_id DESC LIMIT 11');
+
+CALL gp_bench_run('목록 조회 딥 페이지 (100페이지 상당, keyset, status=OPEN)',
+    'SELECT gp_id, member_id, product_name, category, image, unit_price, group_price, target_quantity, current_quantity, status, deadline, created_at FROM group_purchase WHERE status != ''CANCELLED'' AND target_quantity > 0 AND current_quantity < target_quantity AND deadline >= NOW() AND (deadline, created_at, gp_id) < (''__CURSOR_DEADLINE__'', ''__CURSOR_CREATED_AT__'', __CURSOR_GPID__) ORDER BY deadline ASC, created_at DESC, gp_id DESC LIMIT 11');
+
+CALL gp_bench_run('전체 탭 (is_urgent_active)',
+    'SELECT gp_id, member_id, product_name, category, image, unit_price, group_price, target_quantity, current_quantity, status, deadline, created_at FROM group_purchase WHERE status != ''CANCELLED'' AND target_quantity > 0 ORDER BY is_urgent_active DESC, deadline ASC, created_at DESC, gp_id DESC LIMIT 11');
