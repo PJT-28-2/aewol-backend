@@ -199,7 +199,38 @@ public class CareDiaryServiceImpl implements CareDiaryService {
         if (careDiaryMapper.updateVisibility(diaryId, visibility) != 1) {
             throw BusinessException.notFound("공개 여부를 바꿀 일기를 찾을 수 없습니다.");
         }
+        syncPublicImages(diaryId, PUBLIC.equals(visibility));
         return getDetail(memberId, diaryId);
+    }
+
+    /**
+     * 공개 전환에 맞춰 사진 사본을 맞춘다.
+     *
+     * <p>공개로 바꾸면 CDN이 서빙할 사본을 만들고, 되돌리면 그 사본을 지운다. 원본은 어느
+     * 쪽이든 손대지 않는다.
+     *
+     * <p>사본 작업이 실패해도 예외를 던지지 않는다. 공개 전환 자체는 이미 커밋 대상이고,
+     * 특히 비공개로 되돌리는 흐름이 사본 삭제 실패 때문에 막히면 안 된다 — 노출을 멈추는
+     * 쪽이 먼저다. 사진이 없는 일기는 목록에서 빠지므로 사본 생성 실패는 글이 피드에
+     * 안 뜨는 것으로 드러난다.
+     */
+    private void syncPublicImages(String diaryId, boolean publishing) {
+        for (Map<String, Object> image : careDiaryMapper.findImagesForPublish(diaryId)) {
+            String imageId = text(image, "imageId");
+            String publicKey = text(image, "publicImageKey");
+            if (publishing) {
+                if (publicKey != null) {
+                    continue;
+                }
+                String created = fileStorage.publish(text(image, "imageUrl"));
+                if (created != null) {
+                    careDiaryMapper.updatePublicImageKey(imageId, created);
+                }
+            } else if (publicKey != null) {
+                fileStorage.unpublish(publicKey);
+                careDiaryMapper.updatePublicImageKey(imageId, null);
+            }
+        }
     }
 
     @Override

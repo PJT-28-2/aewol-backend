@@ -75,7 +75,7 @@
     </select>
 
     <select id="findImagesByDiaryIds" resultType="map">
-        SELECT diary_id AS diaryId, image_url AS imageUrl
+        SELECT diary_id AS diaryId, image_url AS imageUrl, public_image_key AS publicImageKey
         FROM care_diary_image
         WHERE diary_id IN
         <foreach item="id" collection="diaryIds" open="(" separator="," close=")">#{id}</foreach>

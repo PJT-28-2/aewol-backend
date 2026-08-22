@@ -83,6 +83,19 @@
         신고로 내려간 일기(hidden_by_report_at)는 여기서 다시 공개되지 않는다. 작성자가
         스스로 내린 것과 구분하는 이유가 이것이다. 되돌리는 것은 관리자만 할 수 있다.
     -->
+    <select id="findImagesForPublish" resultType="map">
+        SELECT image_id AS imageId, image_url AS imageUrl, public_image_key AS publicImageKey
+        FROM care_diary_image
+        WHERE diary_id = #{diaryId}
+        ORDER BY image_id
+    </select>
+
+    <update id="updatePublicImageKey">
+        UPDATE care_diary_image
+           SET public_image_key = #{publicImageKey}
+        WHERE image_id = #{imageId}
+    </update>
+
     <update id="updateVisibility">
         UPDATE care_diary
            SET visibility = #{visibility}

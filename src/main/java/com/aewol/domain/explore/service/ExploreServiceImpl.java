@@ -113,8 +113,17 @@ public class ExploreServiceImpl implements ExploreService {
         List<String> diaryIds = rows.stream().map(row -> text(row, "diaryId")).collect(Collectors.toList());
         Map<String, List<String>> grouped = new HashMap<>();
         for (Map<String, Object> row : exploreMapper.findImagesByDiaryIds(diaryIds)) {
-            grouped.computeIfAbsent(text(row, "diaryId"), key -> new ArrayList<>())
-                    .add(fileStorage.signedUrl(text(row, "imageUrl")));
+            // 공개 사본이 있으면 만료 없는 CDN 주소를 쓴다. 서명 URL은 피드에서 곧 깨진다.
+            // 사본이 아직 없는 사진은 아예 내보내지 않는다 — 깨진 이미지를 보여주느니
+            // 그 글을 그리드에서 빼는 편이 낫다.
+            String publicKey = text(row, "publicImageKey");
+            if (publicKey == null) {
+                continue;
+            }
+            String url = fileStorage.publicUrl(publicKey);
+            if (url != null) {
+                grouped.computeIfAbsent(text(row, "diaryId"), key -> new ArrayList<>()).add(url);
+            }
         }
         return grouped;
     }
