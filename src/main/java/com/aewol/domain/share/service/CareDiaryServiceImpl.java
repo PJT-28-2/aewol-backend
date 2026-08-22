@@ -197,6 +197,12 @@ public class CareDiaryServiceImpl implements CareDiaryService {
                 throw BusinessException.conflict(
                         "신고로 노출이 중단된 일기예요. 고객센터 확인 후에 다시 공개할 수 있어요.");
             }
+            // 멍스타그램은 사진으로 훑어보는 화면이라, 사진 없는 글은 탐색 그리드와
+            // 프로필 어디에도 자리가 없다. 공개는 됐는데 아무 데도 안 보이는 상태가
+            // 되므로 애초에 막고 이유를 알린다.
+            if (careDiaryMapper.findImagesByDiaryIds(List.of(diaryId)).isEmpty()) {
+                throw new BusinessException("사진이 있는 일기만 공개할 수 있어요. 사진을 추가한 뒤 다시 시도해 주세요.");
+            }
         } else if (!isAuthor && !isPetOwner) {
             throw BusinessException.forbidden("작성자 또는 대표 보호자만 일기를 비공개로 바꿀 수 있습니다.");
         }
