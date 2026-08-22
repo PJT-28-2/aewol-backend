@@ -117,6 +117,27 @@ class PetServiceImplTest {
                 "pet-1".equals(row.get("petId")) && !row.containsKey("regNumber")));
     }
 
+    // 등록 시에도 저장돼야 한다. insert SQL에 컬럼이 없어 API는 성공하는데 값만 조용히
+    // 버려지던 문제가 있었다.
+    @Test
+    @DisplayName("등록할 때도 인스타 핸들을 저장한다")
+    void should_saveInstagramHandle_onCreate() {
+        PetServiceImpl service = service();
+        PetCreateRequest request = mock(PetCreateRequest.class);
+        when(request.getInstagramId()).thenReturn("@Bori_Daily");
+
+        // createPet은 insert 후 getPet으로 되돌려주므로 조회까지 열어 둔다.
+        doAnswer(invocation -> {
+            ((Map<String, Object>) invocation.getArgument(0)).put("petId", "pet-1");
+            return null;
+        }).when(petMapper).insert(any());
+        when(petMapper.findById("pet-1")).thenReturn(pet("member-1"));
+
+        service.createPet("member-1", request);
+
+        verify(petMapper).insert(argThat(row -> "bori_daily".equals(row.get("instagramId"))));
+    }
+
     // 인스타그램 핸들은 대소문자를 구분하지 않는다. 저장 형태가 들쭉날쭉하면 같은 계정이
     // 링크마다 다르게 보인다.
     @Test
