@@ -144,6 +144,64 @@ class AuthControllerPasswordResetTest {
     }
 
     @Test
+    void resetRequestAcceptsEmailAtMaxLength() throws Exception {
+        String email = validEmailOfLength(100);
+        when(authService.sendPasswordResetVerificationCode(any()))
+                .thenReturn(new SignupEmailCodeResponse(300L));
+
+        mockMvc.perform(post("/api/auth/password/reset-request")
+                        .contentType("application/json")
+                        .content("{\"email\":\"" + email + "\"}"))
+                .andExpect(status().isOk());
+
+        assertEquals(100, email.length());
+        verify(authService).sendPasswordResetVerificationCode(any());
+    }
+
+    @Test
+    void resetRequestRejectsEmailOverMaxLengthBeforeService() throws Exception {
+        String email = validEmailOfLength(101);
+
+        mockMvc.perform(post("/api/auth/password/reset-request")
+                        .contentType("application/json")
+                        .content("{\"email\":\"" + email + "\"}"))
+                .andExpect(status().isBadRequest());
+
+        assertEquals(101, email.length());
+        verifyNoInteractions(authService);
+    }
+
+    @Test
+    void resetVerifyAcceptsEmailAtMaxLength() throws Exception {
+        String email = validEmailOfLength(100);
+        when(authService.verifyPasswordResetCode(any()))
+                .thenReturn(new PasswordResetVerifyResponse("opaque-token"));
+
+        mockMvc.perform(post("/api/auth/password/reset-verify")
+                        .contentType("application/json")
+                        .content("{\"email\":\"" + email
+                                + "\",\"verificationCode\":\"123456\"}"))
+                .andExpect(status().isOk());
+
+        assertEquals(100, email.length());
+        verify(authService).verifyPasswordResetCode(any());
+    }
+
+    @Test
+    void resetVerifyRejectsEmailOverMaxLengthBeforeService() throws Exception {
+        String email = validEmailOfLength(101);
+
+        mockMvc.perform(post("/api/auth/password/reset-verify")
+                        .contentType("application/json")
+                        .content("{\"email\":\"" + email
+                                + "\",\"verificationCode\":\"123456\"}"))
+                .andExpect(status().isBadRequest());
+
+        assertEquals(101, email.length());
+        verifyNoInteractions(authService);
+    }
+
+    @Test
     void passwordValidationRejectsShortAndLongValues() throws Exception {
         mockMvc.perform(post("/api/auth/password/reset")
                         .contentType("application/json")
@@ -159,5 +217,11 @@ class AuthControllerPasswordResetTest {
 
     private JsonNode json(MvcResult result) throws Exception {
         return objectMapper.readTree(result.getResponse().getContentAsString(StandardCharsets.UTF_8));
+    }
+
+    private String validEmailOfLength(int length) {
+        String localPart = "a".repeat(64);
+        String topLevelDomain = ".com";
+        return localPart + "@" + "b".repeat(length - 69) + topLevelDomain;
     }
 }

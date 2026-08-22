@@ -8,6 +8,7 @@ import com.aewol.domain.auth.dto.SignupEmailCodeResponse;
 import com.aewol.domain.auth.dto.SignupEmailVerificationRequest;
 import com.aewol.domain.auth.dto.SignupRequest;
 import com.aewol.domain.auth.dto.SignupResponse;
+import com.aewol.domain.auth.dto.TokenResponse;
 import com.aewol.domain.auth.service.AuthService;
 import com.aewol.domain.auth.service.AccountFindService;
 import com.aewol.domain.auth.support.KakaoRegistrationCookie;
@@ -20,11 +21,14 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
+import org.springframework.validation.beanvalidation.LocalValidatorFactoryBean;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -54,12 +58,10 @@ class AuthControllerEmailVerificationTest {
 
     @Test
     void sendCodeMailFailureReturnsStandardServiceUnavailableResponse() throws Exception {
-        when(authService.sendSignupVerificationCode(org.mockito.ArgumentMatchers.any()))
+        when(authService.sendSignupVerificationCode(any()))
                 .thenThrow(new BusinessException(HttpStatus.SERVICE_UNAVAILABLE,
                         "인증 이메일을 발송할 수 없습니다. 잠시 후 다시 시도해주세요."));
-        MockMvc mockMvc = MockMvcBuilders.standaloneSetup(controller)
-                .setControllerAdvice(new GlobalExceptionHandler())
-                .build();
+        MockMvc mockMvc = mockMvc();
 
         String body = mockMvc.perform(post("/api/auth/signup/send-code")
                         .contentType("application/json")
@@ -117,5 +119,103 @@ class AuthControllerEmailVerificationTest {
                         .contentType("application/json")
                         .content("{\"email\":\"user@example.com\",\"code\":\"123456\"}"))
                 .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void signupSendCodeAcceptsEmailAtMaxLength() throws Exception {
+        String email = validEmailOfLength(100);
+        when(authService.sendSignupVerificationCode(any()))
+                .thenReturn(new SignupEmailCodeResponse(300L));
+
+        mockMvc().perform(post("/api/auth/signup/send-code")
+                        .contentType("application/json")
+                        .content("{\"email\":\"" + email + "\"}"))
+                .andExpect(status().isOk());
+
+        assertEquals(100, email.length());
+        verify(authService).sendSignupVerificationCode(any());
+    }
+
+    @Test
+    void signupSendCodeRejectsEmailOverMaxLengthBeforeService() throws Exception {
+        String email = validEmailOfLength(101);
+
+        mockMvc().perform(post("/api/auth/signup/send-code")
+                        .contentType("application/json")
+                        .content("{\"email\":\"" + email + "\"}"))
+                .andExpect(status().isBadRequest());
+
+        assertEquals(101, email.length());
+        verifyNoInteractions(authService);
+    }
+
+    @Test
+    void signupVerifyCodeAcceptsEmailAtMaxLength() throws Exception {
+        String email = validEmailOfLength(100);
+
+        mockMvc().perform(post("/api/auth/signup/verify-code")
+                        .contentType("application/json")
+                        .content("{\"email\":\"" + email
+                                + "\",\"verificationCode\":\"123456\"}"))
+                .andExpect(status().isOk());
+
+        assertEquals(100, email.length());
+        verify(authService).verifySignupEmailCode(any());
+    }
+
+    @Test
+    void signupVerifyCodeRejectsEmailOverMaxLengthBeforeService() throws Exception {
+        String email = validEmailOfLength(101);
+
+        mockMvc().perform(post("/api/auth/signup/verify-code")
+                        .contentType("application/json")
+                        .content("{\"email\":\"" + email
+                                + "\",\"verificationCode\":\"123456\"}"))
+                .andExpect(status().isBadRequest());
+
+        assertEquals(101, email.length());
+        verifyNoInteractions(authService);
+    }
+
+    @Test
+    void loginAcceptsEmailAtMaxLength() throws Exception {
+        String email = validEmailOfLength(100);
+        when(authService.login(any())).thenReturn(new TokenResponse("access-token", "refresh-token"));
+
+        mockMvc().perform(post("/api/auth/login")
+                        .contentType("application/json")
+                        .content("{\"email\":\"" + email + "\",\"password\":\"password\"}"))
+                .andExpect(status().isOk());
+
+        assertEquals(100, email.length());
+        verify(authService).login(any());
+    }
+
+    @Test
+    void loginRejectsEmailOverMaxLengthBeforeService() throws Exception {
+        String email = validEmailOfLength(101);
+
+        mockMvc().perform(post("/api/auth/login")
+                        .contentType("application/json")
+                        .content("{\"email\":\"" + email + "\",\"password\":\"password\"}"))
+                .andExpect(status().isBadRequest());
+
+        assertEquals(101, email.length());
+        verifyNoInteractions(authService);
+    }
+
+    private MockMvc mockMvc() {
+        LocalValidatorFactoryBean validator = new LocalValidatorFactoryBean();
+        validator.afterPropertiesSet();
+        return MockMvcBuilders.standaloneSetup(controller)
+                .setControllerAdvice(new GlobalExceptionHandler())
+                .setValidator(validator)
+                .build();
+    }
+
+    private String validEmailOfLength(int length) {
+        String localPart = "a".repeat(64);
+        String topLevelDomain = ".com";
+        return localPart + "@" + "b".repeat(length - 69) + topLevelDomain;
     }
 }
