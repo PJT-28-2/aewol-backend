@@ -1,0 +1,147 @@
+package com.aewol.common.filter;
+
+import com.aewol.domain.member.mapper.MemberMapper;
+import java.util.Map;
+import java.util.concurrent.TimeUnit;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.dao.DataAccessException;
+import org.springframework.data.redis.core.RedisTemplate;
+import org.springframework.stereotype.Component;
+
+/**
+ * JWT 인증 시 확인하는 회원 활성 상태 캐시.
+ *
+ * <p>인증된 모든 요청이 {@code findAuthStateById}로 DB를 한 번씩 때렸다. 토큰만으로는
+ * 탈퇴·비활성화를 알 수 없어 매번 확인해야 했기 때문인데, 값이 거의 바뀌지 않는 데다
+ * 요청 수만큼 늘어나 DB에 그대로 부하가 걸렸다.
+ *
+ * <p>TTL을 짧게(60초) 둔다. 캐시가 길수록 DB는 편해지지만, 탈퇴한 회원이 그만큼 더 오래
+ * 인증에 성공한다. 무효화를 걸어두더라도 놓치는 경로가 생길 수 있으므로 TTL 자체를
+ * 안전망으로 삼는다.
+ *
+ * <p>Redis가 죽어도 인증은 계속돼야 한다. 조회·저장 실패는 삼키고 DB로 넘어간다 —
+ * 캐시는 부하를 줄이는 장치이지 정답의 출처가 아니다.
+ */
+@Slf4j
+@Component
+public class MemberAuthStateCache {
+
+    private static final String KEY_PREFIX = "auth:state:";
+    /** 탈퇴가 반영되기까지 최대 이만큼 늦는다. 그 대가로 매 요청 DB 조회를 없앤다. */
+    private static final long TTL_SECONDS = 60;
+    /** 없는 회원도 캐시해 존재하지 않는 id로 반복 조회되는 것을 막는다. */
+    private static final String ABSENT = "-";
+
+    private final RedisTemplate<String, String> redisTemplate;
+    private final MemberMapper memberMapper;
+
+    public MemberAuthStateCache(RedisTemplate<String, String> redisTemplate, MemberMapper memberMapper) {
+        this.redisTemplate = redisTemplate;
+        this.memberMapper = memberMapper;
+    }
+
+    /**
+     * Redis 없이 DB만 보는 캐시.
+     *
+     * <p>단위테스트처럼 Redis를 띄우지 않는 자리에서 쓴다. 캐시는 부하를 줄이는 장치이지
+     * 정답의 출처가 아니므로, 없으면 매번 DB를 보면 그만이다.
+     */
+    public static MemberAuthStateCache withoutCache(MemberMapper memberMapper) {
+        return new MemberAuthStateCache(null, memberMapper);
+    }
+
+    /**
+     * 활성 상태를 돌려준다. 캐시에 없으면 DB에서 읽어 채운다.
+     *
+     * @return 회원이 없으면 {@code null}
+     * @throws DataAccessException DB 조회 자체가 실패한 경우 — 인증을 통과시키면 안 되므로
+     *         그대로 올려보낸다
+     */
+    public Map<String, Object> find(String memberId) {
+        String cached = readQuietly(memberId);
+        if (ABSENT.equals(cached)) {
+            return null;
+        }
+        if (cached != null) {
+            return decode(cached);
+        }
+
+        Map<String, Object> authState = memberMapper.findAuthStateById(memberId);
+        writeQuietly(memberId, authState);
+        return authState;
+    }
+
+    /**
+     * 캐시를 즉시 버린다.
+     *
+     * <p>탈퇴·복구처럼 인증 결과를 바꾸는 변경 뒤에 반드시 불러야 한다. 부르지 않으면
+     * TTL이 지날 때까지 예전 상태로 인증된다.
+     */
+    public void evict(String memberId) {
+        if (redisTemplate == null) {
+            return;
+        }
+        try {
+            redisTemplate.delete(KEY_PREFIX + memberId);
+        } catch (RuntimeException e) {
+            // 지우지 못하면 TTL 만료까지 예전 상태가 남는다. 최대 60초라 감수하되,
+            // 조사할 수 있게 남긴다.
+            log.warn("[AUTH_CACHE_EVICT_FAILED] 인증 캐시를 지우지 못했습니다. memberId={}", memberId, e);
+        }
+    }
+
+    private String readQuietly(String memberId) {
+        if (redisTemplate == null) {
+            return null;
+        }
+        try {
+            return redisTemplate.opsForValue().get(KEY_PREFIX + memberId);
+        } catch (RuntimeException e) {
+            log.warn("[AUTH_CACHE_READ_FAILED] 인증 캐시 조회 실패 — DB로 넘어갑니다.", e);
+            return null;
+        }
+    }
+
+    private void writeQuietly(String memberId, Map<String, Object> authState) {
+        if (redisTemplate == null) {
+            return;
+        }
+        try {
+            redisTemplate.opsForValue().set(
+                    KEY_PREFIX + memberId, encode(authState), TTL_SECONDS, TimeUnit.SECONDS);
+        } catch (RuntimeException e) {
+            log.warn("[AUTH_CACHE_WRITE_FAILED] 인증 캐시 저장 실패 — 다음 요청도 DB를 봅니다.", e);
+        }
+    }
+
+    /**
+     * {@code isActive|role|withdrawnAtEpoch} 형태로 담는다.
+     *
+     * <p>JSON 직렬화를 쓰지 않는 이유는 필드가 셋뿐이고 매 요청 경로라 가볍게 두기
+     * 위해서다. 필드가 늘면 그때 바꾼다.
+     */
+    private static String encode(Map<String, Object> authState) {
+        if (authState == null) {
+            return ABSENT;
+        }
+        return text(authState.get("is_active")) + "|"
+                + text(authState.get("role")) + "|"
+                + text(authState.get("withdrawn_at_epoch"));
+    }
+
+    private static Map<String, Object> decode(String cached) {
+        String[] parts = cached.split("\\|", -1);
+        if (parts.length != 3) {
+            return null;
+        }
+        Map<String, Object> authState = new java.util.HashMap<>();
+        authState.put("is_active", parts[0].isEmpty() ? null : parts[0]);
+        authState.put("role", parts[1].isEmpty() ? null : parts[1]);
+        authState.put("withdrawn_at_epoch", parts[2].isEmpty() ? null : Long.valueOf(parts[2]));
+        return authState;
+    }
+
+    private static String text(Object value) {
+        return value == null ? "" : String.valueOf(value);
+    }
+}

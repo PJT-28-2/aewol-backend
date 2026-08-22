@@ -17,6 +17,7 @@ import com.aewol.domain.auth.dto.SignupEmailCodeRequest;
 import com.aewol.domain.auth.dto.SignupEmailCodeResponse;
 import com.aewol.domain.auth.dto.SignupEmailVerificationRequest;
 import com.aewol.domain.auth.dto.TokenResponse;
+import com.aewol.common.filter.MemberAuthStateCache;
 import com.aewol.domain.member.mapper.MemberMapper;
 import com.aewol.domain.notification.mapper.NotificationSettingMapper;
 import com.aewol.domain.wallet.mapper.WalletMapper;
@@ -151,6 +152,8 @@ public class AuthServiceImpl implements AuthService {
     private final AuthCredentialStore authCredentialStore;
     private final KakaoRegistrationStore kakaoRegistrationStore;
     private final TransactionOperations transactionOperations;
+    /** 탈퇴·복구 뒤 인증 캐시를 즉시 버리기 위해 쓴다. */
+    private final MemberAuthStateCache authStateCache;
 
     @Override
     public SignupEmailCodeResponse sendSignupVerificationCode(SignupEmailCodeRequest request) {
@@ -407,6 +410,8 @@ public class AuthServiceImpl implements AuthService {
         if (memberMapper.restoreKakaoMember(memberId) != 1) {
             throw BusinessException.conflict("이미 활성화된 회원입니다.");
         }
+        // 캐시에 비활성 상태가 남아 있으면 복구된 회원이 그대로 막힌다.
+        authStateCache.evict(String.valueOf(memberId));
         notificationSettingMapper.ensureForRecovery(memberId);
         return new KakaoRecovery(memberId, role);
     }
@@ -519,6 +524,7 @@ public class AuthServiceImpl implements AuthService {
             if (memberMapper.restoreLocalMember(restored) != 1) {
                 throw BusinessException.conflict("이미 활성화된 회원입니다.");
             }
+            authStateCache.evict(String.valueOf(memberId));
         } catch (DuplicateKeyException e) {
             // 잠금 대기 중 다른 계정이 활성화된 경우에도 DB unique 충돌을 409로 일관되게 응답한다.
             throw BusinessException.conflict("이미 가입된 이메일입니다.");

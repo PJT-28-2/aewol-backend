@@ -10,6 +10,7 @@ import com.aewol.domain.member.dto.MemberUpdateRequest;
 import com.aewol.domain.member.dto.MemberWithdrawRequest;
 import com.aewol.domain.member.dto.SimplePasswordRequest;
 import com.aewol.domain.member.mapper.MemberMapper;
+import com.aewol.common.filter.MemberAuthStateCache;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -32,6 +33,8 @@ public class MemberServiceImpl implements MemberService {
     private final MemberMapper memberMapper;
     private final PasswordEncoder passwordEncoder;
     private final AuthCredentialStore authCredentialStore;
+    /** 탈퇴 뒤 인증 캐시를 즉시 버리기 위해 쓴다. */
+    private final MemberAuthStateCache authStateCache;
 
     // 프론트(AccountPasswordSetupView.vue)의 isWeakPin과 동일한 규칙 — 클라이언트 검증은
     // 우회 가능하므로(Postman 등으로 직접 호출) 송금·이체에 쓰이는 PIN인 만큼 서버에서도
@@ -117,6 +120,9 @@ public class MemberServiceImpl implements MemberService {
         if (member == null || !isActive(member.get("is_active"))) {
             throw BusinessException.conflict("이미 탈퇴한 회원입니다.");
         }
+
+        // 캐시를 지우지 않으면 TTL(60초)이 지날 때까지 탈퇴한 회원이 계속 인증된다.
+        authStateCache.evict(memberId);
 
         String provider = providerOf(member);
         if ("LOCAL".equals(provider)) {
