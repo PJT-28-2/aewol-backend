@@ -7,6 +7,7 @@ import org.apache.tomcat.util.descriptor.web.FilterDef;
 import org.apache.tomcat.util.descriptor.web.FilterMap;
 import org.springframework.web.context.support.AnnotationConfigWebApplicationContext;
 import org.springframework.web.filter.CharacterEncodingFilter;
+import com.aewol.config.RequestIdFilter;
 import org.springframework.web.filter.DelegatingFilterProxy;
 import org.springframework.web.servlet.DispatcherServlet;
 
@@ -56,6 +57,10 @@ public class AewolApplication {
         // CharacterEncoding 필터 (UTF-8)
         registerFilter(context, "encodingFilter",
                 new CharacterEncodingFilter("UTF-8", true), "/*");
+
+        // 요청 추적 id는 보안 필터보다 먼저 붙인다. 인증에서 튕겨 나가는 요청의 로그도
+        // 같은 id로 묶여야 "누가 왜 401을 받았는지"를 되짚을 수 있다.
+        registerFilter(context, "requestIdFilter", new RequestIdFilter(), "/*");
 
         // Spring Security 필터
         registerFilter(context, "springSecurityFilterChain",

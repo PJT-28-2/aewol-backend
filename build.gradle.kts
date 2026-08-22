@@ -128,8 +128,13 @@ dependencies {
     testImplementation("com.h2database:h2:2.3.232")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 
-    // TODO(팀 합의 후 logback 전환): 런타임 로그 확인용 임시 백엔드
-    runtimeOnly("org.slf4j:slf4j-simple:1.7.36")
+    // slf4j-simple은 설정이 거의 불가능해(패턴·파일 출력·레벨별 분리 불가) 운영 로그로
+    // 쓸 수 없었다. logback으로 바꾸고 설정은 logback.xml에 둔다.
+    // (Spring Boot가 아니라 logback-spring.xml의 프로파일 기능은 쓸 수 없어 환경변수로 제어한다)
+    runtimeOnly("ch.qos.logback:logback-classic:1.2.13")
+    // 톰캣·MyBatis 등이 쓰는 다른 로깅 API를 slf4j로 모아 한 곳에서 제어한다.
+    runtimeOnly("org.slf4j:jcl-over-slf4j:1.7.36")
+    runtimeOnly("org.slf4j:jul-to-slf4j:1.7.36")
 }
 
 tasks.withType<Test> {
