@@ -371,11 +371,12 @@ class CareDiaryServiceImplTest {
         givenPetOwnedBy("pet-1", "owner-1");
         when(careDiaryMapper.findById("diary-1"))
                 .thenReturn(diaryRow("diary-1", "pet-1", "owner-1", "2026-08-10", "산책"));
+        when(careDiaryMapper.findImagesByDiaryIds(List.of("diary-1"))).thenReturn(List.of(
+                map("diaryId", "diary-1", "imageUrl", "diary/a.png")));
         when(careDiaryMapper.updateVisibility("diary-1", "PUBLIC")).thenReturn(1);
         when(careDiaryMapper.findImagesForPublish("diary-1")).thenReturn(List.of(
                 map("imageId", "img-1", "imageUrl", "diary/a.png")));
         when(fileStorage.publish("diary/a.png")).thenReturn("public/xyz.png");
-        when(careDiaryMapper.findImagesByDiaryIds(List.of("diary-1"))).thenReturn(List.of());
 
         service.changeVisibility("owner-1", "diary-1", visibilityRequest("PUBLIC"));
 
@@ -411,11 +412,12 @@ class CareDiaryServiceImplTest {
         givenPetOwnedBy("pet-1", "owner-1");
         when(careDiaryMapper.findById("diary-1"))
                 .thenReturn(diaryRow("diary-1", "pet-1", "owner-1", "2026-08-10", "산책"));
+        when(careDiaryMapper.findImagesByDiaryIds(List.of("diary-1"))).thenReturn(List.of(
+                map("diaryId", "diary-1", "imageUrl", "diary/a.png")));
         when(careDiaryMapper.updateVisibility("diary-1", "PUBLIC")).thenReturn(1);
         when(careDiaryMapper.findImagesForPublish("diary-1")).thenReturn(List.of(
                 map("imageId", "img-1", "imageUrl", "diary/a.png")));
         when(fileStorage.publish("diary/a.png")).thenReturn(null);
-        when(careDiaryMapper.findImagesByDiaryIds(List.of("diary-1"))).thenReturn(List.of());
 
         assertDoesNotThrow(() -> service.changeVisibility("owner-1", "diary-1", visibilityRequest("PUBLIC")));
         verify(careDiaryMapper, never()).updatePublicImageKey(anyString(), anyString());
@@ -568,8 +570,9 @@ class CareDiaryServiceImplTest {
         givenPetOwnedBy("pet-1", "owner-1");
         when(careDiaryMapper.findById("diary-1"))
                 .thenReturn(diaryRow("diary-1", "pet-1", "member-2", "2026-08-10", "산책"));
+        when(careDiaryMapper.findImagesByDiaryIds(List.of("diary-1"))).thenReturn(List.of(
+                map("diaryId", "diary-1", "imageUrl", "diary/a.png")));
         when(careDiaryMapper.updateVisibility("diary-1", "PUBLIC")).thenReturn(1);
-        when(careDiaryMapper.findImagesByDiaryIds(List.of("diary-1"))).thenReturn(List.of());
         when(shareMapper.findAcceptedAccess("pet-1", "member-2")).thenReturn(map("access_id", "access-1"));
 
         service.changeVisibility("member-2", "diary-1", visibilityRequest("PUBLIC"));
@@ -579,6 +582,40 @@ class CareDiaryServiceImplTest {
 
     // 대표 보호자가 남이 쓴 글을 마음대로 공개하면 "내가 쓴 글인데 내 통제 밖에서
     // 공개됐다"가 된다. 올리는 것은 쓴 사람만 한다.
+    // 사진이 없으면 탐색 그리드와 프로필 어디에도 자리가 없다. 공개는 됐는데 아무 데도
+    // 안 보이는 상태가 되므로 애초에 막는다.
+    @Test
+    @DisplayName("사진이 없는 일기는 공개할 수 없다")
+    void should_rejectPublish_when_diaryHasNoImage() {
+        CareDiaryServiceImpl service = service();
+        givenPetOwnedBy("pet-1", "owner-1");
+        when(careDiaryMapper.findById("diary-1"))
+                .thenReturn(diaryRow("diary-1", "pet-1", "owner-1", "2026-08-10", "글만 있는 일기"));
+        when(careDiaryMapper.findImagesByDiaryIds(List.of("diary-1"))).thenReturn(List.of());
+
+        assertThrows(BusinessException.class,
+                () -> service.changeVisibility("owner-1", "diary-1", visibilityRequest("PUBLIC")));
+
+        verify(careDiaryMapper, never()).updateVisibility(anyString(), anyString());
+    }
+
+    // 사진이 없어도 내리는 것은 막지 않는다. 이미 공개된 글을 되돌리는 길을 막으면 안 된다.
+    @Test
+    @DisplayName("사진이 없어도 비공개로는 바꿀 수 있다")
+    void should_allowUnpublish_when_diaryHasNoImage() {
+        CareDiaryServiceImpl service = service();
+        givenPetOwnedBy("pet-1", "owner-1");
+        when(careDiaryMapper.findById("diary-1"))
+                .thenReturn(diaryRow("diary-1", "pet-1", "owner-1", "2026-08-10", "글만 있는 일기"));
+        when(careDiaryMapper.updateVisibility("diary-1", "PRIVATE")).thenReturn(1);
+        when(careDiaryMapper.findImagesForPublish("diary-1")).thenReturn(List.of());
+        when(careDiaryMapper.findImagesByDiaryIds(List.of("diary-1"))).thenReturn(List.of());
+
+        service.changeVisibility("owner-1", "diary-1", visibilityRequest("PRIVATE"));
+
+        verify(careDiaryMapper).updateVisibility("diary-1", "PRIVATE");
+    }
+
     @Test
     @DisplayName("대표 보호자라도 남이 쓴 일기를 공개할 수는 없다")
     void should_rejectPublish_when_notAuthorEvenIfPetOwner() {
