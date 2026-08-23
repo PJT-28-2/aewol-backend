@@ -53,9 +53,13 @@ class PetCharacterAsyncTest {
     private final List<PetCharacterJob> saved = new ArrayList<>();
 
     private PetCharacterServiceImpl service(ExecutorService executor) {
+        return service(new PetCharacterJobRunner(executor));
+    }
+
+    private PetCharacterServiceImpl service(PetCharacterJobRunner runner) {
         PetCharacterServiceImpl service = new PetCharacterServiceImpl(
                 geminiImageClient, chromaKeyRemover, fileStorage, petMapper, rateLimiter,
-                new PetCharacterJobRunner(executor), jobStore);
+                runner, jobStore);
         ReflectionTestUtils.setField(service, "dailyLimit", 5);
         return service;
     }
@@ -116,6 +120,28 @@ class PetCharacterAsyncTest {
             @Override public boolean isTerminated() { return false; }
             @Override public boolean awaitTermination(long t, TimeUnit u) { return true; }
             @Override public void execute(Runnable command) { /* 붙잡아 둔다 */ }
+        };
+    }
+
+    /** 종료 시 접수한 작업을 실행하지 않고 shutdownNow 결과로 돌려준다. */
+    private static ExecutorService discardedOnShutdownExecutor() {
+        return new AbstractExecutorService() {
+            private final List<Runnable> queued = new ArrayList<>();
+            private boolean shutdown;
+
+            @Override public void shutdown() { shutdown = true; }
+            @Override public boolean isShutdown() { return shutdown; }
+            @Override public boolean isTerminated() { return false; }
+            @Override public boolean awaitTermination(long t, TimeUnit u) { return false; }
+            @Override public void execute(Runnable command) { queued.add(command); }
+
+            @Override
+            public List<Runnable> shutdownNow() {
+                shutdown = true;
+                List<Runnable> discarded = new ArrayList<>(queued);
+                queued.clear();
+                return discarded;
+            }
         };
     }
 
@@ -262,5 +288,51 @@ class PetCharacterAsyncTest {
 
         verify(rateLimiter).rollback(anyString());
         verify(geminiImageClient, never()).generate(any(), anyString(), anyString());
+    }
+
+    @Test
+    @DisplayName("배포 종료로 시작하지 못한 작업은 실패 처리하고 할당량을 되돌린다")
+    void should_failJobAndRollbackQuota_whenDiscardedDuringShutdown() {
+        PetCharacterJobRunner runner = new PetCharacterJobRunner(discardedOnShutdownExecutor());
+        PetCharacterServiceImpl service = service(runner);
+
+        PetCharacterJob job = service.submit("member-1", "pet-1", photo());
+        ReflectionTestUtils.invokeMethod(runner, "shutdown");
+
+        PetCharacterJob last = saved.get(saved.size() - 1);
+        assertEquals(job.getJobId(), last.getJobId());
+        assertEquals(PetCharacterJob.Status.FAILED, last.getStatus());
+        assertTrue(last.getMessage().contains("서버 업데이트"));
+        verify(rateLimiter).rollback(anyString());
+        verify(geminiImageClient, never()).generate(any(), anyString(), anyString());
+    }
+
+    @Test
+    @DisplayName("인터럽트된 생성은 실패 처리하고 할당량을 되돌린다")
+    void should_failJobAndRollbackQuota_whenGenerationIsInterrupted() {
+        when(geminiImageClient.generate(any(), anyString(), anyString()))
+                .thenThrow(new RuntimeException(new InterruptedException("shutdown")));
+
+        PetCharacterJob job = service(directExecutor()).submit("member-1", "pet-1", photo());
+
+        PetCharacterJob last = saved.get(saved.size() - 1);
+        assertEquals(job.getJobId(), last.getJobId());
+        assertEquals(PetCharacterJob.Status.FAILED, last.getStatus());
+        assertTrue(last.getMessage().contains("서버 업데이트"));
+        verify(rateLimiter).rollback(anyString());
+    }
+
+    @Test
+    @DisplayName("치명 오류도 실패 상태를 남긴 뒤 executor 밖으로 다시 던진다")
+    void should_recordFailureBeforeRethrowing_whenErrorOccurs() {
+        when(geminiImageClient.generate(any(), anyString(), anyString()))
+                .thenThrow(new AssertionError("broken worker"));
+
+        assertThrows(AssertionError.class,
+                () -> service(directExecutor()).submit("member-1", "pet-1", photo()));
+
+        PetCharacterJob last = saved.get(saved.size() - 1);
+        assertEquals(PetCharacterJob.Status.FAILED, last.getStatus());
+        assertNotNull(last.getMessage());
     }
 }
