@@ -46,6 +46,8 @@ public class PetCharacterServiceImpl implements PetCharacterService {
     private static final long MAX_PHOTO_BYTES = 10L * 1024 * 1024;
     private static final String UPLOAD_SUB_DIR = "pet-character";
     private static final String RATE_LIMIT_PREFIX = "petCharacter:";
+    private static final String QUEUE_FULL_MESSAGE =
+            "지금은 만들고 있는 캐릭터가 많아요. 잠시 후 다시 시도해 주세요.";
 
     private final GeminiImageClient geminiImageClient;
     private final ChromaKeyRemover chromaKeyRemover;
@@ -80,15 +82,22 @@ public class PetCharacterServiceImpl implements PetCharacterService {
                 .petId(petId)
                 .status(PetCharacterJob.Status.RUNNING)
                 .build();
-        jobStore.save(accepted);
+        try {
+            jobStore.save(accepted);
+        } catch (RuntimeException e) {
+            // 접수 상태를 남기지 못하면 사용자가 결과를 물어볼 자리가 없다. 시작하지 않고
+            // 차감한 몫을 되돌린다.
+            rateLimiter.rollback(prepared.quotaKey);
+            throw BusinessException.conflict("지금은 캐릭터를 만들 수 없어요. 잠시 후 다시 시도해 주세요.");
+        }
 
         boolean queued = jobRunner.submit(() -> run(jobId, prepared));
         if (!queued) {
             // 접수하지 못했으니 방금 차감한 오늘 몫을 되돌린다. 그대로 두면 사용자는
             // 아무것도 받지 못하고 횟수만 잃는다.
             rateLimiter.rollback(prepared.quotaKey);
-            jobStore.save(failed(accepted, "지금은 만들고 있는 캐릭터가 많아요. 잠시 후 다시 시도해 주세요."));
-            throw BusinessException.conflict("지금은 만들고 있는 캐릭터가 많아요. 잠시 후 다시 시도해 주세요.");
+            recordFailure(jobId, prepared, QUEUE_FULL_MESSAGE, null);
+            throw BusinessException.conflict(QUEUE_FULL_MESSAGE);
         }
         return accepted;
     }
@@ -110,7 +119,6 @@ public class PetCharacterServiceImpl implements PetCharacterService {
      * 사용자는 끝나지 않는 화면을 보게 되므로 실패도 반드시 상태로 남긴다.
      */
     private void run(String jobId, Prepared prepared) {
-        PetCharacterJob running = jobStore.find(jobId);
         try {
             PetCharacterResponse result = produce(prepared);
             jobStore.save(PetCharacterJob.builder()
@@ -123,21 +131,36 @@ public class PetCharacterServiceImpl implements PetCharacterService {
                     .remainingToday(result.getRemainingToday())
                     .build());
         } catch (BusinessException e) {
-            jobStore.save(failed(running, e.getMessage()));
+            recordFailure(jobId, prepared, e.getMessage(), e);
         } catch (RuntimeException e) {
-            log.error("[PET_CHARACTER_JOB_FAILED] 캐릭터 생성 실패 - jobId: {}", jobId, e);
-            jobStore.save(failed(running, "캐릭터를 만들지 못했어요. 잠시 후 다시 시도해 주세요."));
+            recordFailure(jobId, prepared, "캐릭터를 만들지 못했어요. 잠시 후 다시 시도해 주세요.", e);
         }
     }
 
-    private PetCharacterJob failed(PetCharacterJob job, String message) {
-        return PetCharacterJob.builder()
-                .jobId(job.getJobId())
-                .memberId(job.getMemberId())
-                .petId(job.getPetId())
-                .status(PetCharacterJob.Status.FAILED)
-                .message(message)
-                .build();
+    /**
+     * 실패를 상태로 남긴다.
+     *
+     * <p>여기서 예외가 밖으로 나가면 아무도 잡지 않아 작업이 RUNNING인 채로 남는다. 사용자는
+     * 끝나지 않는 화면을 보게 되므로, 상태를 남기지 못하는 상황까지 여기서 삼킨다.
+     *
+     * <p>실패 상태는 접수 때 이미 알고 있는 값으로만 만든다. 저장소에서 다시 읽어 쓰면
+     * 그 조회가 실패했을 때(Redis 장애·TTL 만료) 정작 실패를 남기지 못한다.
+     */
+    private void recordFailure(String jobId, Prepared prepared, String message, RuntimeException cause) {
+        log.error("[PET_CHARACTER_JOB_FAILED] 캐릭터 생성 실패 - jobId: {}", jobId, cause);
+        try {
+            jobStore.save(PetCharacterJob.builder()
+                    .jobId(jobId)
+                    .memberId(prepared.memberId)
+                    .petId(prepared.petId)
+                    .status(PetCharacterJob.Status.FAILED)
+                    .message(message)
+                    .build());
+        } catch (RuntimeException e) {
+            // 남기지 못하면 화면은 TTL이 지나 작업이 사라질 때까지 기다린다. 더 할 수 있는
+            // 일이 없으므로 조사할 수 있게 남기고 끝낸다.
+            log.error("[PET_CHARACTER_JOB_STATE_LOST] 실패 상태를 남기지 못했습니다. jobId: {}", jobId, e);
+        }
     }
 
     /**
