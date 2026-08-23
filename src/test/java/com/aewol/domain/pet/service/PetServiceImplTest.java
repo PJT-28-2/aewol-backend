@@ -1,6 +1,7 @@
 package com.aewol.domain.pet.service;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.Mockito.*;
 
@@ -136,6 +137,26 @@ class PetServiceImplTest {
         service.createPet("member-1", request);
 
         verify(petMapper).insert(argThat(row -> "bori_daily".equals(row.get("instagramId"))));
+    }
+
+    // 인스타 계정 없이 등록하는 쪽이 오히려 보통이다. 정규화가 null에서 넘어지면
+    // 반려동물 등록 자체가 막힌다.
+    @Test
+    @DisplayName("인스타 핸들 없이도 등록된다")
+    void should_createPet_when_instagramHandleMissing() {
+        PetServiceImpl service = service();
+        PetCreateRequest request = mock(PetCreateRequest.class);
+        when(request.getInstagramId()).thenReturn(null);
+
+        doAnswer(invocation -> {
+            ((Map<String, Object>) invocation.getArgument(0)).put("petId", "pet-1");
+            return null;
+        }).when(petMapper).insert(any());
+        when(petMapper.findById("pet-1")).thenReturn(pet("member-1"));
+
+        assertDoesNotThrow(() -> service.createPet("member-1", request));
+
+        verify(petMapper).insert(argThat(row -> row.get("instagramId") == null));
     }
 
     // 인스타그램 핸들은 대소문자를 구분하지 않는다. 저장 형태가 들쭉날쭉하면 같은 계정이
