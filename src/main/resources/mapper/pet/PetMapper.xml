@@ -12,8 +12,24 @@
         WHERE pet_id = #{petId} AND member_id = #{memberId} AND is_active = 1
     </select>
 
+    <!-- 소유한 펫 + 공동육아(shared_access ACCEPTED)로 참여한 펫을 함께 반환한다 -->
     <select id="findByMemberId" resultType="map">
-        SELECT * FROM pet WHERE member_id = #{memberId} AND is_active = 1 ORDER BY created_at
+        SELECT p.* FROM pet p
+        LEFT JOIN shared_access sa
+               ON sa.pet_id = p.pet_id
+              AND sa.member_id = #{memberId}
+              AND sa.status = 'ACCEPTED'
+        WHERE p.is_active = 1
+          AND (p.member_id = #{memberId} OR sa.access_id IS NOT NULL)
+        ORDER BY p.created_at
+    </select>
+
+    <!-- 공동육아 구성원(수락 완료) 여부 — 조회 권한 판정용 -->
+    <select id="hasSharedAccess" resultType="boolean">
+        SELECT EXISTS (
+            SELECT 1 FROM shared_access
+            WHERE pet_id = #{petId} AND member_id = #{memberId} AND status = 'ACCEPTED'
+        )
     </select>
 
     <!-- pet_id는 BIGINT AUTO_INCREMENT -->
