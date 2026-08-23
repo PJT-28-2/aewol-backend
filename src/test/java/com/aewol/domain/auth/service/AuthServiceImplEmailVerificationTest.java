@@ -29,6 +29,7 @@ import java.util.List;
 import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -50,6 +51,7 @@ class AuthServiceImplEmailVerificationTest {
     private static final String EMAIL = "newuser@aewol.com";
     private static final String VERIFICATION_KEY = "signup:verify:" + EMAIL;
     private static final String COMPLETED_KEY = "signup:verify:completed:" + EMAIL;
+    private static final String RATE_LIMIT_KEY = "signup:verify:request-count:" + EMAIL;
 
     @Mock MemberMapper memberMapper;
     @Mock WalletMapper walletMapper;
@@ -79,6 +81,7 @@ class AuthServiceImplEmailVerificationTest {
     void sendsUuidAndSixDigitCodeUsingNewKeyForThreeHundredSeconds() {
         SignupEmailCodeRequest request = emailCodeRequest(EMAIL);
         when(memberMapper.existsActiveByEmail(EMAIL)).thenReturn(false);
+        when(redisRateLimiter.incrementWithExpiry(RATE_LIMIT_KEY, 1800L)).thenReturn(1L);
         when(redisTemplate.opsForValue()).thenReturn(valueOperations);
 
         SignupEmailCodeResponse response = authService.sendSignupVerificationCode(request);
@@ -87,11 +90,13 @@ class AuthServiceImplEmailVerificationTest {
         verify(valueOperations).set(
                 eq(VERIFICATION_KEY), valueCaptor.capture(), eq(300L), eq(TimeUnit.SECONDS));
         String[] valueParts = valueCaptor.getValue().split("\\|", -1);
-        assertEquals(2, valueParts.length);
+        assertEquals(3, valueParts.length);
         assertTrue(valueParts[0].matches(
                 "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"));
         assertTrue(valueParts[1].matches("\\d{6}"));
+        assertEquals("0", valueParts[2]);
         verify(emailService).sendVerificationEmail(EMAIL, valueParts[1]);
+        verify(redisRateLimiter).incrementWithExpiry(RATE_LIMIT_KEY, 1800L);
         verify(valueOperations, never()).set(
                 eq("verify:" + EMAIL), anyString(), any(Long.class), any(TimeUnit.class));
         assertEquals(300L, response.getExpiresInSeconds());
@@ -106,22 +111,80 @@ class AuthServiceImplEmailVerificationTest {
                 () -> authService.sendSignupVerificationCode(request));
 
         assertEquals(409, exception.getStatus().value());
+        verify(redisRateLimiter, never()).incrementWithExpiry(
+                anyString(), org.mockito.ArgumentMatchers.anyLong());
         verify(valueOperations, never()).set(
                 anyString(), anyString(), any(Long.class), any(TimeUnit.class));
         verify(emailService, never()).sendVerificationEmail(anyString(), anyString());
     }
 
     @Test
-    void resendingOverwritesNewKeyAndRefreshesTtl() {
-        SignupEmailCodeRequest request = emailCodeRequest("retry@aewol.com");
-        when(memberMapper.existsActiveByEmail(request.getEmail())).thenReturn(false);
+    void firstFiveRequestsUseSameEmailRateLimitForThirtyMinutes() {
+        SignupEmailCodeRequest request = emailCodeRequest(EMAIL);
+        when(memberMapper.existsActiveByEmail(EMAIL)).thenReturn(false);
+        when(redisRateLimiter.incrementWithExpiry(RATE_LIMIT_KEY, 1800L))
+                .thenReturn(1L, 2L, 3L, 4L, 5L);
         when(redisTemplate.opsForValue()).thenReturn(valueOperations);
 
+        for (int requestCount = 1; requestCount <= 5; requestCount++) {
+            SignupEmailCodeResponse response = authService.sendSignupVerificationCode(request);
+            assertEquals(300L, response.getExpiresInSeconds());
+        }
+
+        verify(redisRateLimiter, times(5)).incrementWithExpiry(RATE_LIMIT_KEY, 1800L);
+        verify(valueOperations, times(5)).set(
+                eq(VERIFICATION_KEY), anyString(), eq(300L), eq(TimeUnit.SECONDS));
+        verify(emailService, times(5)).sendVerificationEmail(eq(EMAIL), anyString());
+    }
+
+    @Test
+    void sixthRequestReturnsTooManyRequestsWithoutChangingCurrentOtp() {
+        SignupEmailCodeRequest request = emailCodeRequest(EMAIL);
+        when(memberMapper.existsActiveByEmail(EMAIL)).thenReturn(false);
+        when(redisRateLimiter.incrementWithExpiry(RATE_LIMIT_KEY, 1800L)).thenReturn(6L);
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> authService.sendSignupVerificationCode(request));
+
+        assertEquals(429, exception.getStatus().value());
+        assertEquals("회원가입 인증번호 요청이 너무 많습니다. 30분 후 다시 시도해주세요.",
+                exception.getMessage());
+        verify(redisTemplate, never()).opsForValue();
+        verify(redisTemplate, never()).execute(any(RedisScript.class), anyList(), anyString());
+        verify(emailService, never()).sendVerificationEmail(anyString(), anyString());
+    }
+
+    @Test
+    void resendingOverwritesOtpAndResetsAttemptsWhileKeepingRateLimitWindow() {
+        SignupEmailCodeRequest request = emailCodeRequest("retry@aewol.com");
+        when(memberMapper.existsActiveByEmail(request.getEmail())).thenReturn(false);
+        when(redisRateLimiter.incrementWithExpiry(
+                "signup:verify:request-count:retry@aewol.com", 1800L))
+                .thenReturn(1L, 2L);
+        when(redisTemplate.opsForValue()).thenReturn(valueOperations);
+        when(redisTemplate.execute(
+                any(RedisScript.class), anyList(), anyString(), anyString(), anyString()))
+                .thenReturn(-1L, -1L, -1L);
+
         authService.sendSignupVerificationCode(request);
+        for (int attempt = 1; attempt <= 3; attempt++) {
+            assertThrows(BusinessException.class,
+                    () -> authService.verifySignupEmailCode(
+                            verificationRequest("retry@aewol.com", "000000")));
+        }
         authService.sendSignupVerificationCode(request);
 
+        ArgumentCaptor<String> values = ArgumentCaptor.forClass(String.class);
         verify(valueOperations, times(2)).set(
-                eq("signup:verify:retry@aewol.com"), anyString(), eq(300L), eq(TimeUnit.SECONDS));
+                eq("signup:verify:retry@aewol.com"), values.capture(), eq(300L), eq(TimeUnit.SECONDS));
+        assertNotEquals(values.getAllValues().get(0), values.getAllValues().get(1));
+        for (String value : values.getAllValues()) {
+            String[] parts = value.split("\\|", -1);
+            assertEquals(3, parts.length);
+            assertEquals("0", parts[2]);
+        }
+        verify(redisRateLimiter, times(2)).incrementWithExpiry(
+                "signup:verify:request-count:retry@aewol.com", 1800L);
         verify(emailService, times(2)).sendVerificationEmail(
                 eq("retry@aewol.com"), anyString());
     }
@@ -175,7 +238,8 @@ class AuthServiceImplEmailVerificationTest {
     @Test
     void verifyScriptSuccessReturnsNormallyWithOrderedKeysCodeAndTtl() {
         SignupEmailVerificationRequest request = verificationRequest(EMAIL, "123456");
-        when(redisTemplate.execute(any(RedisScript.class), anyList(), anyString(), anyString()))
+        when(redisTemplate.execute(
+                any(RedisScript.class), anyList(), anyString(), anyString(), anyString()))
                 .thenReturn(1L);
 
         authService.verifySignupEmailCode(request);
@@ -184,12 +248,15 @@ class AuthServiceImplEmailVerificationTest {
                 argThat(script -> {
                     String text = script.getScriptAsString();
                     return text.contains("redis.call('GET', KEYS[1])")
-                            && text.contains("string.sub(stored, delimiter + 1)")
+                            && text.contains("requestId, code, attempts = string.match")
                             && text.contains("code ~= ARGV[1]")
+                            && text.contains("attempts >= tonumber(ARGV[2])")
+                            && text.contains("'KEEPTTL'")
                             && text.contains("redis.call('DEL', KEYS[1])")
-                            && text.contains("redis.call('SET', KEYS[2], stored, 'EX', ARGV[2])");
+                            && text.contains("requestId .. '|' .. code, 'EX', ARGV[3]");
                 }),
-                eq(List.of(VERIFICATION_KEY, COMPLETED_KEY)), eq("123456"), eq("300"));
+                eq(List.of(VERIFICATION_KEY, COMPLETED_KEY)),
+                eq("123456"), eq("5"), eq("300"));
         verify(valueOperations, never()).get(anyString());
         verify(redisTemplate, never()).delete(anyString());
     }
@@ -197,7 +264,8 @@ class AuthServiceImplEmailVerificationTest {
     @Test
     void verifyScriptMissingOrExpiredResultThrowsExistingException() {
         SignupEmailVerificationRequest request = verificationRequest(EMAIL, "123456");
-        when(redisTemplate.execute(any(RedisScript.class), anyList(), anyString(), anyString()))
+        when(redisTemplate.execute(
+                any(RedisScript.class), anyList(), anyString(), anyString(), anyString()))
                 .thenReturn(0L);
 
         BusinessException exception = assertThrows(BusinessException.class,
@@ -210,7 +278,8 @@ class AuthServiceImplEmailVerificationTest {
     @Test
     void verifyScriptMismatchResultThrowsExistingException() {
         SignupEmailVerificationRequest request = verificationRequest(EMAIL, "654321");
-        when(redisTemplate.execute(any(RedisScript.class), anyList(), anyString(), anyString()))
+        when(redisTemplate.execute(
+                any(RedisScript.class), anyList(), anyString(), anyString(), anyString()))
                 .thenReturn(-1L);
 
         BusinessException exception = assertThrows(BusinessException.class,
@@ -218,6 +287,59 @@ class AuthServiceImplEmailVerificationTest {
 
         assertEquals(400, exception.getStatus().value());
         assertTrue(exception.getMessage().contains("일치하지"));
+    }
+
+    @Test
+    void firstFourWrongAttemptsRetainOtpWithoutExtendingTtlOrCompletingVerification() {
+        SignupEmailVerificationRequest request = verificationRequest(EMAIL, "654321");
+        when(redisTemplate.execute(
+                any(RedisScript.class), anyList(), anyString(), anyString(), anyString()))
+                .thenReturn(-1L, -1L, -1L, -1L);
+
+        for (int attempt = 1; attempt <= 4; attempt++) {
+            BusinessException exception = assertThrows(BusinessException.class,
+                    () -> authService.verifySignupEmailCode(request));
+            assertEquals("인증번호가 일치하지 않습니다.", exception.getMessage());
+        }
+
+        ArgumentCaptor<RedisScript<Long>> script = ArgumentCaptor.forClass(RedisScript.class);
+        verify(redisTemplate, times(4)).execute(
+                script.capture(),
+                eq(List.of(VERIFICATION_KEY, COMPLETED_KEY)),
+                eq("654321"), eq("5"), eq("300"));
+        String lua = script.getValue().getScriptAsString();
+        assertTrue(lua.contains("attempts = tonumber(attempts) + 1"));
+        assertTrue(lua.contains("attempts >= tonumber(ARGV[2])"));
+        assertTrue(lua.contains("redis.call('DEL', KEYS[1])"));
+        assertTrue(lua.contains("'KEEPTTL'"));
+        int mismatchBranch = lua.indexOf("if code ~= ARGV[1]");
+        int mismatchReturn = lua.indexOf("return -1", mismatchBranch);
+        int completedWrite = lua.indexOf("redis.call('SET', KEYS[2]");
+        assertTrue(mismatchBranch >= 0 && mismatchReturn > mismatchBranch);
+        assertTrue(completedWrite > mismatchReturn);
+    }
+
+    @Test
+    void fifthWrongAttemptInvalidatesOtpAndLaterCorrectCodeFails() {
+        SignupEmailVerificationRequest wrong = verificationRequest(EMAIL, "654321");
+        SignupEmailVerificationRequest correct = verificationRequest(EMAIL, "123456");
+        when(redisTemplate.execute(
+                any(RedisScript.class), anyList(), anyString(), anyString(), anyString()))
+                .thenReturn(-1L, -1L, -1L, -1L, -1L, 0L);
+
+        for (int attempt = 1; attempt <= 5; attempt++) {
+            BusinessException exception = assertThrows(BusinessException.class,
+                    () -> authService.verifySignupEmailCode(wrong));
+            assertEquals("인증번호가 일치하지 않습니다.", exception.getMessage());
+        }
+        BusinessException invalidated = assertThrows(BusinessException.class,
+                () -> authService.verifySignupEmailCode(correct));
+
+        assertTrue(invalidated.getMessage().contains("만료"));
+        verify(redisTemplate, times(6)).execute(
+                any(RedisScript.class),
+                eq(List.of(VERIFICATION_KEY, COMPLETED_KEY)),
+                anyString(), eq("5"), eq("300"));
     }
 
     private SignupEmailCodeRequest emailCodeRequest(String email) {
