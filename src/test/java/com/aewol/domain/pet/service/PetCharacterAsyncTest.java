@@ -207,4 +207,60 @@ class PetCharacterAsyncTest {
         assertNotNull(service.findJob("member-1", job.getJobId()));
         assertNull(service.findJob("member-2", job.getJobId()));
     }
+
+    /*
+     * 실패 상태를 만들 때 저장소에서 작업을 다시 읽으면, 그 조회가 실패했을 때(Redis 장애·
+     * TTL 만료) 정작 실패를 남기지 못한다. 게다가 그 예외는 executor 안에서 아무도 잡지
+     * 않아 작업이 RUNNING인 채로 남고, 사용자는 끝나지 않는 화면을 본다.
+     */
+    @Test
+    @DisplayName("저장소를 읽지 못해도 실패는 상태로 남는다")
+    void should_recordFailure_evenWhenStoreCannotBeRead() {
+        when(geminiImageClient.generate(any(), anyString(), anyString())).thenReturn(null);
+        // 접수 상태 저장 이후로는 조회가 되지 않는 상황
+        when(jobStore.find(anyString())).thenReturn(null);
+
+        PetCharacterJob job = service(directExecutor()).submit("member-1", "pet-1", photo());
+
+        PetCharacterJob last = saved.get(saved.size() - 1);
+        assertEquals(job.getJobId(), last.getJobId());
+        assertEquals(PetCharacterJob.Status.FAILED, last.getStatus());
+        assertEquals("member-1", last.getMemberId());
+    }
+
+    /*
+     * 상태를 남기는 것마저 실패하면 더 할 수 있는 일이 없다. 그렇더라도 예외가 executor
+     * 밖으로 나가면 안 된다 — 아무도 잡지 않아 스레드만 죽는다.
+     */
+    @Test
+    @DisplayName("실패 상태 저장까지 실패해도 예외를 밖으로 흘리지 않는다")
+    void should_notPropagate_whenSavingFailureAlsoFails() {
+        when(geminiImageClient.generate(any(), anyString(), anyString())).thenReturn(null);
+        doAnswer(invocation -> {
+            PetCharacterJob job = invocation.getArgument(0);
+            saved.add(job);
+            if (job.getStatus() == PetCharacterJob.Status.FAILED) {
+                throw new IllegalStateException("redis down");
+            }
+            return null;
+        }).when(jobStore).save(any());
+
+        assertDoesNotThrow(() -> service(directExecutor()).submit("member-1", "pet-1", photo()));
+    }
+
+    /*
+     * 접수 상태를 남기지 못하면 사용자가 결과를 물어볼 자리가 없다. 시작하지 않고 차감한
+     * 몫을 되돌려야 한다.
+     */
+    @Test
+    @DisplayName("접수 상태를 남기지 못하면 할당량을 되돌리고 거절한다")
+    void should_rollbackQuota_when_acceptedStateCannotBeSaved() {
+        doThrow(new IllegalStateException("redis down")).when(jobStore).save(any());
+
+        assertThrows(BusinessException.class,
+                () -> service(directExecutor()).submit("member-1", "pet-1", photo()));
+
+        verify(rateLimiter).rollback(anyString());
+        verify(geminiImageClient, never()).generate(any(), anyString(), anyString());
+    }
 }
