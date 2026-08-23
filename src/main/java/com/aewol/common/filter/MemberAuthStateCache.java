@@ -21,6 +21,11 @@ import org.springframework.stereotype.Component;
  *
  * <p>Redis가 죽어도 인증은 계속돼야 한다. 조회·저장 실패는 삼키고 DB로 넘어간다 —
  * 캐시는 부하를 줄이는 장치이지 정답의 출처가 아니다.
+ *
+ * <p><b>돌려주는 맵은 DB가 주던 것과 타입까지 같아야 한다.</b> 소비하는 쪽
+ * ({@code JwtAuthenticationFilter})은 {@code is_active}를 Boolean 또는 Number로만 읽는다.
+ * 캐시가 문자열을 돌려주면 예외도 없이 조용히 "비활성"으로 판정돼 인증이 통째로 막힌다.
+ * 캐시 미스인 첫 요청만 통과하고 TTL 동안 전부 401이 되는, 눈에 잘 안 띄는 사고다.
  */
 @Slf4j
 @Component
@@ -51,7 +56,7 @@ public class MemberAuthStateCache {
     }
 
     /**
-     * 활성 상태를 돌려준다. 캐시에 없으면 DB에서 읽어 채운다.
+     * 활성 상태를 돌려준다. 캐시에 없거나 읽을 수 없으면 DB에서 읽어 채운다.
      *
      * @return 회원이 없으면 {@code null}
      * @throws DataAccessException DB 조회 자체가 실패한 경우 — 인증을 통과시키면 안 되므로
@@ -63,7 +68,14 @@ public class MemberAuthStateCache {
             return null;
         }
         if (cached != null) {
-            return decode(cached);
+            Map<String, Object> decoded = decode(cached);
+            if (decoded != null) {
+                return decoded;
+            }
+            // 형식이 깨진 값을 "회원 없음"으로 읽으면 멀쩡한 회원이 인증에 실패한다.
+            // 배포 중 인코딩이 바뀌거나 이전 버전 값이 남은 경우가 여기 걸리므로,
+            // 캐시 미스와 똑같이 취급해 DB를 정답으로 삼는다.
+            log.warn("[AUTH_CACHE_CORRUPT] 인증 캐시 형식이 올바르지 않습니다 — DB로 넘어갑니다. memberId={}", memberId);
         }
 
         Map<String, Object> authState = memberMapper.findAuthStateById(memberId);
@@ -119,26 +131,64 @@ public class MemberAuthStateCache {
      *
      * <p>JSON 직렬화를 쓰지 않는 이유는 필드가 셋뿐이고 매 요청 경로라 가볍게 두기
      * 위해서다. 필드가 늘면 그때 바꾼다.
+     *
+     * <p>드라이버나 매핑 설정에 따라 {@code is_active}는 Boolean으로도 Integer로도,
+     * epoch는 Long으로도 BigDecimal로도 올 수 있다. 받은 타입을 그대로 문자열로 만들면
+     * 그 차이가 캐시에 새겨지므로, 여기서 한 가지 표기로 눌러 담는다.
      */
     private static String encode(Map<String, Object> authState) {
         if (authState == null) {
             return ABSENT;
         }
-        return text(authState.get("is_active")) + "|"
+        return encodeActive(authState.get("is_active")) + "|"
                 + text(authState.get("role")) + "|"
-                + text(authState.get("withdrawn_at_epoch"));
+                + encodeEpoch(authState.get("withdrawn_at_epoch"));
     }
 
+    private static String encodeActive(Object value) {
+        if (value instanceof Boolean) {
+            return ((Boolean) value) ? "1" : "0";
+        }
+        if (value instanceof Number) {
+            return ((Number) value).intValue() == 1 ? "1" : "0";
+        }
+        if (value == null) {
+            return "";
+        }
+        // 알 수 없는 표기는 활성으로 넘기지 않는다. 잘못 통과시키는 쪽이 잘못 막는 쪽보다 나쁘다.
+        return Boolean.parseBoolean(String.valueOf(value)) ? "1" : "0";
+    }
+
+    private static String encodeEpoch(Object value) {
+        if (value == null) {
+            return "";
+        }
+        if (value instanceof Number) {
+            return String.valueOf(((Number) value).longValue());
+        }
+        return String.valueOf(value);
+    }
+
+    /**
+     * @return 형식이 깨졌으면 {@code null} — 부르는 쪽이 캐시 미스로 취급한다
+     */
     private static Map<String, Object> decode(String cached) {
         String[] parts = cached.split("\\|", -1);
         if (parts.length != 3) {
             return null;
         }
-        Map<String, Object> authState = new java.util.HashMap<>();
-        authState.put("is_active", parts[0].isEmpty() ? null : parts[0]);
-        authState.put("role", parts[1].isEmpty() ? null : parts[1]);
-        authState.put("withdrawn_at_epoch", parts[2].isEmpty() ? null : Long.valueOf(parts[2]));
-        return authState;
+        try {
+            Map<String, Object> authState = new java.util.HashMap<>();
+            // DB가 주던 타입 그대로 되돌린다. 문자열로 돌려주면 소비하는 쪽이
+            // 조용히 비활성으로 읽는다.
+            authState.put("is_active", parts[0].isEmpty() ? null : Boolean.valueOf("1".equals(parts[0])));
+            authState.put("role", parts[1].isEmpty() ? null : parts[1]);
+            authState.put("withdrawn_at_epoch", parts[2].isEmpty() ? null : Long.valueOf(parts[2]));
+            return authState;
+        } catch (NumberFormatException e) {
+            // 숫자가 아닌 epoch 하나가 요청을 500으로 떨어뜨리면 안 된다.
+            return null;
+        }
     }
 
     private static String text(Object value) {
