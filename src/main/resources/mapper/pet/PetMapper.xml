@@ -19,9 +19,9 @@
     <!-- pet_id는 BIGINT AUTO_INCREMENT -->
     <insert id="insert" parameterType="map" useGeneratedKeys="true" keyProperty="petId" keyColumn="pet_id">
         INSERT INTO pet (member_id, name, species, breed, birth_date, gender,
-                        weight, neutered, medical_history)
+                        weight, neutered, medical_history, instagram_id)
         VALUES (#{memberId}, #{name}, #{species}, #{breed}, #{birthDate}, #{gender},
-                #{weight}, #{neutered}, #{medicalHistory})
+                #{weight}, #{neutered}, #{medicalHistory}, #{instagramId})
     </insert>
 
     <!-- 소유자 본인의 반려동물만 갱신되도록 member_id를 함께 건다 -->
