@@ -121,9 +121,6 @@ public class MemberServiceImpl implements MemberService {
             throw BusinessException.conflict("이미 탈퇴한 회원입니다.");
         }
 
-        // 캐시를 지우지 않으면 TTL(60초)이 지날 때까지 탈퇴한 회원이 계속 인증된다.
-        authStateCache.evict(memberId);
-
         String provider = providerOf(member);
         if ("LOCAL".equals(provider)) {
             String currentPassword = request != null ? request.getCurrentPassword() : null;
@@ -137,6 +134,7 @@ public class MemberServiceImpl implements MemberService {
             throw BusinessException.conflict("이미 탈퇴한 회원입니다.");
         }
 
+        registerAuthStateInvalidation(memberId);
         registerCredentialCleanup(memberId);
     }
 
@@ -288,6 +286,12 @@ public class MemberServiceImpl implements MemberService {
         int step1 = pairDigits[1] - pairDigits[0];
         int step2 = pairDigits[2] - pairDigits[1];
         return step1 == step2 && Math.abs(step1) == 1;
+    }
+
+    private void registerAuthStateInvalidation(String memberId) {
+        // 커밋 전에 지우면 아직 활성인 DB를 다른 요청이 읽어 그대로 다시 캐싱하고,
+        // 탈퇴한 회원이 TTL(60초) 동안 계속 인증에 성공한다.
+        authStateCache.evictAfterCommit(memberId);
     }
 
     private void registerCredentialCleanup(String memberId) {

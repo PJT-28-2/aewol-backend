@@ -7,6 +7,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DataAccessException;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /**
  * JWT 인증 시 확인하는 회원 활성 상태 캐시.
@@ -84,10 +86,38 @@ public class MemberAuthStateCache {
     }
 
     /**
+     * 트랜잭션이 커밋된 뒤에 캐시를 버린다.
+     *
+     * <p>Redis는 DB 트랜잭션에 참여하지 않는다. 커밋 전에 지우면 아직 예전 상태인 DB를
+     * 다른 요청이 읽어 그대로 다시 캐싱하고, 정작 커밋된 새 상태는 TTL이 다할 때까지
+     * 반영되지 않는다. 탈퇴 경로에서는 방금 탈퇴한 회원이 계속 인증에 성공한다는 뜻이라,
+     * 이 캐시를 무효화하는 이유 자체가 무너진다.
+     *
+     * <p>롤백일 때도 지운다. 헛되이 지우면 DB를 한 번 더 읽을 뿐이지만, 지워야 할 때
+     * 안 지우면 인증 상태가 어긋난다.
+     *
+     * <p>커밋 직후와 다른 요청의 캐시 저장이 겹치는 아주 좁은 구간은 남는다. 이때는
+     * TTL(60초)이 상한이다. 완전히 없애려면 버전 태그나 지연 재삭제가 필요한데,
+     * 이미 TTL을 안전망으로 두고 설계했으므로 여기서는 과하다고 봤다.
+     */
+    public void evictAfterCommit(String memberId) {
+        if (!TransactionSynchronizationManager.isSynchronizationActive()) {
+            // 트랜잭션 밖에서 불렸다면 이미 반영이 끝난 상태다.
+            evict(memberId);
+            return;
+        }
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCompletion(int status) {
+                evict(memberId);
+            }
+        });
+    }
+
+    /**
      * 캐시를 즉시 버린다.
      *
-     * <p>탈퇴·복구처럼 인증 결과를 바꾸는 변경 뒤에 반드시 불러야 한다. 부르지 않으면
-     * TTL이 지날 때까지 예전 상태로 인증된다.
+     * <p>트랜잭션 안에서 상태를 바꾼 뒤라면 {@link #evictAfterCommit(String)}을 써야 한다.
      */
     public void evict(String memberId) {
         if (redisTemplate == null) {

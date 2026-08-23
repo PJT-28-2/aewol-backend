@@ -411,7 +411,8 @@ public class AuthServiceImpl implements AuthService {
             throw BusinessException.conflict("이미 활성화된 회원입니다.");
         }
         // 캐시에 비활성 상태가 남아 있으면 복구된 회원이 그대로 막힌다.
-        authStateCache.evict(String.valueOf(memberId));
+        // 커밋 전에 지우면 아직 비활성인 DB를 다른 요청이 읽어 다시 캐싱하므로 커밋 이후로 미룬다.
+        authStateCache.evictAfterCommit(String.valueOf(memberId));
         notificationSettingMapper.ensureForRecovery(memberId);
         return new KakaoRecovery(memberId, role);
     }
@@ -524,7 +525,7 @@ public class AuthServiceImpl implements AuthService {
             if (memberMapper.restoreLocalMember(restored) != 1) {
                 throw BusinessException.conflict("이미 활성화된 회원입니다.");
             }
-            authStateCache.evict(String.valueOf(memberId));
+            authStateCache.evictAfterCommit(String.valueOf(memberId));
         } catch (DuplicateKeyException e) {
             // 잠금 대기 중 다른 계정이 활성화된 경우에도 DB unique 충돌을 409로 일관되게 응답한다.
             throw BusinessException.conflict("이미 가입된 이메일입니다.");

@@ -175,4 +175,32 @@ class MemberAuthStateCacheTest {
 
         assertEquals("USER", assertDoesNotThrow(() -> cache.find("1")).get("role"));
     }
+
+    // Redis는 DB 트랜잭션에 참여하지 않는다. 커밋 전에 지우면 아직 예전 상태인 DB를
+    // 다른 요청이 읽어 그대로 다시 캐싱하고, 탈퇴가 TTL 동안 반영되지 않는다.
+    @Test
+    @DisplayName("트랜잭션 안에서는 커밋 이후에 캐시를 지운다")
+    void should_deferEviction_untilAfterCommit() {
+        TransactionSynchronizationManager.initSynchronization();
+        try {
+            cache.evictAfterCommit("1");
+
+            verify(redisTemplate, never()).delete(anyString());
+
+            TransactionSynchronizationManager.getSynchronizations()
+                    .forEach(sync -> sync.afterCompletion(TransactionSynchronization.STATUS_COMMITTED));
+
+            verify(redisTemplate).delete("auth:state:1");
+        } finally {
+            TransactionSynchronizationManager.clearSynchronization();
+        }
+    }
+
+    @Test
+    @DisplayName("트랜잭션 밖에서는 즉시 캐시를 지운다")
+    void should_evictImmediately_when_noTransaction() {
+        cache.evictAfterCommit("1");
+
+        verify(redisTemplate).delete("auth:state:1");
+    }
 }
