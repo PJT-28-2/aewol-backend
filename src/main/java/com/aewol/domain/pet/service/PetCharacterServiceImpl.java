@@ -5,6 +5,9 @@ import com.aewol.common.util.ChromaKeyRemover;
 import com.aewol.common.storage.FileStorage;
 import com.aewol.common.util.RedisRateLimiter;
 import com.aewol.domain.pet.dto.PetCharacterResponse;
+import com.aewol.domain.pet.job.PetCharacterJob;
+import com.aewol.domain.pet.job.PetCharacterJobRunner;
+import com.aewol.domain.pet.job.PetCharacterJobStore;
 import com.aewol.domain.pet.mapper.PetMapper;
 import com.aewol.external.gemini.GeminiImageClient;
 import java.io.IOException;
@@ -13,6 +16,7 @@ import java.time.Duration;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.Map;
+import java.util.UUID;
 import java.util.Set;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -42,12 +46,18 @@ public class PetCharacterServiceImpl implements PetCharacterService {
     private static final long MAX_PHOTO_BYTES = 10L * 1024 * 1024;
     private static final String UPLOAD_SUB_DIR = "pet-character";
     private static final String RATE_LIMIT_PREFIX = "petCharacter:";
+    private static final String QUEUE_FULL_MESSAGE =
+            "지금은 만들고 있는 캐릭터가 많아요. 잠시 후 다시 시도해 주세요.";
+    private static final String SHUTDOWN_MESSAGE =
+            "서버 업데이트로 캐릭터 생성을 마치지 못했어요. 다시 시도해 주세요.";
 
     private final GeminiImageClient geminiImageClient;
     private final ChromaKeyRemover chromaKeyRemover;
     private final FileStorage fileStorage;
     private final PetMapper petMapper;
     private final RedisRateLimiter rateLimiter;
+    private final PetCharacterJobRunner jobRunner;
+    private final PetCharacterJobStore jobStore;
 
     /** 호출마다 실제 비용이 나가므로 1인당 하루 횟수를 제한한다. */
     @Value("${external.gemini.image-daily-limit:5}")
@@ -57,7 +67,141 @@ public class PetCharacterServiceImpl implements PetCharacterService {
     private String profilePrompt;
 
     @Override
+    @Deprecated
     public PetCharacterResponse generate(String memberId, String petId, MultipartFile photo) {
+        Prepared prepared = prepare(memberId, petId, photo);
+        return produce(prepared);
+    }
+
+    @Override
+    public PetCharacterJob submit(String memberId, String petId, MultipartFile photo) {
+        Prepared prepared = prepare(memberId, petId, photo);
+        String jobId = UUID.randomUUID().toString();
+
+        PetCharacterJob accepted = PetCharacterJob.builder()
+                .jobId(jobId)
+                .memberId(memberId)
+                .petId(petId)
+                .status(PetCharacterJob.Status.RUNNING)
+                .build();
+        try {
+            jobStore.save(accepted);
+        } catch (RuntimeException e) {
+            // 접수 상태를 남기지 못하면 사용자가 결과를 물어볼 자리가 없다. 시작하지 않고
+            // 차감한 몫을 되돌린다.
+            rateLimiter.rollback(prepared.quotaKey);
+            throw BusinessException.conflict("지금은 캐릭터를 만들 수 없어요. 잠시 후 다시 시도해 주세요.");
+        }
+
+        boolean queued = jobRunner.submit(
+                () -> run(jobId, prepared),
+                () -> discardBeforeStart(jobId, prepared));
+        if (!queued) {
+            // 접수하지 못했으니 방금 차감한 오늘 몫을 되돌린다. 그대로 두면 사용자는
+            // 아무것도 받지 못하고 횟수만 잃는다.
+            rateLimiter.rollback(prepared.quotaKey);
+            recordFailure(jobId, prepared, QUEUE_FULL_MESSAGE, null);
+            throw BusinessException.conflict(QUEUE_FULL_MESSAGE);
+        }
+        return accepted;
+    }
+
+    @Override
+    public PetCharacterJob findJob(String memberId, String jobId) {
+        PetCharacterJob job = jobStore.find(jobId);
+        if (job == null || !job.getMemberId().equals(memberId)) {
+            // 남의 작업은 존재 여부부터 알리지 않는다.
+            return null;
+        }
+        return job;
+    }
+
+    /**
+     * 백그라운드에서 실제 생성을 돌리고 결과를 남긴다.
+     *
+     * <p>여기서 예외가 밖으로 나가면 아무도 잡지 않아 작업이 RUNNING인 채로 남는다.
+     * 사용자는 끝나지 않는 화면을 보게 되므로 실패도 반드시 상태로 남긴다.
+     */
+    private void run(String jobId, Prepared prepared) {
+        try {
+            PetCharacterResponse result = produce(prepared);
+            jobStore.save(PetCharacterJob.builder()
+                    .jobId(jobId)
+                    .memberId(prepared.memberId)
+                    .petId(prepared.petId)
+                    .status(PetCharacterJob.Status.DONE)
+                    .profileImg(result.getProfileImg())
+                    .characterImg(result.getCharacterImg())
+                    .remainingToday(result.getRemainingToday())
+                    .build());
+        } catch (BusinessException e) {
+            recordFailure(jobId, prepared, e.getMessage(), e);
+        } catch (Throwable e) {
+            boolean interrupted = isInterruption(e);
+            if (interrupted) {
+                rateLimiter.rollback(prepared.quotaKey);
+            }
+            recordFailure(jobId, prepared,
+                    interrupted ? SHUTDOWN_MESSAGE : "캐릭터를 만들지 못했어요. 잠시 후 다시 시도해 주세요.",
+                    e);
+            if (e instanceof Error) {
+                // 상태는 남기되 손상됐을 수 있는 executor 스레드는 정상인 것처럼 재사용하지 않는다.
+                throw (Error) e;
+            }
+        }
+    }
+
+    /** 배포 종료로 큐에서 시작하지 못한 작업을 실패로 바꾸고 사용 횟수를 돌려준다. */
+    private void discardBeforeStart(String jobId, Prepared prepared) {
+        rateLimiter.rollback(prepared.quotaKey);
+        recordFailure(jobId, prepared, SHUTDOWN_MESSAGE, null);
+    }
+
+    private boolean isInterruption(Throwable cause) {
+        if (Thread.currentThread().isInterrupted()) {
+            return true;
+        }
+        for (Throwable current = cause; current != null; current = current.getCause()) {
+            if (current instanceof InterruptedException || current instanceof java.io.InterruptedIOException) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * 실패를 상태로 남긴다.
+     *
+     * <p>여기서 예외가 밖으로 나가면 아무도 잡지 않아 작업이 RUNNING인 채로 남는다. 사용자는
+     * 끝나지 않는 화면을 보게 되므로, 상태를 남기지 못하는 상황까지 여기서 삼킨다.
+     *
+     * <p>실패 상태는 접수 때 이미 알고 있는 값으로만 만든다. 저장소에서 다시 읽어 쓰면
+     * 그 조회가 실패했을 때(Redis 장애·TTL 만료) 정작 실패를 남기지 못한다.
+     */
+    private void recordFailure(String jobId, Prepared prepared, String message, Throwable cause) {
+        log.error("[PET_CHARACTER_JOB_FAILED] 캐릭터 생성 실패 - jobId: {}", jobId, cause);
+        try {
+            jobStore.save(PetCharacterJob.builder()
+                    .jobId(jobId)
+                    .memberId(prepared.memberId)
+                    .petId(prepared.petId)
+                    .status(PetCharacterJob.Status.FAILED)
+                    .message(message)
+                    .build());
+        } catch (Throwable e) {
+            // 남기지 못하면 화면은 TTL이 지나 작업이 사라질 때까지 기다린다. 더 할 수 있는
+            // 일이 없으므로 조사할 수 있게 남기고 끝낸다.
+            log.error("[PET_CHARACTER_JOB_STATE_LOST] 실패 상태를 남기지 못했습니다. jobId: {}", jobId, e);
+        }
+    }
+
+    /**
+     * 요청을 받아들일 수 있는지 확인하고 생성에 필요한 것만 남긴다.
+     *
+     * <p>사진은 여기서 바이트로 읽어 둔다. {@code MultipartFile}은 요청에 매여 있어 응답이
+     * 끝난 뒤 백그라운드에서 읽으면 이미 정리된 임시 파일을 보게 된다.
+     */
+    private Prepared prepare(String memberId, String petId, MultipartFile photo) {
         requireMemberId(memberId);
         Map<String, Object> pet = petMapper.findByIdAndMemberId(petId, memberId);
         if (pet == null) {
@@ -68,13 +212,24 @@ public class PetCharacterServiceImpl implements PetCharacterService {
             throw new BusinessException("AI 이미지 생성이 아직 준비되지 않았어요.");
         }
 
-        long used = consumeDailyQuota(memberId);
+        String quotaKey = quotaKey(memberId);
+        long used = consumeDailyQuota(quotaKey);
 
-        byte[] source = readBytes(photo);
-        String mimeType = photo.getContentType();
+        return new Prepared(memberId, petId, pet, readBytes(photo), photo.getContentType(), used, quotaKey);
+    }
+
+    /** 준비된 재료로 실제 이미지를 만든다. 20~25초가 걸린다. */
+    private PetCharacterResponse produce(Prepared p) {
+        String memberId = p.memberId;
+        String petId = p.petId;
+        Map<String, Object> pet = p.pet;
+        byte[] source = p.source;
+        String mimeType = p.mimeType;
+        long used = p.used;
 
         // 1단계 — 사진에서 전신 캐릭터를 만든다. 배경은 초록 단색으로 받는다.
         byte[] fullbodyRaw = geminiImageClient.generate(source, mimeType, prompt(true));
+        failIfInterrupted();
         if (fullbodyRaw == null) {
             throw new BusinessException("캐릭터를 만들지 못했어요. 다른 사진으로 다시 시도해 주세요.");
         }
@@ -83,6 +238,7 @@ public class PetCharacterServiceImpl implements PetCharacterService {
         // 배경을 빼기 전 원본을 넣는다. 투명 PNG를 입력하면 모델이 투명 영역을 검게
         // 받아들여 엉뚱한 색 배경을 만들고, 그러면 크로마키가 걸리지 않는다.
         byte[] profileRaw = geminiImageClient.generate(fullbodyRaw, "image/png", prompt(false));
+        failIfInterrupted();
         if (profileRaw == null) {
             // 얼굴 생성만 실패하면 전신 이미지라도 남긴다.
             log.warn("[PET_CHARACTER_PROFILE_FAILED] 프로필 생성 실패 - petId: {}", petId);
@@ -98,6 +254,7 @@ public class PetCharacterServiceImpl implements PetCharacterService {
 
             // UPDATE 한 문장이라 별도 트랜잭션이 필요 없다. 같은 클래스 안에서 @Transactional
             // 메서드를 직접 부르면 프록시를 거치지 않아 어차피 적용되지도 않는다.
+            failIfInterrupted();
             if (petMapper.updateCharacterImages(petId, memberId, profileKey, characterKey) != 1) {
                 throw BusinessException.notFound("반려동물을 찾을 수 없습니다.");
             }
@@ -120,8 +277,18 @@ public class PetCharacterServiceImpl implements PetCharacterService {
                 .build();
     }
 
-    private long consumeDailyQuota(String memberId) {
-        String key = RATE_LIMIT_PREFIX + memberId + ":" + LocalDate.now();
+    /** 외부 클라이언트가 인터럽트를 예외로 바꾸지 않고 반환해도 종료 요청을 놓치지 않는다. */
+    private void failIfInterrupted() {
+        if (Thread.currentThread().isInterrupted()) {
+            throw new GenerationInterruptedException();
+        }
+    }
+
+    private String quotaKey(String memberId) {
+        return RATE_LIMIT_PREFIX + memberId + ":" + LocalDate.now();
+    }
+
+    private long consumeDailyQuota(String key) {
         long count = rateLimiter.incrementWithExpiry(key, secondsUntilMidnight());
         if (count > dailyLimit) {
             throw BusinessException.conflict(
@@ -210,6 +377,34 @@ public class PetCharacterServiceImpl implements PetCharacterService {
     private void requireMemberId(String memberId) {
         if (memberId == null || memberId.isBlank()) {
             throw BusinessException.unauthorized("로그인이 필요합니다.");
+        }
+    }
+
+    /** 요청 스레드에서 준비를 마친 재료. 백그라운드로 그대로 넘어간다. */
+    private static class Prepared {
+        final String memberId;
+        final String petId;
+        final Map<String, Object> pet;
+        final byte[] source;
+        final String mimeType;
+        final long used;
+        final String quotaKey;
+
+        Prepared(String memberId, String petId, Map<String, Object> pet,
+                 byte[] source, String mimeType, long used, String quotaKey) {
+            this.memberId = memberId;
+            this.petId = petId;
+            this.pet = pet;
+            this.source = source;
+            this.mimeType = mimeType;
+            this.used = used;
+            this.quotaKey = quotaKey;
+        }
+    }
+
+    private static final class GenerationInterruptedException extends RuntimeException {
+        private GenerationInterruptedException() {
+            super("캐릭터 생성 스레드가 종료됐습니다.");
         }
     }
 }

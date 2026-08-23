@@ -137,6 +137,12 @@ dependencies {
     // 쓸 수 없었다. logback으로 바꾸고 설정은 logback.xml에 둔다.
     // (Spring Boot가 아니라 logback-spring.xml의 프로파일 기능은 쓸 수 없어 환경변수로 제어한다)
     runtimeOnly("ch.qos.logback:logback-classic:1.2.13")
+
+    // 메트릭. Spring Boot가 아니라 actuator 자동 설정이 없어 직접 배선한다.
+    // 1.12.x를 쓰는 이유는 Spring Framework 5.3(javax.servlet) 환경과 맞물리는
+    // 마지막 계열이기 때문이다. 1.13부터는 Prometheus 클라이언트가 갈리며 설정이 달라진다.
+    implementation("io.micrometer:micrometer-core:1.12.5")
+    implementation("io.micrometer:micrometer-registry-prometheus:1.12.5")
     // 톰캣·MyBatis 등이 쓰는 다른 로깅 API를 slf4j로 모아 한 곳에서 제어한다.
     // jcl-over-slf4j는 클래스를 대신 제공하는 방식이라 두기만 하면 되지만,
     // jul-to-slf4j는 코드에서 SLF4JBridgeHandler.install()을 불러야 동작한다.

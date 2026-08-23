@@ -22,6 +22,8 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.mock.web.MockMultipartFile;
+import com.aewol.domain.pet.job.PetCharacterJobRunner;
+import com.aewol.domain.pet.job.PetCharacterJobStore;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.web.multipart.MultipartFile;
 
@@ -33,14 +35,30 @@ class PetCharacterServiceImplTest {
     @Mock FileStorage fileStorage;
     @Mock PetMapper petMapper;
     @Mock RedisRateLimiter rateLimiter;
+    @Mock PetCharacterJobStore jobStore;
 
     private PetCharacterServiceImpl service;
 
     @BeforeEach
     void setUp() {
+        // 같은 스레드에서 곧바로 실행하는 러너를 넣어 비동기 경로도 그대로 검증한다.
         service = new PetCharacterServiceImpl(
-                geminiImageClient, chromaKeyRemover, fileStorage, petMapper, rateLimiter);
+                geminiImageClient, chromaKeyRemover, fileStorage, petMapper, rateLimiter,
+                new PetCharacterJobRunner(directExecutor()), jobStore);
         ReflectionTestUtils.setField(service, "dailyLimit", 5);
+    }
+
+    /** 테스트에서는 백그라운드로 넘기지 않고 같은 스레드에서 바로 돌린다. */
+    private static java.util.concurrent.ExecutorService directExecutor() {
+        return new java.util.concurrent.AbstractExecutorService() {
+            private volatile boolean shutdown;
+            @Override public void shutdown() { shutdown = true; }
+            @Override public java.util.List<Runnable> shutdownNow() { shutdown = true; return java.util.List.of(); }
+            @Override public boolean isShutdown() { return shutdown; }
+            @Override public boolean isTerminated() { return shutdown; }
+            @Override public boolean awaitTermination(long timeout, java.util.concurrent.TimeUnit unit) { return true; }
+            @Override public void execute(Runnable command) { command.run(); }
+        };
     }
 
     @Test

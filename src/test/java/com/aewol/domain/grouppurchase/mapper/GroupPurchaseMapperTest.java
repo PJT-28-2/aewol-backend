@@ -61,6 +61,10 @@ class GroupPurchaseMapperTest {
                     status VARCHAR(20) NOT NULL DEFAULT 'OPEN',
                     current_quantity INT NOT NULL DEFAULT 0,
                     target_quantity INT NOT NULL DEFAULT 1,
+                    -- V49: 정렬 전용 파생 컬럼. 매 요청 계산하지 않고 쓰기 시점(insertGroupPurchase
+                    -- 픽스처가 여기서는 그 역할)에 미리 값을 넣어둔다는 게 요점이라, 이 테이블도
+                    -- DB가 자동 계산해주지 않고 애플리케이션이 채워야 한다.
+                    is_urgent_active TINYINT NOT NULL DEFAULT 0,
                     deadline DATETIME NULL,
                     created_at DATETIME NOT NULL,
                     PRIMARY KEY (gp_id)
@@ -134,7 +138,7 @@ class GroupPurchaseMapperTest {
         jdbcTemplate.update("UPDATE group_purchase SET image = ? WHERE gp_id = ?",
                 "group-purchase/sample.png", gpId);
 
-        List<Map<String, Object>> result = findList(null, null, null, 10, 0);
+        List<Map<String, Object>> result = findList(null, null, null, 10);
 
         assertEquals("group-purchase/sample.png", result.get(0).get("image"));
     }
@@ -145,7 +149,7 @@ class GroupPurchaseMapperTest {
         long corruptedGpId = insertGroupPurchase(99L, "OPEN", 0, 0, LocalDateTime.now().plusDays(5));
         long normalGpId = insertGroupPurchase(99L, "OPEN", 3, 10, LocalDateTime.now().plusDays(5));
 
-        List<Map<String, Object>> result = findList(null, null, null, 10, 0);
+        List<Map<String, Object>> result = findList(null, null, null, 10);
 
         assertEquals(1, result.size());
         assertEquals(normalGpId, ((Number) result.get(0).get("gp_id")).longValue());
@@ -157,7 +161,7 @@ class GroupPurchaseMapperTest {
     void should_excludeNonPositiveTargetQuantity_fromFindList_underOpenFilter() {
         insertGroupPurchase(99L, "OPEN", 0, 0, LocalDateTime.now().plusDays(5));
 
-        assertEquals(0, findList("OPEN", null, null, 10, 0).size());
+        assertEquals(0, findList("OPEN", null, null, 10).size());
     }
 
     @Test
@@ -165,8 +169,8 @@ class GroupPurchaseMapperTest {
     void should_matchCompletedFilterOnFindList_notOpenFilter_when_targetReachedBeforeDeadline() {
         insertGroupPurchase(99L, "OPEN", 10, 10, LocalDateTime.now().plusDays(5));
 
-        assertEquals(1, findList("COMPLETED", null, null, 10, 0).size());
-        assertEquals(0, findList("OPEN", null, null, 10, 0).size());
+        assertEquals(1, findList("COMPLETED", null, null, 10).size());
+        assertEquals(0, findList("OPEN", null, null, 10).size());
     }
 
     @Test
@@ -174,9 +178,9 @@ class GroupPurchaseMapperTest {
     void should_matchFailedFilterOnFindList_when_deadlinePassedAndTargetNotReached() {
         insertGroupPurchase(99L, "OPEN", 3, 10, LocalDateTime.now().minusDays(1));
 
-        assertEquals(1, findList("FAILED", null, null, 10, 0).size());
-        assertEquals(0, findList("OPEN", null, null, 10, 0).size());
-        assertEquals(0, findList("COMPLETED", null, null, 10, 0).size());
+        assertEquals(1, findList("FAILED", null, null, 10).size());
+        assertEquals(0, findList("OPEN", null, null, 10).size());
+        assertEquals(0, findList("COMPLETED", null, null, 10).size());
     }
 
     @Test
@@ -186,7 +190,7 @@ class GroupPurchaseMapperTest {
         long open = insertGroupPurchase(99L, "OPEN", 3, 10, now.plusDays(5), now.minusDays(3));
         long closed = insertGroupPurchase(99L, "OPEN", 10, 10, now.plusDays(1), now.minusHours(1));
 
-        List<Map<String, Object>> result = findList(null, null, null, 10, 0);
+        List<Map<String, Object>> result = findList(null, null, null, 10);
 
         assertEquals(
                 List.of(open, closed),
@@ -201,7 +205,7 @@ class GroupPurchaseMapperTest {
         long soonDeadline = insertGroupPurchase(99L, "OPEN", 3, 10, now.plusDays(1), now.minusDays(5));
         long laterDeadline = insertGroupPurchase(99L, "OPEN", 3, 10, now.plusDays(5), now.minusHours(1));
 
-        List<Map<String, Object>> result = findList(null, null, null, 10, 0);
+        List<Map<String, Object>> result = findList(null, null, null, 10);
 
         assertEquals(
                 List.of(soonDeadline, laterDeadline),
@@ -216,7 +220,7 @@ class GroupPurchaseMapperTest {
         long older = insertGroupPurchase(99L, "OPEN", 3, 10, sameDeadline, now.minusDays(3));
         long newer = insertGroupPurchase(99L, "OPEN", 3, 10, sameDeadline, now.minusHours(1));
 
-        List<Map<String, Object>> result = findList(null, null, null, 10, 0);
+        List<Map<String, Object>> result = findList(null, null, null, 10);
 
         assertEquals(
                 List.of(newer, older),
@@ -231,7 +235,7 @@ class GroupPurchaseMapperTest {
         long first = insertGroupPurchase(99L, "OPEN", 3, 10, sameDeadline, now);
         long second = insertGroupPurchase(99L, "OPEN", 3, 10, sameDeadline, now);
 
-        List<Map<String, Object>> result = findList("OPEN", null, null, 10, 0);
+        List<Map<String, Object>> result = findList("OPEN", null, null, 10);
 
         assertEquals(
                 List.of(second, first),
@@ -264,7 +268,7 @@ class GroupPurchaseMapperTest {
         long soonest = insertGroupPurchase(99L, "OPEN", 0, 10, now.plusHours(2), now.minusDays(3));
         long soon = insertGroupPurchase(99L, "OPEN", 0, 10, now.plusDays(1), now.minusDays(2));
 
-        List<Map<String, Object>> result = findList("OPEN", null, null, 10, 0, "DEADLINE_ASC");
+        List<Map<String, Object>> result = findList("OPEN", null, null, 10, "DEADLINE_ASC");
 
         assertEquals(
                 List.of(soonest, soon, later),
@@ -499,6 +503,92 @@ class GroupPurchaseMapperTest {
 
         assertEquals(1, cancelGroupPurchase(gpId));
         assertEquals("CANCELLED", findStatus(gpId));
+        // V49: 취소된 게시글은 findList의 status != 'CANCELLED' 조건에서 어차피 제외되지만,
+        // is_urgent_active도 같이 0으로 내려서 컬럼값 자체가 항상 정확하게 유지되게 한다.
+        assertEquals(0, findIsUrgentActive(gpId));
+    }
+
+    @Test
+    @DisplayName("참여로 목표 수량에 도달하면 updateQuantity가 같은 문장 안에서 is_urgent_active를 0으로 내린다")
+    void should_deactivateUrgentFlag_when_updateQuantityReachesTarget() {
+        long gpId = insertGroupPurchase(99L, "OPEN", 8, 10, LocalDateTime.now().plusDays(5));
+
+        assertEquals(1, updateQuantity(gpId, 2));
+
+        assertEquals(10, findCurrentQuantity(gpId));
+        assertEquals(0, findIsUrgentActive(gpId));
+    }
+
+    @Test
+    @DisplayName("참여 후에도 목표 수량에 못 미치면 updateQuantity는 is_urgent_active를 1로 유지한다")
+    void should_keepUrgentFlagActive_when_updateQuantityDoesNotReachTarget() {
+        long gpId = insertGroupPurchase(99L, "OPEN", 3, 10, LocalDateTime.now().plusDays(5));
+
+        assertEquals(1, updateQuantity(gpId, 2));
+
+        assertEquals(5, findCurrentQuantity(gpId));
+        assertEquals(1, findIsUrgentActive(gpId));
+    }
+
+    @Test
+    @DisplayName("deactivateExpiredUrgentFlags는 마감이 지난 is_urgent_active=1 행만 0으로 내린다")
+    void should_deactivateOnlyExpiredUrgentFlags_onBatchUpdate() {
+        LocalDateTime now = LocalDateTime.now();
+        long expiredButStillFlagged = insertGroupPurchase(99L, "OPEN", 3, 10, now.minusDays(1));
+        // insertGroupPurchase 픽스처는 삽입 시점 기준으로 is_urgent_active를 계산하므로, 이미
+        // 마감이 지난 행은 여기서도 정상적으로 0으로 들어간다. 배치가 "잘못 켜진 채로 남아있는"
+        // 행만 고친다는 걸 확인하려면 강제로 1을 넣어 시간이 지나도록 방치된 상태를 흉내 내야 한다.
+        jdbcTemplate.update("UPDATE group_purchase SET is_urgent_active = 1 WHERE gp_id = ?", expiredButStillFlagged);
+        long stillOpen = insertGroupPurchase(99L, "OPEN", 3, 10, now.plusDays(5));
+
+        int updated = deactivateExpiredUrgentFlags();
+
+        assertEquals(1, updated);
+        assertEquals(0, findIsUrgentActive(expiredButStillFlagged));
+        assertEquals(1, findIsUrgentActive(stillOpen));
+    }
+
+    @Test
+    @DisplayName("커서를 넘기면 그 다음 행부터 이어서 조회한다 — 이미 받은 행을 중복으로 다시 받지 않는다")
+    void should_continueFromCursor_withoutDuplicatingPreviousRows() {
+        LocalDateTime now = LocalDateTime.now();
+        long first = insertGroupPurchase(99L, "OPEN", 3, 10, now.plusDays(1), now.minusDays(3));
+        long second = insertGroupPurchase(99L, "OPEN", 3, 10, now.plusDays(2), now.minusDays(2));
+        long third = insertGroupPurchase(99L, "OPEN", 3, 10, now.plusDays(3), now.minusDays(1));
+
+        List<Map<String, Object>> firstPage = findList("OPEN", null, null, 2);
+        assertEquals(List.of(first, second),
+                firstPage.stream().map(row -> ((Number) row.get("gp_id")).longValue()).toList());
+        Map<String, Object> cursorRow = firstPage.get(firstPage.size() - 1);
+
+        List<Map<String, Object>> secondPage = findListAfterCursor("OPEN", cursorRow, 2);
+
+        assertEquals(List.of(third),
+                secondPage.stream().map(row -> ((Number) row.get("gp_id")).longValue()).toList());
+    }
+
+    @Test
+    @DisplayName("배포 전환 기간 호환: legacyOffset이 있으면 커서 없이도 새 정렬 기준(is_urgent_active 포함)으로 OFFSET 페이지네이션이 동작한다")
+    void should_paginateWithLegacyOffset_usingNewSortOrder() {
+        LocalDateTime now = LocalDateTime.now();
+        long first = insertGroupPurchase(99L, "OPEN", 3, 10, now.plusDays(1), now.minusDays(3));
+        long second = insertGroupPurchase(99L, "OPEN", 3, 10, now.plusDays(2), now.minusDays(2));
+        long third = insertGroupPurchase(99L, "OPEN", 3, 10, now.plusDays(3), now.minusDays(1));
+
+        List<Map<String, Object>> firstPage = findListWithLegacyOffset(null, 2, 0);
+        List<Map<String, Object>> secondPage = findListWithLegacyOffset(null, 2, 2);
+
+        assertEquals(List.of(first, second),
+                firstPage.stream().map(row -> ((Number) row.get("gp_id")).longValue()).toList());
+        assertEquals(List.of(third),
+                secondPage.stream().map(row -> ((Number) row.get("gp_id")).longValue()).toList());
+    }
+
+    private List<Map<String, Object>> findListWithLegacyOffset(String status, int limit, int legacyOffset) {
+        try (SqlSession session = sqlSessionFactory.openSession(true)) {
+            return session.getMapper(GroupPurchaseMapper.class)
+                    .findList(status, null, null, limit, null, null, null, null, legacyOffset, null);
+        }
     }
 
     @Test
@@ -591,6 +681,23 @@ class GroupPurchaseMapperTest {
                 "SELECT status FROM group_purchase WHERE gp_id = ?", String.class, gpId);
     }
 
+    private int findIsUrgentActive(long gpId) {
+        return jdbcTemplate.queryForObject(
+                "SELECT is_urgent_active FROM group_purchase WHERE gp_id = ?", Integer.class, gpId);
+    }
+
+    private int updateQuantity(long gpId, int quantity) {
+        try (SqlSession session = sqlSessionFactory.openSession(true)) {
+            return session.getMapper(GroupPurchaseMapper.class).updateQuantity(String.valueOf(gpId), quantity);
+        }
+    }
+
+    private int deactivateExpiredUrgentFlags() {
+        try (SqlSession session = sqlSessionFactory.openSession(true)) {
+            return session.getMapper(GroupPurchaseMapper.class).deactivateExpiredUrgentFlags();
+        }
+    }
+
     private Map<String, Object> findParticipant(long gpId, long memberId) {
         try (SqlSession session = sqlSessionFactory.openSession(true)) {
             return session.getMapper(GroupPurchaseMapper.class).findParticipant(String.valueOf(gpId), String.valueOf(memberId));
@@ -634,15 +741,39 @@ class GroupPurchaseMapperTest {
         }
     }
 
-    private List<Map<String, Object>> findList(String status, String keyword, String category, int limit, int offset) {
-        return findList(status, keyword, category, limit, offset, null);
+    private List<Map<String, Object>> findList(String status, String keyword, String category, int limit) {
+        return findList(status, keyword, category, limit, null);
     }
 
-    private List<Map<String, Object>> findList(String status, String keyword, String category, int limit, int offset,
-                                                 String sort) {
+    // 커서(keyset) 페이지네이션 도입 후에도 이 파일의 모든 테스트는 첫 페이지(커서 없음)만
+    // 검증한다 — 커서 이어받기 자체는 GroupPurchaseServiceImplTest(인코딩/디코딩)와
+    // GroupPurchaseCursorTest에서 다룬다.
+    private List<Map<String, Object>> findList(String status, String keyword, String category, int limit, String sort) {
         try (SqlSession session = sqlSessionFactory.openSession(true)) {
-            return session.getMapper(GroupPurchaseMapper.class).findList(status, keyword, category, limit, offset, sort);
+            return session.getMapper(GroupPurchaseMapper.class)
+                    .findList(status, keyword, category, limit, null, null, null, null, null, sort);
         }
+    }
+
+    /** cursorRow는 이전 페이지의 마지막 행(findList 원본 결과 Map)이다 — 실제 서비스가 GroupPurchaseCursor로
+     *  인코딩/디코딩하는 것과 동일한 필드(is_urgent_active, deadline, created_at, gp_id)를 그대로 넘긴다. */
+    private List<Map<String, Object>> findListAfterCursor(String status, Map<String, Object> cursorRow, int limit) {
+        try (SqlSession session = sqlSessionFactory.openSession(true)) {
+            return session.getMapper(GroupPurchaseMapper.class).findList(status, null, null, limit,
+                    ((Number) cursorRow.get("is_urgent_active")).intValue(),
+                    toLocalDateTime(cursorRow.get("deadline")),
+                    toLocalDateTime(cursorRow.get("created_at")),
+                    ((Number) cursorRow.get("gp_id")).longValue(),
+                    null, null);
+        }
+    }
+
+    /** H2가 DATETIME 컬럼을 java.sql.Timestamp로 돌려주는 경우가 있어(드라이버/버전에 따라 다름) 방어적으로 변환한다. */
+    private static LocalDateTime toLocalDateTime(Object value) {
+        if (value instanceof LocalDateTime) {
+            return (LocalDateTime) value;
+        }
+        return ((java.sql.Timestamp) value).toLocalDateTime();
     }
 
     private long insertGroupPurchase(long memberId, String status, int currentQuantity, int targetQuantity,
@@ -652,20 +783,27 @@ class GroupPurchaseMapperTest {
 
     private long insertGroupPurchase(long memberId, String status, int currentQuantity, int targetQuantity,
                                       LocalDateTime deadline, LocalDateTime createdAt) {
+        // is_urgent_active는 GroupPurchaseMapper.xml의 insert가 실제로 넣는 규칙과 동일하게
+        // 여기서도 직접 계산해 채운다 — production 코드에서는 항상 생성 시점에 1이지만(등록
+        // 검증상 current=0<target, deadline은 미래), 이 픽스처는 임의의 current/target/deadline
+        // 조합으로 과거 상태를 흉내 내야 해서 매번 다시 계산해야 한다.
+        boolean urgentActive = currentQuantity < targetQuantity
+                && (deadline == null || !deadline.isBefore(LocalDateTime.now()));
         KeyHolder keyHolder = new GeneratedKeyHolder();
         jdbcTemplate.update(connection -> {
             PreparedStatement statement = connection.prepareStatement(
                     "INSERT INTO group_purchase "
-                            + "(member_id, product_name, status, current_quantity, target_quantity, deadline, created_at) "
-                            + "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                            + "(member_id, product_name, status, current_quantity, target_quantity, is_urgent_active, deadline, created_at) "
+                            + "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                     Statement.RETURN_GENERATED_KEYS);
             statement.setLong(1, memberId);
             statement.setString(2, "테스트 상품");
             statement.setString(3, status);
             statement.setInt(4, currentQuantity);
             statement.setInt(5, targetQuantity);
-            statement.setObject(6, deadline);
-            statement.setObject(7, createdAt);
+            statement.setInt(6, urgentActive ? 1 : 0);
+            statement.setObject(7, deadline);
+            statement.setObject(8, createdAt);
             return statement;
         }, keyHolder);
         return keyHolder.getKey().longValue();

@@ -54,7 +54,7 @@ class SpendingInsightCollectorTest {
                         Map.of("category", "FOOD", "amount", BigDecimal.valueOf(70_000)),
                         Map.of("category", "SNACK", "amount", BigDecimal.valueOf(30_000))),
                 BigDecimal.valueOf(100_000));
-        when(groupPurchaseService.list(eq("m1"), eq(GroupPurchaseStatus.OPEN), eq(null), eq("사료"), eq(0), anyInt(), any()))
+        when(groupPurchaseService.list(eq("m1"), eq(GroupPurchaseStatus.OPEN), eq(null), eq("사료"), eq(null), anyInt(), any()))
                 .thenReturn(GroupPurchaseListResponse.builder().items(List.of()).hasNext(false).build());
 
         InsightCard card = collector.collect("m1", "p1");
@@ -78,7 +78,7 @@ class SpendingInsightCollectorTest {
                 .productName("사료 5kg")
                 .category("사료")
                 .build();
-        when(groupPurchaseService.list("m1", GroupPurchaseStatus.OPEN, null, "사료", 0, 3, "DEADLINE_ASC"))
+        when(groupPurchaseService.list("m1", GroupPurchaseStatus.OPEN, null, "사료", null, 3, "DEADLINE_ASC"))
                 .thenReturn(GroupPurchaseListResponse.builder().items(List.of(product)).hasNext(false).build());
 
         InsightCard card = collector.collect("m1", "p1");
@@ -95,13 +95,13 @@ class SpendingInsightCollectorTest {
                 null,
                 List.of(Map.of("category", "SUPPLIES", "amount", BigDecimal.valueOf(30_000))),
                 BigDecimal.valueOf(30_000));
-        when(groupPurchaseService.list(any(), any(), any(), any(), anyInt(), anyInt(), any()))
+        when(groupPurchaseService.list(any(), any(), any(), any(), any(), anyInt(), any()))
                 .thenReturn(GroupPurchaseListResponse.builder().items(List.of()).hasNext(false).build());
 
         collector.collect("m1", "p1");
 
         org.mockito.Mockito.verify(groupPurchaseService)
-                .list("m1", GroupPurchaseStatus.OPEN, null, "용품", 0, 3, "DEADLINE_ASC");
+                .list("m1", GroupPurchaseStatus.OPEN, null, "용품", null, 3, "DEADLINE_ASC");
     }
 
     @Test
@@ -126,7 +126,7 @@ class SpendingInsightCollectorTest {
                 null,
                 List.of(Map.of("category", "SNACK", "amount", BigDecimal.valueOf(20_000))),
                 BigDecimal.valueOf(20_000));
-        when(groupPurchaseService.list("m1", GroupPurchaseStatus.OPEN, null, "간식", 0, 3, "DEADLINE_ASC"))
+        when(groupPurchaseService.list("m1", GroupPurchaseStatus.OPEN, null, "간식", null, 3, "DEADLINE_ASC"))
                 .thenThrow(new RuntimeException("boom"));
 
         InsightCard card = collector.collect("m1", "p1");
@@ -164,7 +164,7 @@ class SpendingInsightCollectorTest {
                         Map.of("category", "SNACK", "amount", BigDecimal.valueOf(20_000)),
                         Map.of("category", "HOSPITAL", "amount", BigDecimal.valueOf(10_000))),
                 BigDecimal.valueOf(100_000));
-        when(groupPurchaseService.list(any(), any(), any(), any(), anyInt(), anyInt(), any()))
+        when(groupPurchaseService.list(any(), any(), any(), any(), any(), anyInt(), any()))
                 .thenReturn(GroupPurchaseListResponse.builder().items(List.of()).hasNext(false).build());
 
         InsightCard card = collector.collect("m1", "p1");
@@ -190,7 +190,7 @@ class SpendingInsightCollectorTest {
                         Map.of("category", "SNACK", "amount", BigDecimal.ONE),
                         Map.of("category", "HOSPITAL", "amount", BigDecimal.ONE)),
                 BigDecimal.valueOf(3));
-        when(groupPurchaseService.list(any(), any(), any(), any(), anyInt(), anyInt(), any()))
+        when(groupPurchaseService.list(any(), any(), any(), any(), any(), anyInt(), any()))
                 .thenReturn(GroupPurchaseListResponse.builder().items(List.of()).hasNext(false).build());
 
         InsightCard card = collector.collect("m1", "p1");
@@ -206,7 +206,7 @@ class SpendingInsightCollectorTest {
         givenBreakdown(null,
                 List.of(Map.of("category", "FOOD", "amount", BigDecimal.valueOf(10_000))),
                 BigDecimal.valueOf(10_000));
-        when(groupPurchaseService.list(any(), any(), any(), any(), anyInt(), anyInt(), any()))
+        when(groupPurchaseService.list(any(), any(), any(), any(), any(), anyInt(), any()))
                 .thenReturn(GroupPurchaseListResponse.builder().items(List.of()).hasNext(false).build());
         InsightCard foodCard = collector.collect("m1", "p1");
 
@@ -232,7 +232,7 @@ class SpendingInsightCollectorTest {
                         Map.of("category", "INSURANCE", "amount", BigDecimal.valueOf(3_000)),
                         Map.of("category", "DONATION", "amount", BigDecimal.valueOf(2_000))),
                 BigDecimal.valueOf(100_000));
-        when(groupPurchaseService.list(any(), any(), any(), any(), anyInt(), anyInt(), any()))
+        when(groupPurchaseService.list(any(), any(), any(), any(), any(), anyInt(), any()))
                 .thenReturn(GroupPurchaseListResponse.builder().items(List.of()).hasNext(false).build());
 
         InsightCard card = collector.collect("m1", "p1");
@@ -252,7 +252,7 @@ class SpendingInsightCollectorTest {
                 null,
                 List.of(Map.of("category", "FOOD", "amount", BigDecimal.valueOf(10_000))),
                 BigDecimal.valueOf(10_000));
-        when(groupPurchaseService.list(any(), any(), any(), any(), anyInt(), anyInt(), any()))
+        when(groupPurchaseService.list(any(), any(), any(), any(), any(), anyInt(), any()))
                 .thenReturn(GroupPurchaseListResponse.builder().items(List.of()).hasNext(false).build());
 
         InsightCard card = collector.collect("m1", "p1");

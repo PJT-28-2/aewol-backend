@@ -1,0 +1,13 @@
+-- V48: 공동구매 키워드 검색을 FULLTEXT(ngram)로 교체하기 위한 인덱스.
+--
+-- product_name에는 인덱스가 없고, 기존 검색은 LIKE CONCAT('%', #{keyword}, '%')라 앞부분
+-- 와일드카드 때문에 인덱스를 만들어도 옵티마이저가 탈 수 없다. 항상 풀스캔이다
+-- (docs/group-purchase-list-search-perf-improvement.md 실측: 키워드 검색 avg 259.70ms).
+--
+-- 기본 FULLTEXT 파서는 공백으로 토큰을 나누는데 한글 상품명은 공백으로 단어가 갈리지
+-- 않아 매칭이 부정확하다. ngram 파서는 N글자 단위로 겹치는 조각을 색인해 공백과 무관하게
+-- 부분 일치를 지원하므로 한글 검색에는 ngram이 필요하다.
+--
+-- ngram_token_size 기본값 2 — 한 글자 검색어는 색인 대상이 아니라 매칭되지 않는다.
+-- 애플리케이션(GroupPurchaseServiceImpl)에서 최소 2자 이상만 키워드로 허용한다.
+CREATE FULLTEXT INDEX `ft_gp_product_name` ON `group_purchase` (`product_name`) WITH PARSER ngram;
