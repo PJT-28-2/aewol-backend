@@ -15,6 +15,7 @@ public class ApiResponse<T> {
     private final String message;
     @JsonInclude(JsonInclude.Include.ALWAYS)
     private final T result;
+    private final String errorCode;
 
     public static <T> ApiResponse<T> success(T result) {
         return ApiResponse.<T>builder()
@@ -70,6 +71,14 @@ public class ApiResponse<T> {
         return ApiResponse.<Void>builder()
                 .status(status)
                 .message(message)
+                .build();
+    }
+
+    public static ApiResponse<Void> error(int status, String message, String errorCode) {
+        return ApiResponse.<Void>builder()
+                .status(status)
+                .message(message)
+                .errorCode(errorCode)
                 .build();
     }
 }
