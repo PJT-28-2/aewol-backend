@@ -61,7 +61,13 @@ public class SecurityConfig {
                             auth.requestMatchers("/swagger-ui/**", "/v3/api-docs/**", "/swagger-resources/**")
                                     .permitAll();
                         }
-                        auth.requestMatchers(HttpMethod.GET, "/api/health").permitAll()
+                        auth
+                        // 메트릭은 JWT가 아니라 전용 토큰으로 지킨다. Prometheus는 토큰을
+                        // 갱신할 수 없어 만료되는 JWT로는 스크레이핑을 이어갈 수 없다.
+                        // 실제 검사는 MetricsController가 하고, 토큰이 설정돼 있지 않으면
+                        // 엔드포인트 자체가 없는 것처럼 동작한다.
+                        .requestMatchers(HttpMethod.GET, "/api/metrics").permitAll()
+                        .requestMatchers(HttpMethod.GET, "/api/health").permitAll()
                         // <img> 태그는 Authorization 헤더를 붙일 수 없다. 이 경로는 JWT 대신
                         // URL에 실린 서명과 만료 시각으로 접근을 판단한다(FileController).
                         .requestMatchers(HttpMethod.GET, "/api/files/**").permitAll()
