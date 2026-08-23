@@ -63,6 +63,13 @@ public class DataSourceConfig {
         cfg.setMapUnderscoreToCamelCase(true);
         cfg.setDefaultFetchSize(100);
         cfg.setDefaultStatementTimeout(30);
+        // 쿼리 로그를 한 스위치로 켜고 끄기 위한 접두사.
+        //
+        // MyBatis는 매퍼 인터페이스의 전체 이름으로 로그를 남긴다. 매퍼가
+        // com.aewol.domain.*.mapper 아래 흩어져 있어 logback에서 한 줄로 묶을 수 없고,
+        // com.aewol.domain으로 묶으면 매퍼가 아닌 서비스·컨트롤러까지 전부 딸려온다.
+        // 접두사를 붙이면 로거 이름이 sql.* 이 되어 SQL만 따로 제어할 수 있다.
+        cfg.setLogPrefix("sql.");
         fb.setConfiguration(cfg);
         return fb.getObject();
     }

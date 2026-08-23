@@ -36,8 +36,13 @@
     <!--
       쿼리 로그. 기본은 끈다. 켜면 파라미터까지 찍혀 계좌번호·전화번호 같은 값이
       로그에 남으므로, 로컬 디버깅에서만 환경변수로 올릴 것.
+
+      MyBatis의 logPrefix로 매퍼 로거 이름 앞에 sql.을 붙여 둔 덕에 여기 한 줄로 묶인다
+      (DataSourceConfig 참고). 앞서 com.aewol.domain으로 걸었을 때는 매퍼가 아닌
+      서비스·컨트롤러까지 함께 걸렸고, com.aewol보다 구체적이라 도메인 계층 전체의
+      APP_LOG_LEVEL을 덮어써서 정작 APP_LOG_LEVEL이 거의 듣지 않았다.
     -->
-    <logger name="com.aewol.domain" level="${SQL_LOG_LEVEL:-INFO}"/>
+    <logger name="sql" level="${SQL_LOG_LEVEL:-INFO}"/>
 
     <root level="${LOG_LEVEL:-INFO}">
         <appender-ref ref="CONSOLE"/>
