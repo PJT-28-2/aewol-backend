@@ -1,6 +1,6 @@
--- V49: target_quantity > 0을 DB 레벨에서 강제한다.
+-- V50: target_quantity > 0을 DB 레벨에서 강제한다.
 --
--- V48부터 group_purchase.is_urgent_active는 INSERT 시점에 1로 하드코딩된다(GroupPurchaseMapper.xml
+-- V49부터 group_purchase.is_urgent_active는 INSERT 시점에 1로 하드코딩된다(GroupPurchaseMapper.xml
 -- insert). 그 근거는 "생성 시점엔 deadline이 항상 미래(@Future)이고 current_quantity=0이라
 -- current_quantity < target_quantity가 항상 참"인데, 이건 target_quantity > 0을 전제로 한다.
 -- 지금까지는 GroupPurchaseCreateRequest의 @Min(1) 애플리케이션 검증에만 의존했다 — 이 검증이

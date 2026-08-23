@@ -16,9 +16,9 @@
         delivery_* 는 목록 응답(GroupPurchaseListItemResponse)에 없다. image는 목록 카드
         썸네일에 필요해 포함한다 — 저장값은 키이고 화면에 보일 서명 URL은 조회 시점에
         FileStorage#signedUrl로 만든다(GroupPurchaseServiceImpl#toListItemResponse).
-        is_urgent_active는 응답 DTO에 노출하지 않는다 — 정렬/커서 전용 내부 컬럼이다(V48).
+        is_urgent_active는 응답 DTO에 노출하지 않는다 — 정렬/커서 전용 내부 컬럼이다(V49).
     -->
-    <!-- 키워드는 LIKE '%...%' 대신 FULLTEXT(ngram) MATCH...AGAINST로 찾는다(V47). 한 글자
+    <!-- 키워드는 LIKE '%...%' 대신 FULLTEXT(ngram) MATCH...AGAINST로 찾는다(V48). 한 글자
          검색어는 ngram_token_size(기본값 2) 미만이라 색인되지 않으므로 매칭되지 않는다 —
          GroupPurchaseServiceImpl에서 최소 2자 이상만 여기로 넘어오게 걸러낸다. 서비스가
          boolean mode 예약문자를 큰따옴표 구문(phrase) 검색으로 감싸 전달하므로 이 쿼리는
@@ -61,6 +61,11 @@
                  행"만 남긴다. OFFSET과 달리 앞선 행을 읽고 버리지 않아 페이지가 깊어져도 비용이
                  늘지 않는다. 첫 페이지(cursorGpId == null)는 조건 없이 처음부터 조회한다.
 
+                 legacyOffset은 배포 전환 기간 호환 전용이다(GroupPurchaseServiceImpl 참고) —
+                 cursor 없이 구 프론트의 page만 오는 요청을 위한 것으로, cursor와 동시에
+                 채워지지 않는다(서비스 레이어가 상호 배타적으로 보장). 새 정렬 기준(is_urgent_active
+                 포함)을 그대로 쓰므로 예전 CASE WHEN NOW() 버그는 재도입되지 않는다.
+
                  주의: cursorGpId != null 하나로만 이 블록 전체를 게이팅하고, 안에서는
                  cursorIsUrgentActive/cursorDeadline/cursorCreatedAt도 무조건 같이 참조한다.
                  네 필드는 항상 함께 null이거나 함께 값이 있어야 한다(GroupPurchaseMapper.java
@@ -96,13 +101,20 @@
              필터가 없는 전체 탭은 두 그룹이 섞여 있어 is_urgent_active가 필요하다. 예전에는
              CASE WHEN ... NOW() ...로 매 요청 계산해서 어떤 인덱스도 순서를 줄 수 없었지만(V39/V42에
              "별도 과제"로 명시), 이제는 미리 계산해 저장해둔 is_urgent_active 컬럼을 읽기만 하므로
-             idx_gp_urgent_deadline_created(V48)가 정렬을 그대로 제공한다. -->
+             idx_gp_urgent_deadline_created(V49)가 정렬을 그대로 제공한다. -->
         ORDER BY
             <if test="status == null or status == ''">
             is_urgent_active DESC,
             </if>
             deadline ASC, created_at DESC, gp_id DESC
-        LIMIT #{limit}
+        <choose>
+            <when test="legacyOffset != null">
+                LIMIT #{limit} OFFSET #{legacyOffset}
+            </when>
+            <otherwise>
+                LIMIT #{limit}
+            </otherwise>
+        </choose>
     </select>
 
     <select id="findById" resultType="map">
@@ -290,7 +302,7 @@
         FOR UPDATE
     </select>
 
-    <!-- GroupPurchaseUrgentFlagJob 전용(V48). 마감 시각 경과는 그 행에 대한 쓰기 이벤트가 아니라
+    <!-- GroupPurchaseUrgentFlagJob 전용(V49). 마감 시각 경과는 그 행에 대한 쓰기 이벤트가 아니라
          DB 트리거로 감지할 수 없으므로, 매일 자정 직후 배치가 is_urgent_active=1인데 이미
          deadline이 지난 행만 골라 0으로 내린다. idx_gp_urgent_deadline_created의 선두 컬럼이
          is_urgent_active라 이 UPDATE 자체도 "1인 행"만 골라내는 인덱스 스캔이라 저비용이다. -->

@@ -71,18 +71,54 @@ public class GroupPurchaseServiceImpl implements GroupPurchaseService {
     // 검색어는 FULLTEXT(ngram) 인덱스로 찾는다. ngram_token_size 기본값 2 미만인 검색어는
     // 색인되지 않아 매칭되지 않으므로(조용히 0건이 되는 것을 막기 위해) 여기서 미리 거절한다.
     private static final int MIN_KEYWORD_LENGTH = 2;
+    // size 상한(P1 리뷰 반영). NotificationServiceImpl과 동일한 패턴 — 상한 없이 큰 size를
+    // 받으면 DB 조회량·signedUrl 생성 횟수·응답 크기가 그대로 커지고, safeSize + 1이
+    // Integer.MAX_VALUE 근처에서 오버플로할 수 있었다.
+    private static final int MAX_SIZE = 100;
 
     @Override
     public GroupPurchaseListResponse list(String memberId, String status, String keyword, String category, String cursor, int size) {
-        return list(memberId, status, keyword, category, cursor, size, null);
+        return listInternal(memberId, status, keyword, category, cursor, null, size, null);
     }
 
     @Override
     public GroupPurchaseListResponse list(String memberId, String status, String keyword, String category, String cursor, int size, String sort) {
-        int safeSize = size <= 0 ? 10 : size;
+        return listInternal(memberId, status, keyword, category, cursor, null, size, sort);
+    }
+
+    /**
+     * 배포 전환 기간 호환 전용(P1 리뷰 반영). 백엔드는 page를 완전히 offset/cursor로
+     * 대체했는데, 프론트가 아직 구버전(page만 전송, cursor 모름)일 때 백엔드만 먼저
+     * 배포되면 cursor가 항상 없어 첫 페이지만 반복 조회된다 — 프론트를 뒤따라 배포하기
+     * 전까지 무한스크롤이 사실상 멈춘 것처럼 보이는 회귀다.
+     * legacyPage가 있으면(구 프론트) OFFSET 기반으로 응답하고, cursor가 있으면(신 프론트)
+     * keyset으로 응답한다 — 서로 배타적이며 cursor가 우선한다. legacyPage 경로도 새
+     * 정렬 기준(is_urgent_active)을 그대로 쓰므로 예전 CASE WHEN NOW() 풀스캔은 재도입되지
+     * 않는다. 프론트 배포가 끝나 page 전송이 완전히 사라지면 이 오버로드와 legacyPage
+     * 분기를 제거해도 된다.
+     */
+    @Override
+    public GroupPurchaseListResponse list(String memberId, String status, String keyword, String category, String cursor, Integer legacyPage, int size) {
+        return listInternal(memberId, status, keyword, category, cursor, legacyPage, size, null);
+    }
+
+    private GroupPurchaseListResponse listInternal(String memberId, String status, String keyword, String category,
+            String cursor, Integer legacyPage, int size, String sort) {
+        int safeSize = size <= 0 ? 10 : Math.min(size, MAX_SIZE);
         String dbStatus = validateListStatus(status);
         String matchKeyword = toMatchKeyword(keyword);
         GroupPurchaseCursor decoded = (cursor == null || cursor.isBlank()) ? null : GroupPurchaseCursor.decode(cursor);
+        Integer legacyOffset = null;
+        if (decoded == null && legacyPage != null) {
+            // safeSize가 MAX_SIZE로 상한이 걸려 있어도 legacyPage 자체는 사용자 입력이라
+            // 여전히 커질 수 있다 — long으로 계산해 int 범위를 넘으면 명확히 거절한다
+            // (NotificationServiceImpl#getNotifications와 동일한 가드).
+            long offset = (long) Math.max(legacyPage, 0) * safeSize;
+            if (offset > Integer.MAX_VALUE) {
+                throw new BusinessException("페이지 범위를 확인해주세요.");
+            }
+            legacyOffset = (int) offset;
+        }
 
         List<Map<String, Object>> rows = groupPurchaseMapper.findList(
                 dbStatus, matchKeyword, category, safeSize + 1,
@@ -90,6 +126,7 @@ public class GroupPurchaseServiceImpl implements GroupPurchaseService {
                 decoded == null ? null : decoded.deadline(),
                 decoded == null ? null : decoded.createdAt(),
                 decoded == null ? null : decoded.gpId(),
+                legacyOffset,
                 sort);
 
         boolean hasNext = rows.size() > safeSize;

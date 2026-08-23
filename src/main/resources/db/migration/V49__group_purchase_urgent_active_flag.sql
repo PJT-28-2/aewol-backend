@@ -1,4 +1,4 @@
--- V48: 상태 필터 없는 "전체" 탭 정렬 풀스캔 해결.
+-- V49: 상태 필터 없는 "전체" 탭 정렬 풀스캔 해결.
 --
 -- 기존 정렬은 ORDER BY CASE WHEN current_quantity < target_quantity AND deadline >= NOW()
 -- THEN 0 ELSE 1 END, deadline ASC, created_at DESC, gp_id DESC 였다. NOW()가 정렬식에 있어
