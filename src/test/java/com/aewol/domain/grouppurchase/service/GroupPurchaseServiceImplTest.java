@@ -582,7 +582,7 @@ class GroupPurchaseServiceImplTest {
     void should_trimAndSetHasNextTrue_when_moreRowsThanPageSizeExist() {
         GroupPurchaseServiceImpl service = service();
         LocalDateTime deadline = LocalDateTime.now().plusDays(5);
-        when(groupPurchaseMapper.findList(isNull(), isNull(), isNull(), eq(3), isNull(), isNull(), isNull(), isNull(), isNull()))
+        when(groupPurchaseMapper.findList(isNull(), isNull(), isNull(), eq(3), isNull(), isNull(), isNull(), isNull(), isNull(), isNull()))
                 .thenReturn(List.of(
                         listRow(1L, "OPEN", deadline, 30000, 25000),
                         listRow(2L, "OPEN", deadline, 30000, 25000),
@@ -606,7 +606,7 @@ class GroupPurchaseServiceImplTest {
         GroupPurchaseServiceImpl service = service();
         LocalDateTime deadline = LocalDateTime.now().plusDays(5);
         Map<String, Object> secondRow = listRow(2L, "OPEN", deadline, 30000, 25000);
-        when(groupPurchaseMapper.findList(isNull(), isNull(), isNull(), eq(2), isNull(), isNull(), isNull(), isNull(), isNull()))
+        when(groupPurchaseMapper.findList(isNull(), isNull(), isNull(), eq(2), isNull(), isNull(), isNull(), isNull(), isNull(), isNull()))
                 .thenReturn(List.of(listRow(1L, "OPEN", deadline, 30000, 25000), secondRow));
 
         GroupPurchaseListResponse result = service.list(null, null, null, null, null, 1);
@@ -624,7 +624,7 @@ class GroupPurchaseServiceImplTest {
     void should_setNextCursorNull_when_hasNextIsFalse() {
         GroupPurchaseServiceImpl service = service();
         LocalDateTime deadline = LocalDateTime.now().plusDays(5);
-        when(groupPurchaseMapper.findList(isNull(), isNull(), isNull(), eq(11), isNull(), isNull(), isNull(), isNull(), isNull()))
+        when(groupPurchaseMapper.findList(isNull(), isNull(), isNull(), eq(11), isNull(), isNull(), isNull(), isNull(), isNull(), isNull()))
                 .thenReturn(List.of(listRow(1L, "OPEN", deadline, 30000, 25000)));
 
         GroupPurchaseListResponse result = service.list(null, null, null, null, null, 10);
@@ -641,12 +641,79 @@ class GroupPurchaseServiceImplTest {
         LocalDateTime cursorCreatedAt = LocalDateTime.of(2026, 8, 20, 10, 0, 0);
         String cursor = GroupPurchaseCursor.of(1, cursorDeadline, cursorCreatedAt, 42L).encode();
         when(groupPurchaseMapper.findList(isNull(), isNull(), isNull(), eq(11),
-                eq(1), eq(cursorDeadline), eq(cursorCreatedAt), eq(42L), isNull()))
+                eq(1), eq(cursorDeadline), eq(cursorCreatedAt), eq(42L), isNull(), isNull()))
                 .thenReturn(List.of());
 
         service.list(null, null, null, null, cursor, 10);
 
-        verify(groupPurchaseMapper).findList(null, null, null, 11, 1, cursorDeadline, cursorCreatedAt, 42L, null);
+        verify(groupPurchaseMapper).findList(null, null, null, 11, 1, cursorDeadline, cursorCreatedAt, 42L, null, null);
+    }
+
+    @Test
+    @DisplayName("배포 전환 기간 호환: cursor 없이 legacyPage만 오면 legacyOffset을 계산해 매퍼에 전달한다")
+    void should_computeLegacyOffset_when_onlyLegacyPageProvided() {
+        GroupPurchaseServiceImpl service = service();
+        when(groupPurchaseMapper.findList(isNull(), isNull(), isNull(), eq(11),
+                isNull(), isNull(), isNull(), isNull(), eq(20), isNull()))
+                .thenReturn(List.of());
+
+        // page=2, size=10 -> offset = 2*10 = 20. cursor 없는 구 프론트가 여전히 page를 보내는
+        // 배포 전환 기간을 흉내낸다.
+        service.list(null, null, null, null, null, 2, 10);
+
+        verify(groupPurchaseMapper).findList(null, null, null, 11, null, null, null, null, 20, null);
+    }
+
+    @Test
+    @DisplayName("배포 전환 기간 호환: cursor와 legacyPage가 동시에 오면 cursor가 우선하고 legacyOffset은 무시한다")
+    void should_preferCursor_overLegacyPage_whenBothProvided() {
+        GroupPurchaseServiceImpl service = service();
+        LocalDateTime cursorDeadline = LocalDateTime.of(2026, 9, 1, 23, 59, 59);
+        LocalDateTime cursorCreatedAt = LocalDateTime.of(2026, 8, 20, 10, 0, 0);
+        String cursor = GroupPurchaseCursor.of(0, cursorDeadline, cursorCreatedAt, 7L).encode();
+        when(groupPurchaseMapper.findList(isNull(), isNull(), isNull(), eq(11),
+                eq(0), eq(cursorDeadline), eq(cursorCreatedAt), eq(7L), isNull(), isNull()))
+                .thenReturn(List.of());
+
+        service.list(null, null, null, null, cursor, 99, 10);
+
+        verify(groupPurchaseMapper).findList(null, null, null, 11, 0, cursorDeadline, cursorCreatedAt, 7L, null, null);
+    }
+
+    @Test
+    @DisplayName("size가 상한(100)을 넘으면 잘라서 매퍼에 전달한다 — 과다 조회와 오버플로를 함께 막는다")
+    void should_clampSize_toMaxSize_whenSizeExceedsLimit() {
+        GroupPurchaseServiceImpl service = service();
+        when(groupPurchaseMapper.findList(isNull(), isNull(), isNull(), eq(101),
+                isNull(), isNull(), isNull(), isNull(), isNull(), isNull()))
+                .thenReturn(List.of());
+
+        service.list(null, null, null, null, null, 10_000);
+
+        verify(groupPurchaseMapper).findList(null, null, null, 101, null, null, null, null, null, null);
+    }
+
+    @Test
+    @DisplayName("size가 Integer.MAX_VALUE여도 상한으로 잘리므로 safeSize+1이 오버플로하지 않는다")
+    void should_notOverflow_when_sizeIsIntegerMaxValue() {
+        GroupPurchaseServiceImpl service = service();
+        when(groupPurchaseMapper.findList(isNull(), isNull(), isNull(), eq(101),
+                isNull(), isNull(), isNull(), isNull(), isNull(), isNull()))
+                .thenReturn(List.of());
+
+        assertDoesNotThrow(() -> service.list(null, null, null, null, null, Integer.MAX_VALUE));
+    }
+
+    @Test
+    @DisplayName("legacyPage가 매우 커서 offset이 int 범위를 넘으면 예외를 던진다")
+    void should_throwException_when_legacyOffsetOverflowsIntRange() {
+        GroupPurchaseServiceImpl service = service();
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.list(null, null, null, null, null, Integer.MAX_VALUE, 10));
+
+        assertEquals("페이지 범위를 확인해주세요.", exception.getMessage());
+        verifyNoInteractions(groupPurchaseMapper);
     }
 
     @Test
@@ -654,7 +721,7 @@ class GroupPurchaseServiceImplTest {
     void should_returnSignedImageUrl_onList() {
         GroupPurchaseServiceImpl service = service();
         LocalDateTime deadline = LocalDateTime.now().plusDays(5);
-        when(groupPurchaseMapper.findList(isNull(), isNull(), isNull(), eq(11), isNull(), isNull(), isNull(), isNull(), isNull()))
+        when(groupPurchaseMapper.findList(isNull(), isNull(), isNull(), eq(11), isNull(), isNull(), isNull(), isNull(), isNull(), isNull()))
                 .thenReturn(List.of(listRow(1L, "OPEN", deadline, 30000, 25000)));
 
         GroupPurchaseListResponse result = service.list(null, null, null, null, null, 10);
@@ -669,7 +736,7 @@ class GroupPurchaseServiceImplTest {
         LocalDateTime deadline = LocalDateTime.now().plusDays(5);
         Map<String, Object> row = listRow(1L, "OPEN", deadline, 30000, 25000);
         row.put("image", null);
-        when(groupPurchaseMapper.findList(isNull(), isNull(), isNull(), eq(11), isNull(), isNull(), isNull(), isNull(), isNull()))
+        when(groupPurchaseMapper.findList(isNull(), isNull(), isNull(), eq(11), isNull(), isNull(), isNull(), isNull(), isNull(), isNull()))
                 .thenReturn(List.of(row));
 
         GroupPurchaseListResponse result = service.list(null, null, null, null, null, 10);
@@ -682,7 +749,7 @@ class GroupPurchaseServiceImplTest {
     void should_returnIsParticipatingTrue_when_memberAlreadyJoined() {
         GroupPurchaseServiceImpl service = service();
         LocalDateTime deadline = LocalDateTime.now().plusDays(5);
-        when(groupPurchaseMapper.findList(isNull(), isNull(), isNull(), eq(11), isNull(), isNull(), isNull(), isNull(), isNull()))
+        when(groupPurchaseMapper.findList(isNull(), isNull(), isNull(), eq(11), isNull(), isNull(), isNull(), isNull(), isNull(), isNull()))
                 .thenReturn(List.of(listRow(1L, "OPEN", deadline, 30000, 25000)));
         when(groupPurchaseMapper.findParticipatingGpIds(eq("member-1"), eq(List.of("1"))))
                 .thenReturn(List.of(1L));
@@ -698,7 +765,7 @@ class GroupPurchaseServiceImplTest {
     void should_returnIsParticipatingFalse_when_memberIdIsNull() {
         GroupPurchaseServiceImpl service = service();
         LocalDateTime deadline = LocalDateTime.now().plusDays(5);
-        when(groupPurchaseMapper.findList(isNull(), isNull(), isNull(), eq(11), isNull(), isNull(), isNull(), isNull(), isNull()))
+        when(groupPurchaseMapper.findList(isNull(), isNull(), isNull(), eq(11), isNull(), isNull(), isNull(), isNull(), isNull(), isNull()))
                 .thenReturn(List.of(listRow(1L, "OPEN", deadline, 30000, 25000)));
 
         GroupPurchaseListResponse result = service.list(null, null, null, null, null, 10);
@@ -713,7 +780,7 @@ class GroupPurchaseServiceImplTest {
     void should_queryParticipatingIdsOnce_when_listingMultipleItems() {
         GroupPurchaseServiceImpl service = service();
         LocalDateTime deadline = LocalDateTime.now().plusDays(5);
-        when(groupPurchaseMapper.findList(isNull(), isNull(), isNull(), eq(11), isNull(), isNull(), isNull(), isNull(), isNull()))
+        when(groupPurchaseMapper.findList(isNull(), isNull(), isNull(), eq(11), isNull(), isNull(), isNull(), isNull(), isNull(), isNull()))
                 .thenReturn(List.of(
                         listRow(1L, "OPEN", deadline, 30000, 25000),
                         listRow(2L, "OPEN", deadline, 30000, 25000),
@@ -734,7 +801,7 @@ class GroupPurchaseServiceImplTest {
     @DisplayName("로그인 상태라도 목록이 비면 참여 여부 조회를 생략한다")
     void should_skipParticipatingQuery_when_loggedInListIsEmpty() {
         GroupPurchaseServiceImpl service = service();
-        when(groupPurchaseMapper.findList(isNull(), isNull(), isNull(), eq(11), isNull(), isNull(), isNull(), isNull(), isNull()))
+        when(groupPurchaseMapper.findList(isNull(), isNull(), isNull(), eq(11), isNull(), isNull(), isNull(), isNull(), isNull(), isNull()))
                 .thenReturn(List.of());
 
         GroupPurchaseListResponse result = service.list("member-1", null, null, null, null, 10);
@@ -748,7 +815,7 @@ class GroupPurchaseServiceImplTest {
     @DisplayName("결과가 없으면 빈 목록과 hasNext false를 반환한다")
     void should_returnEmptyListWithHasNextFalse_when_noRowsMatch() {
         GroupPurchaseServiceImpl service = service();
-        when(groupPurchaseMapper.findList(any(), any(), any(), anyInt(), any(), any(), any(), any(), any()))
+        when(groupPurchaseMapper.findList(any(), any(), any(), anyInt(), any(), any(), any(), any(), any(), any()))
                 .thenReturn(List.of());
 
         GroupPurchaseListResponse result = service.list(null, null, null, null, null, 10);
@@ -761,12 +828,12 @@ class GroupPurchaseServiceImplTest {
     @DisplayName("status 필터는 검증만 거쳐 매퍼에 그대로 전달된다")
     void should_passStatusFilter_toMapper_onList() {
         GroupPurchaseServiceImpl service = service();
-        when(groupPurchaseMapper.findList(eq("COMPLETED"), isNull(), eq("사료"), eq(11), isNull(), isNull(), isNull(), isNull(), isNull()))
+        when(groupPurchaseMapper.findList(eq("COMPLETED"), isNull(), eq("사료"), eq(11), isNull(), isNull(), isNull(), isNull(), isNull(), isNull()))
                 .thenReturn(List.of());
 
         service.list(null, "COMPLETED", null, "사료", null, 10);
 
-        verify(groupPurchaseMapper).findList("COMPLETED", null, "사료", 11, null, null, null, null, null);
+        verify(groupPurchaseMapper).findList("COMPLETED", null, "사료", 11, null, null, null, null, null, null);
     }
 
     @Test
@@ -785,12 +852,12 @@ class GroupPurchaseServiceImplTest {
     @DisplayName("검색어는 LIKE 대신 FULLTEXT boolean mode phrase(큰따옴표로 감싼 문자열)로 매퍼에 전달된다")
     void should_wrapKeywordAsBooleanModePhrase_beforePassingToMapper() {
         GroupPurchaseServiceImpl service = service();
-        when(groupPurchaseMapper.findList(isNull(), eq("\"츄르\""), isNull(), eq(11), isNull(), isNull(), isNull(), isNull(), isNull()))
+        when(groupPurchaseMapper.findList(isNull(), eq("\"츄르\""), isNull(), eq(11), isNull(), isNull(), isNull(), isNull(), isNull(), isNull()))
                 .thenReturn(List.of());
 
         service.list(null, null, "츄르", null, null, 10);
 
-        verify(groupPurchaseMapper).findList(null, "\"츄르\"", null, 11, null, null, null, null, null);
+        verify(groupPurchaseMapper).findList(null, "\"츄르\"", null, 11, null, null, null, null, null, null);
     }
 
     @Test
@@ -799,19 +866,19 @@ class GroupPurchaseServiceImplTest {
         GroupPurchaseServiceImpl service = service();
         // 예약문자(+ - * 등)는 phrase(큰따옴표) 안에서는 연산자로 해석되지 않으므로 그대로 둔다.
         // phrase를 조기 종료시키는 큰따옴표만 공백으로 치환한다.
-        when(groupPurchaseMapper.findList(isNull(), eq("\"+사료 -간식\""), isNull(), eq(11), isNull(), isNull(), isNull(), isNull(), isNull()))
+        when(groupPurchaseMapper.findList(isNull(), eq("\"+사료 -간식\""), isNull(), eq(11), isNull(), isNull(), isNull(), isNull(), isNull(), isNull()))
                 .thenReturn(List.of());
 
         service.list(null, null, "+사료 -간식", null, null, 10);
 
-        verify(groupPurchaseMapper).findList(null, "\"+사료 -간식\"", null, 11, null, null, null, null, null);
+        verify(groupPurchaseMapper).findList(null, "\"+사료 -간식\"", null, 11, null, null, null, null, null, null);
     }
 
     @Test
     @DisplayName("상태 필터가 없어도 예외 없이 전체 목록을 조회한다")
     void should_notThrow_when_statusFilterIsNull() {
         GroupPurchaseServiceImpl service = service();
-        when(groupPurchaseMapper.findList(isNull(), isNull(), isNull(), anyInt(), any(), any(), any(), any(), isNull()))
+        when(groupPurchaseMapper.findList(isNull(), isNull(), isNull(), anyInt(), any(), any(), any(), any(), any(), isNull()))
                 .thenReturn(List.of());
 
         assertDoesNotThrow(() -> service.list(null, null, null, null, null, 10));
@@ -846,7 +913,7 @@ class GroupPurchaseServiceImplTest {
     void should_returnInProgress_when_deadlineNotYetPassed() {
         GroupPurchaseServiceImpl service = service();
         LocalDateTime futureDeadline = LocalDateTime.now().plusDays(3);
-        when(groupPurchaseMapper.findList(isNull(), isNull(), isNull(), eq(11), isNull(), isNull(), isNull(), isNull(), isNull()))
+        when(groupPurchaseMapper.findList(isNull(), isNull(), isNull(), eq(11), isNull(), isNull(), isNull(), isNull(), isNull(), isNull()))
                 .thenReturn(List.of(listRow(1L, "OPEN", futureDeadline, 30000, 25000, 5, 10)));
 
         GroupPurchaseListResponse result = service.list(null, null, null, null, null, 10);
@@ -859,7 +926,7 @@ class GroupPurchaseServiceImplTest {
     void should_returnClosedSuccess_when_deadlinePassedAndTargetReached() {
         GroupPurchaseServiceImpl service = service();
         LocalDateTime pastDeadline = LocalDateTime.now().minusDays(1);
-        when(groupPurchaseMapper.findList(isNull(), isNull(), isNull(), eq(11), isNull(), isNull(), isNull(), isNull(), isNull()))
+        when(groupPurchaseMapper.findList(isNull(), isNull(), isNull(), eq(11), isNull(), isNull(), isNull(), isNull(), isNull(), isNull()))
                 .thenReturn(List.of(listRow(1L, "OPEN", pastDeadline, 30000, 25000, 10, 10)));
 
         GroupPurchaseListResponse result = service.list(null, null, null, null, null, 10);
@@ -872,7 +939,7 @@ class GroupPurchaseServiceImplTest {
     void should_returnClosedFail_when_deadlinePassedAndTargetNotReached() {
         GroupPurchaseServiceImpl service = service();
         LocalDateTime pastDeadline = LocalDateTime.now().minusDays(1);
-        when(groupPurchaseMapper.findList(isNull(), isNull(), isNull(), eq(11), isNull(), isNull(), isNull(), isNull(), isNull()))
+        when(groupPurchaseMapper.findList(isNull(), isNull(), isNull(), eq(11), isNull(), isNull(), isNull(), isNull(), isNull(), isNull()))
                 .thenReturn(List.of(listRow(1L, "OPEN", pastDeadline, 30000, 25000, 4, 10)));
 
         GroupPurchaseListResponse result = service.list(null, null, null, null, null, 10);
@@ -885,7 +952,7 @@ class GroupPurchaseServiceImplTest {
     void should_returnClosedSuccess_when_targetReachedBeforeDeadline() {
         GroupPurchaseServiceImpl service = service();
         LocalDateTime futureDeadline = LocalDateTime.now().plusDays(3);
-        when(groupPurchaseMapper.findList(isNull(), isNull(), isNull(), eq(11), isNull(), isNull(), isNull(), isNull(), isNull()))
+        when(groupPurchaseMapper.findList(isNull(), isNull(), isNull(), eq(11), isNull(), isNull(), isNull(), isNull(), isNull(), isNull()))
                 .thenReturn(List.of(listRow(1L, "OPEN", futureDeadline, 30000, 25000, 10, 10)));
 
         GroupPurchaseListResponse result = service.list(null, null, null, null, null, 10);
@@ -898,7 +965,7 @@ class GroupPurchaseServiceImplTest {
     void should_returnInProgress_when_targetQuantityIsZero_onList() {
         GroupPurchaseServiceImpl service = service();
         LocalDateTime futureDeadline = LocalDateTime.now().plusDays(3);
-        when(groupPurchaseMapper.findList(isNull(), isNull(), isNull(), eq(11), isNull(), isNull(), isNull(), isNull(), isNull()))
+        when(groupPurchaseMapper.findList(isNull(), isNull(), isNull(), eq(11), isNull(), isNull(), isNull(), isNull(), isNull(), isNull()))
                 .thenReturn(List.of(listRow(1L, "OPEN", futureDeadline, 30000, 25000, 0, 0)));
 
         GroupPurchaseListResponse result = service.list(null, null, null, null, null, 10);
@@ -911,7 +978,7 @@ class GroupPurchaseServiceImplTest {
     void should_exposeUnitPriceAndGroupPrice_onListItem() {
         GroupPurchaseServiceImpl service = service();
         LocalDateTime deadline = LocalDateTime.now().plusDays(5);
-        when(groupPurchaseMapper.findList(isNull(), isNull(), isNull(), eq(11), isNull(), isNull(), isNull(), isNull(), isNull()))
+        when(groupPurchaseMapper.findList(isNull(), isNull(), isNull(), eq(11), isNull(), isNull(), isNull(), isNull(), isNull(), isNull()))
                 .thenReturn(List.of(listRow(1L, "OPEN", deadline, 30000, 25000)));
 
         GroupPurchaseListResponse result = service.list(null, null, null, null, null, 10);
@@ -1648,7 +1715,7 @@ class GroupPurchaseServiceImplTest {
         row.put("target_quantity", targetQuantity);
         row.put("unit_price", new BigDecimal(unitPrice));
         row.put("group_price", new BigDecimal(groupPrice));
-        // V48: is_urgent_active는 DB에서 미리 계산해 저장해두는 파생 컬럼이다. 픽스처도 같은
+        // V49: is_urgent_active는 DB에서 미리 계산해 저장해두는 파생 컬럼이다. 픽스처도 같은
         // 규칙(current_quantity < target_quantity AND deadline >= NOW())으로 값을 만든다.
         boolean urgentActive = currentQuantity < targetQuantity
                 && (deadline == null || !deadline.isBefore(LocalDateTime.now()));

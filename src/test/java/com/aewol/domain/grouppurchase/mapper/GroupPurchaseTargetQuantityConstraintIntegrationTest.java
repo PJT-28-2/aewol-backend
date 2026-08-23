@@ -14,7 +14,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * V49의 chk_gp_target_quantity_positive CHECK 제약이 실제로 target_quantity &lt;= 0 INSERT를
+ * V50의 chk_gp_target_quantity_positive CHECK 제약이 실제로 target_quantity &lt;= 0 INSERT를
  * 막는지 검증한다. H2(GroupPurchaseMapperTest)에는 일부러 이 제약을 넣지 않았다 — 그 테스트
  * 파일의 여러 케이스가 "target_quantity <= 0인 비정상 데이터가 이미 있어도 앱이 방어적으로
  * 처리한다"를 검증하려고 그런 행을 직접 INSERT하는데, CHECK을 추가하면 그 픽스처 자체가

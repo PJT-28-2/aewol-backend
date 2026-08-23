@@ -61,7 +61,7 @@ class GroupPurchaseMapperTest {
                     status VARCHAR(20) NOT NULL DEFAULT 'OPEN',
                     current_quantity INT NOT NULL DEFAULT 0,
                     target_quantity INT NOT NULL DEFAULT 1,
-                    -- V48: 정렬 전용 파생 컬럼. 매 요청 계산하지 않고 쓰기 시점(insertGroupPurchase
+                    -- V49: 정렬 전용 파생 컬럼. 매 요청 계산하지 않고 쓰기 시점(insertGroupPurchase
                     -- 픽스처가 여기서는 그 역할)에 미리 값을 넣어둔다는 게 요점이라, 이 테이블도
                     -- DB가 자동 계산해주지 않고 애플리케이션이 채워야 한다.
                     is_urgent_active TINYINT NOT NULL DEFAULT 0,
@@ -503,7 +503,7 @@ class GroupPurchaseMapperTest {
 
         assertEquals(1, cancelGroupPurchase(gpId));
         assertEquals("CANCELLED", findStatus(gpId));
-        // V48: 취소된 게시글은 findList의 status != 'CANCELLED' 조건에서 어차피 제외되지만,
+        // V49: 취소된 게시글은 findList의 status != 'CANCELLED' 조건에서 어차피 제외되지만,
         // is_urgent_active도 같이 0으로 내려서 컬럼값 자체가 항상 정확하게 유지되게 한다.
         assertEquals(0, findIsUrgentActive(gpId));
     }
@@ -565,6 +565,30 @@ class GroupPurchaseMapperTest {
 
         assertEquals(List.of(third),
                 secondPage.stream().map(row -> ((Number) row.get("gp_id")).longValue()).toList());
+    }
+
+    @Test
+    @DisplayName("배포 전환 기간 호환: legacyOffset이 있으면 커서 없이도 새 정렬 기준(is_urgent_active 포함)으로 OFFSET 페이지네이션이 동작한다")
+    void should_paginateWithLegacyOffset_usingNewSortOrder() {
+        LocalDateTime now = LocalDateTime.now();
+        long first = insertGroupPurchase(99L, "OPEN", 3, 10, now.plusDays(1), now.minusDays(3));
+        long second = insertGroupPurchase(99L, "OPEN", 3, 10, now.plusDays(2), now.minusDays(2));
+        long third = insertGroupPurchase(99L, "OPEN", 3, 10, now.plusDays(3), now.minusDays(1));
+
+        List<Map<String, Object>> firstPage = findListWithLegacyOffset(null, 2, 0);
+        List<Map<String, Object>> secondPage = findListWithLegacyOffset(null, 2, 2);
+
+        assertEquals(List.of(first, second),
+                firstPage.stream().map(row -> ((Number) row.get("gp_id")).longValue()).toList());
+        assertEquals(List.of(third),
+                secondPage.stream().map(row -> ((Number) row.get("gp_id")).longValue()).toList());
+    }
+
+    private List<Map<String, Object>> findListWithLegacyOffset(String status, int limit, int legacyOffset) {
+        try (SqlSession session = sqlSessionFactory.openSession(true)) {
+            return session.getMapper(GroupPurchaseMapper.class)
+                    .findList(status, null, null, limit, null, null, null, null, legacyOffset, null);
+        }
     }
 
     @Test
@@ -727,7 +751,7 @@ class GroupPurchaseMapperTest {
     private List<Map<String, Object>> findList(String status, String keyword, String category, int limit, String sort) {
         try (SqlSession session = sqlSessionFactory.openSession(true)) {
             return session.getMapper(GroupPurchaseMapper.class)
-                    .findList(status, keyword, category, limit, null, null, null, null, sort);
+                    .findList(status, keyword, category, limit, null, null, null, null, null, sort);
         }
     }
 
@@ -740,7 +764,7 @@ class GroupPurchaseMapperTest {
                     toLocalDateTime(cursorRow.get("deadline")),
                     toLocalDateTime(cursorRow.get("created_at")),
                     ((Number) cursorRow.get("gp_id")).longValue(),
-                    null);
+                    null, null);
         }
     }
 
