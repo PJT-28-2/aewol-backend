@@ -1,10 +1,13 @@
 package com.aewol.domain.pet.job;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import javax.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
@@ -39,8 +42,15 @@ public class PetCharacterJobRunner {
      *
      * <p>무제한 큐를 쓰면 밀린 요청이 계속 쌓여, 사용자는 202를 받고도 한참 뒤에야 결과를
      * 본다. 그럴 바에는 즉시 "지금은 붐빈다"고 알려주는 편이 낫다.
+     *
+     * <p>사진은 요청이 끝나기 전에 최대 10MB 바이트 배열로 바뀐다. 실행 2건과 대기 4건이면
+     * 입력 사진 기준 메모리 상한은 약 60MB다. 기존 20건 큐는 최악의 경우 약 220MB를
+     * 점유하므로 작은 힙에서 다른 요청과 배치를 밀어낼 수 있었다.
      */
-    private static final int QUEUE_CAPACITY = 20;
+    private static final int QUEUE_CAPACITY = 4;
+
+    /** 실행 중인 두 건이 정상 종료할 수 있도록 실측 20~25초보다 넉넉히 기다린다. */
+    private static final int SHUTDOWN_WAIT_SECONDS = 60;
 
     private final ExecutorService executor;
 
@@ -70,9 +80,10 @@ public class PetCharacterJobRunner {
     /**
      * @return 대기열이 가득 차 받지 못했으면 {@code false}
      */
-    public boolean submit(Runnable task) {
+    public boolean submit(Runnable task, Runnable onDiscarded) {
+        ManagedTask managed = new ManagedTask(task, onDiscarded);
         try {
-            executor.execute(task);
+            executor.execute(managed);
             return true;
         } catch (RejectedExecutionException e) {
             log.warn("[PET_CHARACTER_QUEUE_FULL] 대기열이 가득 차 캐릭터 생성을 받지 못했습니다.");
@@ -82,15 +93,67 @@ public class PetCharacterJobRunner {
 
     @PreDestroy
     void shutdown() {
-        // 진행 중인 생성은 마치게 둔다. 중간에 끊으면 Gemini 호출 비용만 쓰고 결과가 없다.
+        // 새 요청을 막은 뒤 아직 시작하지 않은 작업은 실패로 돌린다. 큐까지 모두 실행하면
+        // 배포가 최대 세 번의 생성 주기만큼 지연되고, 중간에 프로세스가 종료될 때 상태도 잃는다.
         executor.shutdown();
+        discardQueuedTasks();
         try {
-            if (!executor.awaitTermination(30, TimeUnit.SECONDS)) {
-                executor.shutdownNow();
+            // 실행 중인 최대 두 건은 마치게 둔다. 중간에 끊으면 Gemini 호출 비용만 쓰고
+            // 결과가 없으므로 실측 20~25초보다 넉넉히 기다린다.
+            if (!executor.awaitTermination(SHUTDOWN_WAIT_SECONDS, TimeUnit.SECONDS)) {
+                discard(executor.shutdownNow());
             }
         } catch (InterruptedException e) {
-            executor.shutdownNow();
+            discard(executor.shutdownNow());
             Thread.currentThread().interrupt();
+        }
+    }
+
+    private void discardQueuedTasks() {
+        if (!(executor instanceof ThreadPoolExecutor)) {
+            return;
+        }
+        List<Runnable> queued = new ArrayList<>();
+        ((ThreadPoolExecutor) executor).getQueue().drainTo(queued);
+        discard(queued);
+    }
+
+    private void discard(List<Runnable> tasks) {
+        for (Runnable task : tasks) {
+            if (task instanceof ManagedTask) {
+                ((ManagedTask) task).discard();
+            }
+        }
+    }
+
+    /** 실행과 종료가 경합해도 둘 중 하나만 작업을 가져가게 한다. */
+    private static final class ManagedTask implements Runnable {
+        private final Runnable delegate;
+        private final Runnable onDiscarded;
+        private final AtomicBoolean claimed = new AtomicBoolean();
+
+        private ManagedTask(Runnable delegate, Runnable onDiscarded) {
+            this.delegate = delegate;
+            this.onDiscarded = onDiscarded;
+        }
+
+        @Override
+        public void run() {
+            if (claimed.compareAndSet(false, true)) {
+                delegate.run();
+            }
+        }
+
+        private void discard() {
+            if (!claimed.compareAndSet(false, true)) {
+                return;
+            }
+            try {
+                onDiscarded.run();
+            } catch (Throwable e) {
+                // 한 작업의 실패 기록이 다른 대기 작업 정리를 막으면 안 된다.
+                log.error("[PET_CHARACTER_DISCARD_FAILED] 종료된 대기 작업을 정리하지 못했습니다.", e);
+            }
         }
     }
 }
