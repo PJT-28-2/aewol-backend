@@ -77,6 +77,25 @@ class AuthControllerEmailVerificationTest {
     }
 
     @Test
+    void sendCodeRateLimitReturnsStandardTooManyRequestsResponse() throws Exception {
+        when(authService.sendSignupVerificationCode(any()))
+                .thenThrow(new BusinessException(HttpStatus.TOO_MANY_REQUESTS,
+                        "회원가입 인증번호 요청이 너무 많습니다. 30분 후 다시 시도해주세요."));
+
+        String body = mockMvc().perform(post("/api/auth/signup/send-code")
+                        .contentType("application/json")
+                        .content("{\"email\":\"user@example.com\"}"))
+                .andExpect(status().isTooManyRequests())
+                .andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8);
+        JsonNode json = objectMapper.readTree(body);
+
+        assertEquals(429, json.get("status").asInt());
+        assertEquals("회원가입 인증번호 요청이 너무 많습니다. 30분 후 다시 시도해주세요.",
+                json.get("message").asText());
+        assertTrue(json.get("result").isNull());
+    }
+
+    @Test
     void verifyCodeResponseIncludesNullResult() throws Exception {
         SignupEmailVerificationRequest request = new SignupEmailVerificationRequest();
         ReflectionTestUtils.setField(request, "email", "newuser@aewol.com");
