@@ -221,7 +221,7 @@ public class SpendingInsightCollector implements InsightCardCollector {
         }
         try {
             return groupPurchaseService
-                    .list(memberId, GroupPurchaseStatus.OPEN, null, topCategoryLabel, 0, RECOMMENDATION_LIMIT, "DEADLINE_ASC")
+                    .list(memberId, GroupPurchaseStatus.OPEN, null, topCategoryLabel, null, RECOMMENDATION_LIMIT, "DEADLINE_ASC")
                     .getItems();
         } catch (RuntimeException e) {
             log.debug("[Insight] 공동구매 추천 조회 실패 - memberId: {}, category: {}, reason: {}",

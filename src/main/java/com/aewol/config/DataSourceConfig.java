@@ -1,6 +1,7 @@
 package com.aewol.config;
 
 import com.zaxxer.hikari.HikariDataSource;
+import io.micrometer.core.instrument.MeterRegistry;
 import org.apache.ibatis.session.SqlSessionFactory;
 import org.mybatis.spring.SqlSessionFactoryBean;
 import org.mybatis.spring.SqlSessionTemplate;
@@ -39,7 +40,7 @@ public class DataSourceConfig {
     private String driverClassName;
 
     @Bean
-    public DataSource dataSource() {
+    public DataSource dataSource(MeterRegistry meterRegistry) {
         HikariDataSource ds = new HikariDataSource();
         ds.setJdbcUrl(url);
         ds.setUsername(username);
@@ -48,6 +49,9 @@ public class DataSourceConfig {
         ds.setMaximumPoolSize(10);
         ds.setMinimumIdle(5);
         ds.setConnectionTimeout(30_000);
+        // HikariCP는 첫 커넥션을 만든 뒤 metricRegistry를 바꾸지 못한다. BatchConfig의
+        // 스키마 초기화처럼 기동 중 커넥션을 여는 빈보다 먼저, 풀 설정 단계에서 붙인다.
+        ds.setMetricRegistry(meterRegistry);
         return ds;
     }
 

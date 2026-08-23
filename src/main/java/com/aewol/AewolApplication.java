@@ -80,6 +80,11 @@ public class AewolApplication {
         // 같은 id로 묶여야 "누가 왜 401을 받았는지"를 되짚을 수 있다.
         registerFilter(context, "requestIdFilter", new RequestIdFilter(), "/*");
 
+        // 요청 소요 시간은 보안 필터보다 바깥에서 잰다. 인증에서 튕겨 나가는 요청도
+        // 서버가 쓴 시간이고, 401이 몰리는 상황 자체가 봐야 할 신호다.
+        registerFilter(context, "httpMetricsFilter",
+                new DelegatingFilterProxy("httpMetricsFilter"), "/*");
+
         // Spring Security 필터
         registerFilter(context, "springSecurityFilterChain",
                 new DelegatingFilterProxy("springSecurityFilterChain"), "/*");

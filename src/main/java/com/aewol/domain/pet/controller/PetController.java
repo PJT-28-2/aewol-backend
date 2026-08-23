@@ -1,7 +1,10 @@
 package com.aewol.domain.pet.controller;
 
 import com.aewol.common.response.ApiResponse;
+import com.aewol.common.exception.BusinessException;
+import com.aewol.domain.pet.dto.PetCharacterJobResponse;
 import com.aewol.domain.pet.dto.PetCharacterResponse;
+import com.aewol.domain.pet.job.PetCharacterJob;
 import com.aewol.domain.pet.dto.PetCreateRequest;
 import com.aewol.domain.pet.dto.PetDocumentResponse;
 import com.aewol.domain.pet.dto.PetResponse;
@@ -35,8 +38,10 @@ public class PetController {
     private final PetRegistrationService petRegistrationService;
     private final PetCharacterService petCharacterService;
 
-    @Operation(summary = "반려동물 사진으로 AI 캐릭터 이미지 생성",
-            description = "전신 캐릭터와 정면 프로필 두 장을 만든다. 20초 이상 걸릴 수 있다.")
+    @Operation(summary = "반려동물 사진으로 AI 캐릭터 이미지 생성 (동기, 사용 중단 예정)",
+            description = "완성될 때까지 기다린다. 20초 이상 걸려 앞단 프록시 타임아웃에 걸릴 수 있다. "
+                    + "새 클라이언트는 POST /{petId}/character/jobs 를 쓴다.")
+    @Deprecated
     @PostMapping(value = "/{petId}/character", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     public ResponseEntity<ApiResponse<PetCharacterResponse>> generateCharacter(
             @AuthenticationPrincipal String memberId,
@@ -44,6 +49,31 @@ public class PetController {
             @RequestParam("photo") MultipartFile photo) {
         return ResponseEntity.ok(
                 ApiResponse.success(petCharacterService.generate(memberId, petId, photo)));
+    }
+
+    @Operation(summary = "AI 캐릭터 이미지 생성 접수",
+            description = "검증과 할당량 차감만 하고 즉시 202로 끊는다. 진행 상태는 작업 조회로 확인한다.")
+    @PostMapping(value = "/{petId}/character/jobs", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ResponseEntity<ApiResponse<PetCharacterJobResponse>> submitCharacterJob(
+            @AuthenticationPrincipal String memberId,
+            @PathVariable String petId,
+            @RequestParam("photo") MultipartFile photo) {
+        PetCharacterJob job = petCharacterService.submit(memberId, petId, photo);
+        return ResponseEntity.accepted()
+                .body(ApiResponse.success(PetCharacterJobResponse.from(job)));
+    }
+
+    @Operation(summary = "AI 캐릭터 생성 진행 상태 조회")
+    @GetMapping("/{petId}/character/jobs/{jobId}")
+    public ResponseEntity<ApiResponse<PetCharacterJobResponse>> findCharacterJob(
+            @AuthenticationPrincipal String memberId,
+            @PathVariable String petId,
+            @PathVariable String jobId) {
+        PetCharacterJob job = petCharacterService.findJob(memberId, jobId);
+        if (job == null) {
+            throw BusinessException.notFound("캐릭터 생성 요청을 찾을 수 없어요.");
+        }
+        return ResponseEntity.ok(ApiResponse.success(PetCharacterJobResponse.from(job)));
     }
 
     @Operation(summary = "반려동물 등록")
