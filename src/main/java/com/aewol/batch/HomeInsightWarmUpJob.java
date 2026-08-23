@@ -2,6 +2,7 @@ package com.aewol.batch;
 
 import com.aewol.domain.insight.mapper.HomeInsightMapper;
 import com.aewol.domain.insight.service.HomeInsightService;
+import java.time.Duration;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -20,11 +21,19 @@ import org.springframework.stereotype.Component;
 @RequiredArgsConstructor
 public class HomeInsightWarmUpJob {
 
+    static final String LOCK_KEY = "lock:batch:home-insight-warmup";
+    static final Duration LOCK_TTL = Duration.ofMinutes(30);
+
     private final HomeInsightService homeInsightService;
     private final HomeInsightMapper homeInsightMapper;
+    private final ScheduledJobLock scheduledJobLock;
 
     @Scheduled(cron = "0 30 4 * * *", zone = "Asia/Seoul")
     public void warmUp() {
+        scheduledJobLock.runExclusive(LOCK_KEY, LOCK_TTL, this::runWarmUp);
+    }
+
+    private void runWarmUp() {
         List<String> memberIds;
         try {
             memberIds = homeInsightMapper.findWarmUpTargetMemberIds();

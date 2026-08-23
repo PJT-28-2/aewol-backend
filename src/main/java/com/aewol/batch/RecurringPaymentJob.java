@@ -6,7 +6,9 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
+import java.time.Duration;
 import java.time.LocalDate;
+import java.time.ZoneId;
 import java.util.List;
 import java.util.Map;
 
@@ -15,16 +17,24 @@ import java.util.Map;
 @RequiredArgsConstructor
 public class RecurringPaymentJob {
 
+    static final String LOCK_KEY = "lock:batch:recurring-payment";
+    static final Duration LOCK_TTL = Duration.ofHours(1);
+
     private final RecurringMapper recurringMapper;
     private final RecurringPaymentExecutor executor;
+    private final ScheduledJobLock scheduledJobLock;
 
     /**
      * 매일 09:00 — next_payment_date가 오늘인 정기결제 자동 실행.
      * 각 건은 독립 트랜잭션(RecurringPaymentExecutor)으로 처리해 한 건의 실패가 나머지를 막지 않게 한다.
      */
-    @Scheduled(cron = "0 0 9 * * *")
+    @Scheduled(cron = "0 0 9 * * *", zone = "Asia/Seoul")
     public void executeRecurringPayments() {
-        LocalDate today = LocalDate.now();
+        scheduledJobLock.runExclusive(LOCK_KEY, LOCK_TTL, this::runDuePayments);
+    }
+
+    private void runDuePayments() {
+        LocalDate today = LocalDate.now(ZoneId.of("Asia/Seoul"));
         List<Map<String, Object>> duePayments = recurringMapper.findDuePayments(today.toString());
         log.info("[Batch] 정기결제 실행 시작 — 대상 {}건 ({})", duePayments.size(), today);
 
