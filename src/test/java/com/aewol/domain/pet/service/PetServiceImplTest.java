@@ -72,6 +72,17 @@ class PetServiceImplTest {
         assertEquals("/api/files/pet-character/fullbody.png?signed", response.getCharacterImg());
     }
 
+    // 공동육아 초대를 수락한 구성원(shared_access ACCEPTED)은 소유자가 아니어도
+    // 반려동물 상세를 조회할 수 있어야 한다.
+    @Test
+    void should_returnPet_when_memberHasSharedAccess() {
+        PetServiceImpl service = service();
+        when(petMapper.findById("pet-1")).thenReturn(pet("owner-1"));
+        when(petMapper.hasSharedAccess("pet-1", "member-2")).thenReturn(true);
+
+        assertEquals("pet-1", service.getPet("member-2", "pet-1").getPetId());
+    }
+
     @Test
     void should_throwForbidden_when_memberCannotViewPet() {
         PetServiceImpl service = service();
