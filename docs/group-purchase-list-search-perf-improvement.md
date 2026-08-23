@@ -1,6 +1,6 @@
 # 공동구매 목록 검색 성능 개선
 
-Issue #325 / 브랜치 `refactor/#325-group-purchase-search-perf`. 구현은 `refactor:`/`test:` 커밋 2건으로 나뉘어 있다(CLAUDE.md 커밋 컨벤션).
+Issue #325 / 브랜치 `refactor/#325-group-purchase-search-perf`. 구현은 CLAUDE.md 커밋 컨벤션에 따라 `refactor:`/`test:`/`docs:`/`chore:`/`fix:` 여러 건으로 나뉘어 있다.
 
 ## 1. 문제 정의
 
@@ -162,3 +162,19 @@ deadline ASC, created_at DESC, gp_id DESC
 - `src/views/grouppurchase/GroupPurchaseListView.vue`
 - `src/api/groupPurchase.js`
 - `src/views/grouppurchase/GroupPurchaseCreateStep3.vue`
+
+---
+
+## 6. 배포 전 확인 체크리스트
+
+리뷰에서 나왔으나 지금 당장 코드로 막을 필요는 없고, 실제 운영 배포 전에 한 번 더 확인하면 되는 항목들. 이전엔 대화로만 답하고 저장소에 남기지 않아서 여기에 정리한다.
+
+- [ ] **V48/V49/V50 마이그레이션 소요 시간·기동 지연 영향**
+  로컬 20만 행 기준 실측(2026-08-23, `flyway_schema_history.execution_time`): V48(FULLTEXT 인덱스) 1.4초, V49(컬럼 추가 + 백필 UPDATE) 2.8초, V50(CHECK 제약) 4.5초 — 합계 약 8.7초. V49/V50은 기존 행 전체를 훑는 연산(백필/제약 검증)이라 운영 DB 규모가 20만 행보다 크면 대략 비례해서 늘어날 걸로 예상된다. Flyway가 앱 기동 시 자동 실행되는 구조라면(현재 CI는 `./gradlew flywayMigrate`를 별도 스텝으로 분리해서 돌리지만, 운영 배포 파이프라인이 어떻게 구성돼 있는지는 이 문서 범위 밖) 기동 타임아웃에 걸리지 않는지 운영 규모로 별도 확인 필요. V48(FULLTEXT 최초 생성)은 여기 더해 쓰기 잠금(Online DDL 미지원, 별도 항목 참고)도 함께 고려해야 한다.
+- [ ] **V50 CHECK 제약의 사전 조건이 코드로 강제되지 않음**
+  `V50__group_purchase_target_quantity_check.sql`은 "적용 전 target_quantity <= 0인 행 0건 확인(2026-08-23 기준)"을 주석으로만 남겼다. 이 확인은 로컬/개발 DB 기준이라, 스테이징 등 다른 환경에 레거시 데이터가 있으면 그 환경에서 마이그레이션이 실패한다(MySQL이 `Check constraint ... is violated`로 명확히 실패하긴 하므로 조용히 깨지진 않는다). 새 환경에 처음 적용하기 전에 아래 쿼리로 위반 행이 없는지 직접 확인할 것:
+  ```sql
+  SELECT COUNT(*) FROM group_purchase WHERE target_quantity <= 0;
+  ```
+- [ ] **자정 배치(`GroupPurchaseUrgentFlagJob`) 실패 시 재시도/알림 정책**
+  확인 결과 `GroupPurchaseRefundJob`도 개별 참여자 처리만 try/catch로 감싸고 매퍼 조회 자체(`findExpiredUnfulfilledPaidParticipants`)는 감싸지 않는 동일한 구조다 — 즉 두 배치 모두 전체 실패 시 별도 재시도·알림 없이 Spring 기본 로깅에 의존하고, 다음 스케줄(각각 다음날 자정 / 10분 뒤)에 자연히 재시도된다. 현재는 서로 일관돼 있지만, 이 프로젝트에 배치 모니터링/알림 체계가 새로 생기면 두 배치를 같이 반영해야 한다.
