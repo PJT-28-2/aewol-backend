@@ -1,6 +1,6 @@
 # 잔돈 적립 배치 성능/안정성 개선
 
-방향성 결정 문서 — 실제 구현은 아직 착수 전이다. `docs/group-purchase-list-search-perf-improvement.md`와 같은 형식(문제 정의 → 해결 기술 선택 이유 → 기대 효과 → 관련 파일)을 따른다.
+Issue #349 / 브랜치 `refactor/#349-donation-roundup-batch`. 구현 완료(2장에서 채택한 방향대로 진행). `docs/group-purchase-list-search-perf-improvement.md`와 같은 형식(문제 정의 → 해결 기술 선택 이유 → 개선 효과 → 관련 파일)을 따른다.
 
 ## 1. 문제 정의
 
@@ -69,29 +69,49 @@ SELECT * FROM wallet WHERE member_id = #{memberId} AND wallet_type = 'DONATION' 
 
 ---
 
-## 3. 기대 개선 효과 (구현 후 검증 예정)
+## 3. 개선 효과
 
-구현 전이라 아래는 실측치가 아니라 **무엇을, 어떻게 검증할지에 대한 계획**이다. 공동구매 사례처럼 실제 구현 후 로컬 MySQL 실측으로 채운다.
+### 3-1. 부분 실패 시 롤백 범위 — 구조로 고정, 테스트로 검증
 
-| 항목 | 검증 방법 | 현재(예상) | 개선 후(예상) |
+`DonationRoundUpTransactionBoundaryTest`(`PaymentTransactionBoundaryTest`와 동일한 리플렉션 기반 접근)로 다음을 고정했다.
+
+- `DonationRoundUpExecutor.execute()`에 `@Transactional`이 있다.
+- `DonationRoundUpJob`의 어떤 메서드에도 `@Transactional`이 없다.
+
+Spring의 `@Transactional`은 기본 전파(REQUIRED)에서, 트랜잭션 밖의 호출자가 `@Transactional` 메서드를 호출할 때마다 매번 새 트랜잭션을 연다. 이 구조가 유지되는 한 "후보 1건 실패가 다른 후보의 이미 커밋된 처리를 롤백시키는" 것은 원리적으로 불가능하다 — 실제로 N건을 넣고 한 건을 실패시켜 나머지가 커밋되는지 실행해 확인하는 통합테스트 없이도 항상 성립한다(이 방식을 택한 이유는 위 문서의 "리팩토링 이유"가 아니라 이 프로젝트의 기존 컨벤션이다).
+
+### 3-2. wallet 행 락 보유 시간 — 실측 완료
+
+로컬 docker-compose MySQL(`aewol-mysql`, MySQL 8.4.11)에서 실제 `wallet`/`donation_roundup`/`transaction` 테이블에 회원 30명(전용 시드 계정, 측정 후 정리)을 만들어 두 시나리오를 실측했다(2026-08-23). `DonationRoundUpExecutor`/구 `processDailyRoundUps`와 동일한 5단계(FOR UPDATE 잠금 → 적립 기록 → 잔액 반영 → 완료 처리)를 그대로 재현했고, `FOR UPDATE` 획득 시각부터 그 트랜잭션의 COMMIT 시각까지를 락 보유 시간으로 측정했다.
+
+| 시나리오 | 1번째 처리 회원 | 마지막(30번째) 처리 회원 | 평균 |
 | --- | --- | --- | --- |
-| 부분 실패 시 롤백 범위 | 통합 테스트: N건 중 1건을 의도적으로 실패시키고 나머지 커밋 여부 확인 | 전체 롤백 | 실패한 1건만 스킵, 나머지 커밋 |
-| wallet 행 락 보유 시간 | `SHOW ENGINE INNODB STATUS` 또는 트랜잭션 시작~커밋 타임스탬프 로그로 측정 | 배치 전체 소요 시간과 동일 | 회원 1건 처리 시간(수 ms~수십 ms) |
-| 배치 전체 소요 시간 | 동일 시드 데이터로 Before/After 실측 | 기준치 | **비슷하거나 소폭 증가할 수 있음** — 회원별로 트랜잭션을 새로 여는 오버헤드가 추가되기 때문. 이건 정직하게 감수하는 트레이드오프이지 이번 개선의 목표가 아니다(목표는 안정성) |
+| **AS-IS 재현** (30건을 단일 트랜잭션 하나로 묶음) | 184.08ms | 6.80ms | 108.96ms |
+| **TO-BE** (건별 독립 트랜잭션) | 5.74ms | 12.41ms | 13.92ms (이상치 1건 89ms 포함, 제외 시 약 11.5ms) |
+
+AS-IS는 처리 순서가 앞설수록 락 보유 시간이 배치 나머지 전체 소요 시간에 비례해 길어진다(첫 번째 회원이 사실상 배치 전체 소요 시간만큼 자신의 지갑을 잠근 채 대기시킨다) — 회원 수(N)가 늘수록 초기 회원들의 대기 시간도 함께 늘어나는 구조다. TO-BE는 처리 순서와 무관하게 항상 그 회원 1건의 처리 시간(수 ms~십수 ms)만큼만 유지되며, N이 커져도 이 값 자체는 늘지 않는다(각 트랜잭션이 서로 독립적이므로).
+
+### 3-3. 배치 전체 소요 시간 — 트레이드오프, 목표 아님
+
+회원별로 트랜잭션을 새로 여는 오버헤드가 추가되어 배치 전체 소요 시간은 AS-IS보다 비슷하거나 소폭 늘어날 수 있다(위 실측에서도 TO-BE 30건 합계가 AS-IS 30건 합계보다 약간 더 걸렸다 — AS-IS는 락 보유 시간의 합이 실제 총 소요 시간과 다르지만, TO-BE는 트랜잭션 개수만큼 BEGIN/COMMIT 왕복이 늘어난다). 이건 정직하게 감수하는 트레이드오프이지 이번 개선의 목표가 아니다(목표는 정합성·가용성).
 
 ---
 
-## 4. 구현 스케치 (미착수, 방향성만)
+## 4. 구현 완료
 
-- `DonationRoundUpExecutor` 신규 추가(`GroupPurchaseRefundExecutor` 패턴 그대로) — `execute(candidate)` 메서드에 `@Transactional`, 기존 5쿼리 로직을 여기로 이동
-- `DonationServiceImpl.processDailyRoundUps()`에서 `@Transactional` 제거, 후보 조회 + for 루프 + try/catch로 `executor.execute(candidate)` 위임 (또는 `DonationRoundUpJob`으로 이 루프 자체를 옮기는 것도 검토 — `GroupPurchaseRefundJob`이 그 구조)
-- 실패 건은 로그로 남기고(`GroupPurchaseRefundJob`처럼 성공/스킵/오류 건수 집계), 배치 전체는 계속 진행
+- `DonationRoundUpExecutor` 신규(`GroupPurchaseRefundExecutor` 패턴 그대로) — `execute(candidate)`에 `@Transactional`, 기존 5쿼리 로직을 그대로 이동
+- `DonationRoundUpJob`이 후보 목록을 직접 조회하고 for 루프 + try/catch로 `executor.execute(candidate)`에 위임하는 구조로 변경(`GroupPurchaseRefundJob`과 동일). 성공/스킵/오류 건수 집계 로그. 스킵은 건별 warn을 남기지 않는다 — "결제액이 저금 단위로 딱 떨어짐"이 대부분이라 정상적인 흔한 케이스이기 때문(`GroupPurchaseRefundJob`과의 의도적인 차이)
+- `DonationService`/`DonationServiceImpl`에서 `processDailyRoundUps()`와 그 전용 헬퍼(`roundUpAmount()`) 완전히 제거 — 더 이상 호출되지 않는 경로를 죽은 코드로 남기지 않았다
 - `insertRoundUp`의 `ON DUPLICATE KEY UPDATE` 멱등성은 그대로 유지 — 독립 트랜잭션으로 바뀌어도 재실행 안전성에 영향 없음
+- 테스트: `DonationRoundUpExecutorTest`(8건, 정상 적립/신규 저금통/SKIPPED/중복 스킵/유효성/예외), `DonationRoundUpTransactionBoundaryTest`(4건, 트랜잭션 경계 구조 검증), 기존 `DonationServiceImplTest`의 `processDailyRoundUps` 테스트 3건은 커버리지 손실 없이 제거
 
 ## 5. 관련 파일
 
+- `src/main/java/com/aewol/batch/DonationRoundUpExecutor.java` (신규)
 - `src/main/java/com/aewol/batch/DonationRoundUpJob.java`
-- `src/main/java/com/aewol/domain/donation/service/DonationServiceImpl.java` (`processDailyRoundUps`, `getOrCreatePotForUpdate`)
+- `src/main/java/com/aewol/domain/donation/service/DonationService.java`, `DonationServiceImpl.java`
 - `src/main/resources/mapper/donation/DonationMapper.xml` (`findTodayRoundUpCandidates`, `findPotForUpdate`, `insertRoundUp`, `increasePotBalance`, `completeRoundUp`)
-- 참고 패턴: `src/main/java/com/aewol/batch/GroupPurchaseRefundJob.java`, `GroupPurchaseRefundExecutor.java`, `RecurringPaymentJob.java`, `RecurringPaymentExecutor.java`
+- `src/test/java/com/aewol/batch/DonationRoundUpExecutorTest.java`, `DonationRoundUpTransactionBoundaryTest.java` (신규)
+- `src/test/java/com/aewol/domain/donation/service/DonationServiceImplTest.java`
+- 참고 패턴: `src/main/java/com/aewol/batch/GroupPurchaseRefundJob.java`, `GroupPurchaseRefundExecutor.java`, `RecurringPaymentJob.java`, `RecurringPaymentExecutor.java`, `PaymentTransactionBoundaryTest.java`
 - `src/main/java/com/aewol/batch/ScheduledJobLock.java` (동시 인스턴스 실행 방지 — 이번 개선과 무관하게 이미 해결돼 있음, 참고용)
