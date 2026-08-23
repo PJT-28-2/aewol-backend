@@ -140,11 +140,25 @@
          반드시 이 WHERE 절 안에서 판정해야 한다.
          영향받은 행이 0이면(조건 불충족) 호출부에서 참여를 거절해야 한다.
          이 UPDATE로 목표 수량에 도달하면(current_quantity + quantity = target_quantity) 같은 문장 안에서
-         is_urgent_active를 0으로 함께 내린다 — 배치를 기다리지 않고 그 즉시 전체 탭 정렬에 반영된다. -->
+         is_urgent_active를 0으로 함께 내린다 — 배치를 기다리지 않고 그 즉시 전체 탭 정렬에 반영된다.
+
+         SET 절의 순서가 중요하다(리뷰로 발견한 실제 버그): MySQL은 같은 UPDATE 문 안의 SET 절을
+         왼쪽에서 오른쪽으로 순차 평가하고, 뒤에 오는 절은 앞에서 이미 갱신된 값을 본다. is_urgent_active
+         CASE를 current_quantity 갱신 뒤에 두면 그 안의 current_quantity가 "이미 quantity만큼 더해진"
+         값을 가리켜, 거기에 quantity를 한 번 더 더한 것과 같아진다(사실상 목표 도달 여부를 실제
+         증가분의 두 배 기준으로 판정). 예: current=7, target=10, quantity=2로 참여하면 실제
+         새 current_quantity=9(아직 미달, urgent 유지돼야 함)인데, 잘못된 순서에서는
+         9+2=11 >= target(10)로 오판해 is_urgent_active를 0으로 내려버린다 — 이후 leave()도
+         자정 배치도 이 값을 되돌리지 않아 V50 주석이 경계한 "영구히 잘못 박힌 채 남는" 상태가 된다.
+         반드시 is_urgent_active를 먼저 계산해(이 시점엔 current_quantity가 아직 원본 값이라
+         + #{quantity}가 순수하게 "이번에 참여할 양"만 의미한다) current_quantity 갱신보다 앞에 둔다.
+         H2(GroupPurchaseMapperTest)는 이 순차 평가 방식을 따르지 않아(모든 SET 절이 갱신 전 스냅숏을
+         봄) 이 버그를 재현하지 못한다 — 그래서 실 MySQL 통합 테스트로 별도 검증한다
+         (GroupPurchaseUpdateQuantitySetOrderIntegrationTest). -->
     <update id="updateQuantity">
         UPDATE group_purchase
-        SET current_quantity = current_quantity + #{quantity},
-            is_urgent_active = CASE WHEN current_quantity + #{quantity} &lt; target_quantity THEN 1 ELSE 0 END
+        SET is_urgent_active = CASE WHEN current_quantity + #{quantity} &lt; target_quantity THEN 1 ELSE 0 END,
+            current_quantity = current_quantity + #{quantity}
         WHERE gp_id = #{gpId}
           AND current_quantity + #{quantity} &lt;= target_quantity
           AND deadline &gt;= NOW()
