@@ -44,8 +44,7 @@ SELECT * FROM wallet WHERE member_id = #{memberId} AND wallet_type = 'DONATION' 
 
 ### 데이터 규모
 
-저장소에 일일 처리 건수에 대한 근거(시드 데이터, 문서, 이슈)가 없다. `V51__add_transaction_wallet_date_index.sql` 주석이 "잔돈 적립 배치는 `idx_txn_date`를 그대로 쓴다"고 언급하지만 이는 인덱스 선택 근거이지 건수 추정치가 아니다. 실측이 필요하면 공동구매 때처럼 시드 데이터를 직접 설계해야 한다.
-
+저장소에 일일 처리 건수에 대한 근거(시드 데이터, 문서, 이슈)가 없다. `V51__add_transaction_wallet_date_index.sql` 주석이 "잔돈 적립 배치는 `idx_txn_date`를 그대로 쓴다"고 언급하지만 이는 인덱스 선택 근거이지 건수 추정치가 아니다. 실측이 필요하면 공동구매 때처럼 시드 데이터를 직접
 ---
 
 ## 2. 해결 기술 선택 이유
