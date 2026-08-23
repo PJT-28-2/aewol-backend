@@ -50,7 +50,7 @@ SELECT n FROM seq;
 -- seq_1k(1000) x seq_200(200) = 정확히 20만 행. 필터 없이 카티션 곱만으로 rn을 만든다.
 INSERT INTO `group_purchase`
     (`member_id`, `product_name`, `category`, `unit_price`, `group_price`,
-     `target_quantity`, `current_quantity`, `status`, `deadline`, `created_at`)
+     `target_quantity`, `current_quantity`, `status`, `is_urgent_active`, `deadline`, `created_at`)
 SELECT
     @seed_member_id,
     CASE WHEN MOD(rn, 137) = 0
@@ -64,6 +64,12 @@ SELECT
     -- 완료(30%, MOD 4~6): 목표 달성. 진행중/마감실패(70%): 목표 미달.
     CASE WHEN MOD(rn, 10) BETWEEN 4 AND 6 THEN tgt ELSE FLOOR(tgt / 2) END,
     'OPEN',
+    -- V49: is_urgent_active는 DB가 자동 계산해주지 않는 파생 컬럼이라 여기서도 실제 서비스와
+    -- 같은 규칙(current_quantity < target_quantity AND deadline >= NOW())을 반영해야 한다.
+    -- 컬럼 자체를 빼먹으면 NOT NULL DEFAULT 0이 전 행에 조용히 들어가 "전체 탭" 벤치마크가
+    -- is_urgent_active 분기 없이 도는 것처럼 되어버린다(리뷰로 발견, 재측정 계기).
+    -- 완료(MOD 4~6)와 마감실패(MOD 7~9)는 urgent가 아니고, 나머지(진행중, MOD 0~3)만 urgent다.
+    CASE WHEN MOD(rn, 10) BETWEEN 4 AND 9 THEN 0 ELSE 1 END,
     -- 마감실패(30%, MOD 7~9): 과거 마감. 진행중/완료(70%): 미래 마감.
     CASE WHEN MOD(rn, 10) BETWEEN 7 AND 9
          THEN DATE_SUB(NOW(), INTERVAL (1 + MOD(rn, 365)) DAY)
