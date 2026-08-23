@@ -29,6 +29,13 @@ public interface FileStorage {
      * 안전하게 fire-and-forget으로 쓸 수 있어야 하기 때문이다(PR #200 리뷰). {@link LocalFileStorage}는
      * 이 계약을 따른다 — 새 구현체를 추가할 때도 반드시 지킬 것.
      */
+    /**
+     * 파일을 지운다.
+     *
+     * <p><b>실패해도 예외를 던지지 않는다.</b> 정리는 대체로 부가 작업이라, 지우지 못한
+     * 것 때문에 본 작업이 깨지면 안 된다. 특히 예외 처리 중에 불리는 자리가 있어서
+     * 여기서 새 예외가 나면 원래 실패 원인을 가려버린다. 구현체는 이 계약을 지켜야 한다.
+     */
     void delete(String key);
 
     InputStream read(String key);

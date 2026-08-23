@@ -13,6 +13,12 @@ public class BusinessException extends RuntimeException {
         this.status = HttpStatus.BAD_REQUEST;
     }
 
+    /** 원인을 남긴다. 사용자에게는 message만 나가고 스택은 로그에 남는다. */
+    public BusinessException(String message, Throwable cause) {
+        super(message, cause);
+        this.status = HttpStatus.BAD_REQUEST;
+    }
+
     public BusinessException(HttpStatus status, String message) {
         super(message);
         this.status = status;
