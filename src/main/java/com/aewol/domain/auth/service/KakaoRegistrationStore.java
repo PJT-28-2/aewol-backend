@@ -1,6 +1,7 @@
 package com.aewol.domain.auth.service;
 
 import com.aewol.common.exception.BusinessException;
+import com.aewol.common.exception.ErrorCode;
 import com.aewol.common.util.Sha256Util;
 import com.aewol.domain.auth.dto.KakaoRegistrationSession;
 import com.fasterxml.jackson.core.JsonProcessingException;
@@ -227,7 +228,10 @@ public class KakaoRegistrationStore {
     }
 
     private BusinessException invalidSession() {
-        return new BusinessException(HttpStatus.BAD_REQUEST, INVALID_SESSION_MESSAGE);
+        return new BusinessException(
+                HttpStatus.BAD_REQUEST,
+                INVALID_SESSION_MESSAGE,
+                ErrorCode.KAKAO_REGISTRATION_SESSION_INVALID_OR_EXPIRED);
     }
 
     private BusinessException serviceUnavailable() {

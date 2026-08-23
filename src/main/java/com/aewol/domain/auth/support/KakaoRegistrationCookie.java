@@ -1,12 +1,14 @@
 package com.aewol.domain.auth.support;
 
 import com.aewol.common.exception.BusinessException;
+import com.aewol.common.exception.ErrorCode;
 import java.time.Duration;
 import javax.servlet.http.Cookie;
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseCookie;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
@@ -41,7 +43,10 @@ public class KakaoRegistrationCookie {
 
     public void requireMatches(HttpServletRequest request, String registrationToken) {
         if (!StringUtils.hasText(registrationToken) || !registrationToken.equals(read(request))) {
-            throw BusinessException.unauthorized("카카오 가입 세션이 유효하지 않습니다.");
+            throw new BusinessException(
+                    HttpStatus.UNAUTHORIZED,
+                    "카카오 가입 세션이 유효하지 않습니다.",
+                    ErrorCode.KAKAO_REGISTRATION_SESSION_INVALID_OR_EXPIRED);
         }
     }
 

@@ -1,6 +1,7 @@
 package com.aewol.domain.auth.service;
 
 import com.aewol.common.exception.BusinessException;
+import com.aewol.common.exception.ErrorCode;
 import java.security.SecureRandom;
 import java.util.Arrays;
 import java.util.List;
@@ -20,6 +21,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
@@ -149,6 +151,7 @@ class KakaoPhoneVerificationStoreTest {
             BusinessException exception = assertThrows(BusinessException.class,
                     () -> store.verify(TOKEN_HASH, "123456"));
             assertEquals(HttpStatus.BAD_REQUEST, exception.getStatus());
+            assertNull(exception.getErrorCode());
         }
     }
 
@@ -204,7 +207,10 @@ class KakaoPhoneVerificationStoreTest {
                 () -> store.issue(REGISTRATION_KEY, TOKEN_HASH, "01012345678"));
 
         assertEquals(HttpStatus.CONFLICT, claimed.getStatus());
+        assertNull(claimed.getErrorCode());
         assertEquals(HttpStatus.BAD_REQUEST, expired.getStatus());
+        assertEquals(ErrorCode.KAKAO_REGISTRATION_SESSION_INVALID_OR_EXPIRED,
+                expired.getErrorCode());
     }
 
     @Test
@@ -216,6 +222,7 @@ class KakaoPhoneVerificationStoreTest {
                 () -> store.issue(REGISTRATION_KEY, TOKEN_HASH, "01012345678"));
 
         assertEquals(HttpStatus.SERVICE_UNAVAILABLE, exception.getStatus());
+        assertNull(exception.getErrorCode());
         assertFalse(exception.getMessage().contains("redis"));
     }
 }

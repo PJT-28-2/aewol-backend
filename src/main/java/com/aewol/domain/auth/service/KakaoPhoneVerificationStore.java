@@ -1,6 +1,7 @@
 package com.aewol.domain.auth.service;
 
 import com.aewol.common.exception.BusinessException;
+import com.aewol.common.exception.ErrorCode;
 import java.security.SecureRandom;
 import java.util.HexFormat;
 import java.util.List;
@@ -121,7 +122,7 @@ public class KakaoPhoneVerificationStore {
             throw serviceUnavailable();
         }
         if (ttlMillis <= 0L) {
-            throw new BusinessException(HttpStatus.BAD_REQUEST, INVALID_SESSION_MESSAGE);
+            throw invalidRegistrationSession();
         }
         long expiresInSeconds = Math.max(1L, (ttlMillis + 999L) / 1000L);
         return new IssuedVerification(verificationId, code, value, expiresInSeconds);
@@ -180,8 +181,15 @@ public class KakaoPhoneVerificationStore {
 
     private void validateVerificationId(String verificationId) {
         if (verificationId == null || !verificationId.matches("[0-9a-f]{64}")) {
-            throw new BusinessException(HttpStatus.BAD_REQUEST, INVALID_SESSION_MESSAGE);
+            throw invalidRegistrationSession();
         }
+    }
+
+    private BusinessException invalidRegistrationSession() {
+        return new BusinessException(
+                HttpStatus.BAD_REQUEST,
+                INVALID_SESSION_MESSAGE,
+                ErrorCode.KAKAO_REGISTRATION_SESSION_INVALID_OR_EXPIRED);
     }
 
     private BusinessException serviceUnavailable() {

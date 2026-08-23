@@ -1,6 +1,7 @@
 package com.aewol.domain.auth.service;
 
 import com.aewol.common.exception.BusinessException;
+import com.aewol.common.exception.ErrorCode;
 import com.aewol.domain.auth.dto.KakaoRegistrationSession;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -23,6 +24,7 @@ import org.springframework.http.HttpStatus;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.anyList;
@@ -94,6 +96,7 @@ class KakaoRegistrationStoreTest {
                 exception.getMessage());
         assertFalse(exception.getMessage().contains("redis"));
         assertFalse(exception.getMessage().contains("token"));
+        assertNull(exception.getErrorCode());
     }
 
     @Test
@@ -137,19 +140,27 @@ class KakaoRegistrationStoreTest {
     }
 
     @Test
-    void readsVerifiedSessionAndRejectsMalformedJson() {
+    void readsVerifiedSessionAndCodesMissingOrMalformedSessionAsInvalidOrExpired() {
         String token = TOKEN_A;
         when(valueOperations.get("kakao:registration:" + TOKEN_A_HASH))
                 .thenReturn("{\"providerId\":\"123\",\"email\":\"a@example.com\","
                                 + "\"name\":\"홍길동\",\"verifiedPhone\":\"01012345678\"}",
-                        "{malformed");
+                        "{malformed",
+                        null);
 
         KakaoRegistrationSession session = store.getAvailable(token);
         BusinessException malformed = assertThrows(BusinessException.class,
                 () -> store.getAvailable(token));
+        BusinessException missing = assertThrows(BusinessException.class,
+                () -> store.getAvailable(token));
 
         assertEquals("01012345678", session.getVerifiedPhone());
         assertEquals(HttpStatus.BAD_REQUEST, malformed.getStatus());
+        assertEquals(ErrorCode.KAKAO_REGISTRATION_SESSION_INVALID_OR_EXPIRED,
+                malformed.getErrorCode());
+        assertEquals(HttpStatus.BAD_REQUEST, missing.getStatus());
+        assertEquals(ErrorCode.KAKAO_REGISTRATION_SESSION_INVALID_OR_EXPIRED,
+                missing.getErrorCode());
     }
 
     @Test
@@ -169,6 +180,20 @@ class KakaoRegistrationStoreTest {
         assertFalse(script.contains("accessToken"));
         assertFalse(script.contains("refreshToken"));
         assertFalse(script.contains("authorizationCode"));
+    }
+
+    @Test
+    void missingOrInvalidSessionDuringPhoneUpdateUsesInvalidOrExpiredCode() {
+        when(redisTemplate.execute(any(RedisScript.class), anyList(), eq("01012345678")))
+                .thenReturn("MISSING", "INVALID");
+
+        for (int attempt = 0; attempt < 2; attempt++) {
+            BusinessException exception = assertThrows(BusinessException.class,
+                    () -> store.updateVerifiedPhone(TOKEN_A, "01012345678"));
+            assertEquals(HttpStatus.BAD_REQUEST, exception.getStatus());
+            assertEquals(ErrorCode.KAKAO_REGISTRATION_SESSION_INVALID_OR_EXPIRED,
+                    exception.getErrorCode());
+        }
     }
 
     @Test
@@ -207,6 +232,7 @@ class KakaoRegistrationStoreTest {
                 () -> store.claim("c".repeat(43)));
 
         assertEquals(HttpStatus.CONFLICT, exception.getStatus());
+        assertNull(exception.getErrorCode());
     }
 
     @Test
@@ -218,6 +244,8 @@ class KakaoRegistrationStoreTest {
                 () -> store.claim("f".repeat(43)));
 
         assertEquals(HttpStatus.BAD_REQUEST, exception.getStatus());
+        assertEquals(ErrorCode.KAKAO_REGISTRATION_SESSION_INVALID_OR_EXPIRED,
+                exception.getErrorCode());
     }
 
     @Test
@@ -256,6 +284,7 @@ class KakaoRegistrationStoreTest {
 
         assertEquals(HttpStatus.SERVICE_UNAVAILABLE, exception.getStatus());
         assertFalse(exception.getMessage().contains("redis"));
+        assertNull(exception.getErrorCode());
     }
 
     private KakaoRegistrationSession session() {
