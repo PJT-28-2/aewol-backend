@@ -65,17 +65,22 @@ deadline ASC, created_at DESC, gp_id DESC
 
 ### 결과
 
-> BEFORE/AFTER 모두 2026-08-22 로컬 docker-compose MySQL(`aewol-mysql` 컨테이너, MySQL 8)에서 `scripts/gp-perf-bench.sh`로 실측했다(시드 20만 행, 워밍업 5회 + 측정 10회). 구현(V47/V48 마이그레이션 + 매퍼/서비스 변경)을 실제로 적용한 뒤 재실행한 결과다.
+> BEFORE/AFTER 모두 2026-08-23 로컬 docker-compose MySQL(`aewol-mysql` 컨테이너, MySQL 8)에서 `scripts/gp-perf-bench.sh`로 실측했다(시드 20만 행, 워밍업 5회 + 측정 10회). 구현(V48/V49/V50 마이그레이션 + 매퍼/서비스 변경)을 실제로 적용한 뒤 재실행한 결과다.
 >
-> **측정 중 발견한 스크립트 버그 하나를 고쳤다**: `gp-perf-bench-after.sql.template`의 전체 탭 쿼리가 `ORDER BY is_urgent_active ASC ...`로 돼 있었는데, 실제 매퍼(`GroupPurchaseMapper.xml`)는 `is_urgent_active DESC`다. 인덱스(`idx_gp_urgent_deadline_created`)는 `DESC`로 만들어져 있어 `ASC` 쿼리로는 정렬을 못 받아 풀스캔+filesort로 떨어졌었다(최초 측정 240ms → "개선"이 235ms로 거의 효과 없어 보였던 원인). 방향을 `DESC`로 고치고 키워드 검색도 실제 코드와 동일한 `BOOLEAN MODE` phrase 검색으로 맞춘 뒤 재측정한 값이 아래 표다. 실제 프로덕션 쿼리를 `EXPLAIN`한 결과 `type=index`, `rows=11`, filesort 없음을 직접 확인했다.
+> **이 표는 두 번째 정정판이다.** 리뷰로 벤치마크 스크립트 자체의 오류 세 가지를 추가로 발견해서 고쳤다:
+> 1. `gp-perf-seed.sql`이 `is_urgent_active` 컬럼을 INSERT 목록에서 빠뜨려서, V49 적용 후 시드 20만 행이 전부 기본값 0으로 들어가고 있었다 — "전체 탭" 측정이 사실상 정렬 키가 상수인 자명한 케이스를 측정한 것이라 실제 운영 데이터(진행중/완료/마감실패가 섞인 분포)를 대표하지 못했다. 실제 서비스와 동일한 규칙(현재수량<목표수량 AND 마감>=현재시각)으로 채우도록 고쳤다.
+> 2. `gp-perf-bench-after.sql.template`의 딥 페이지 시나리오가 `(deadline, created_at, gp_id) < (x, y, z)` 튜플 비교를 썼는데, 이건 세 컬럼 모두 오름차순 비교라 실제 매퍼의 `deadline ASC, created_at DESC, gp_id DESC` 혼합 정렬과 의미가 다르다(특히 `deadline` 비교 방향이 반대) — 실제 매퍼의 OR 전개식으로 바꿨다.
+> 3. 같은 파일의 키워드 검색 시나리오 2개가 `ORDER BY CASE WHEN ... NOW() ...`(V49 이전 코드)를 그대로 쓰고 있어서, 실제 매퍼가 쓰는 `is_urgent_active DESC`와 다른 정렬식을 측정하고 있었다.
+>
+> (이전 정정에서는 `is_urgent_active ASC/DESC` 방향 버그와 `NATURAL LANGUAGE MODE`→`BOOLEAN MODE` 불일치를 고쳤다.) 세 가지를 모두 고치고 시드부터 다시 적재해 재측정한 값이 아래 표다. 절대 시간은 로컬 머신의 그 순간 부하에 따라 실행마다 달라질 수 있어(이번 BEFORE 수치가 이전 정정판보다 전반적으로 높게 나온 것도 그 때문으로 보인다) 배수(비율)와 `EXPLAIN` 실행계획 변화를 신뢰할 신호로 본다.
 
 | 시나리오 | Before (응답시간, avg/p95) | After (응답시간, avg/p95) | 비고 |
 | --- | --- | --- | --- |
-| 키워드 검색 (`keyword` 있음, `status` 없음) | avg 294.74ms / p95 453.80ms | avg 115.74ms / p95 138.64ms (약 2.5배) | `type=ALL`(풀스캔) → `type=fulltext`. 이 시나리오는 매칭 후보가 전체의 약 0.7%(137행마다 1개)라 fulltext 자체 비용이 남아 있지만, 테이블 크기와 무관해지는 게 핵심 — 20만 행이 200만 행이 돼도 이 비용은 거의 그대로다 |
-| 키워드 검색 + 카테고리 필터 | avg 198.84ms / p95 268.07ms | avg 103.86ms / p95 116.59ms (약 1.9배) | FULLTEXT 인덱스가 우선 사용되고 category는 `Using where`로 추가 필터링됨(`possible_keys`에 `idx_gp_category_deadline_created`도 후보로 잡히지만 옵티마이저는 `ft_gp_product_name`을 선택) |
-| 목록 조회 1페이지 (offset=0 / 커서 없음, status=OPEN) | avg 0.30ms / p95 0.41ms | avg 0.56ms / p95 0.73ms | 예상대로 거의 동일 — 커서 방식도 1페이지는 OFFSET 0과 같은 쿼리라 개선 여지가 없음(측정 노이즈 범위) |
-| 목록 조회 딥 페이지 (offset=1000 / 그 지점 커서, size=10 기준 약 100페이지, status=OPEN) | avg 6.34ms / p95 12.89ms | avg 0.47ms / p95 0.81ms (약 13배) | offset=1000은 아직 OFFSET 비용이 크지 않은 지점인데도 이 정도 차이. offset이 더 커지거나 테이블이 커질수록 BEFORE는 계속 선형으로 증가하고 AFTER(keyset)는 거의 그대로 유지된다 |
-| 전체 탭 (상태 필터 없음) | avg 240.36ms / p95 280.22ms | **avg 0.31ms / p95 0.40ms (약 775배)** | `type=ALL`(풀스캔) + `Using filesort` → `type=index`, `key=idx_gp_urgent_deadline_created`, `rows=11`, filesort 없음. V39/V42에 "별도 과제"로 남아있던 항목이 세 항목 중 가장 극적으로 개선됨 |
+| 키워드 검색 (`keyword` 있음, `status` 없음) | avg 1011.30ms / p95 1255.69ms | avg 180.37ms / p95 205.20ms (약 5.6배) | `type=ALL`(풀스캔) → `type=fulltext`. 매칭 후보가 전체의 약 0.7%(137행마다 1개)라 fulltext 자체 비용 + `is_urgent_active` 정렬을 위한 `Using filesort`가 남아 있지만, 테이블 크기와 무관해지는 게 핵심 — 20만 행이 200만 행이 돼도 이 비용은 거의 그대로다 |
+| 키워드 검색 + 카테고리 필터 | avg 771.18ms / p95 969.72ms | avg 204.24ms / p95 266.11ms (약 3.8배) | FULLTEXT 인덱스가 우선 사용되고 category는 `Using where`로 추가 필터링됨(`possible_keys`에 `idx_gp_category_deadline_created`도 후보로 잡히지만 옵티마이저는 `ft_gp_product_name`을 선택) |
+| 목록 조회 1페이지 (offset=0 / 커서 없음, status=OPEN) | avg 2.41ms / p95 5.39ms | avg 1.13ms / p95 3.24ms | 예상대로 거의 동일 — 커서 방식도 1페이지는 OFFSET 0과 같은 쿼리라 개선 여지가 없음(측정 노이즈 범위) |
+| 목록 조회 딥 페이지 (offset=1000 / 그 지점 커서, size=10 기준 약 100페이지, status=OPEN) | avg 14.51ms / p95 22.48ms | avg 1.61ms / p95 4.03ms (약 9배) | offset=1000은 아직 OFFSET 비용이 크지 않은 지점인데도 이 정도 차이. offset이 더 커지거나 테이블이 커질수록 BEFORE는 계속 선형으로 증가하고 AFTER(keyset)는 거의 그대로 유지된다 |
+| 전체 탭 (상태 필터 없음) | avg 442.43ms / p95 602.98ms | **avg 0.93ms / p95 1.66ms (약 475배)** | `type=ALL`(풀스캔) + `Using filesort` → `type=index`, `key=idx_gp_urgent_deadline_created`, `rows=11`, filesort 없음. V39/V42에 "별도 과제"로 남아있던 항목이 세 항목 중 가장 극적으로 개선됨. 이번엔 `is_urgent_active`가 실제 운영과 같은 분포(진행중 약 40% / 완료·마감실패 약 60%)로 채워진 데이터로 측정했다 |
 
 ### 참고 — 동일 프로젝트의 기존 측정 사례
 
@@ -133,8 +138,9 @@ deadline ASC, created_at DESC, gp_id DESC
 - `src/main/java/com/aewol/domain/grouppurchase/dto/GroupPurchaseListResponse.java`
 - `src/main/java/com/aewol/domain/insight/service/collector/SpendingInsightCollector.java` (호출부 시그니처 변경 반영)
 - `src/main/java/com/aewol/batch/GroupPurchaseUrgentFlagJob.java` (신규 — 자정 배치, `GroupPurchaseRefundJob`과 동일 패턴)
-- `src/main/resources/db/migration/V47__group_purchase_fulltext_search.sql` (신규)
-- `src/main/resources/db/migration/V48__group_purchase_urgent_active_flag.sql` (신규)
+- `src/main/resources/db/migration/V48__group_purchase_fulltext_search.sql` (신규)
+- `src/main/resources/db/migration/V49__group_purchase_urgent_active_flag.sql` (신규)
+- `src/main/resources/db/migration/V50__group_purchase_target_quantity_check.sql` (신규 — 리뷰 반영)
 
 테스트(`test:` 커밋):
 - `src/test/java/com/aewol/domain/grouppurchase/mapper/GroupPurchaseMapperTest.java`
