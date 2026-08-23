@@ -1,0 +1,35 @@
+-- V51: 거래내역 조회·대시보드 집계용 복합 인덱스
+--
+-- 거래내역과 대시보드가 모두 "이 지갑의, 이 기간" 형태로 조회한다. 그런데 인덱스는
+-- wallet_id 하나, txn_date 하나로 따로 있었다. 그래서 지갑의 거래를 전부 읽은 뒤 날짜로
+-- 걸러내고, 다시 정렬해야 했다.
+--
+-- 목록 쿼리는 ORDER BY txn_date DESC, txn_id DESC로 끝난다. 이 순서를 인덱스가 그대로
+-- 담고 있으면 정렬 자체가 사라지고, LIMIT만큼만 읽고 멈출 수 있다. txn_id까지 넣는 이유가
+-- 여기 있다 — 커서 페이지네이션의 정렬 키와 같아야 한다.
+--
+-- 지갑 500개 × 거래 1,000건(총 50만 건) 기준 측정.
+--
+--   거래내역 20건 조회
+--     현재   1,000행 읽고 정렬(filesort)
+--     개선      20행, 정렬 없음
+--
+--   대시보드 월별 합계
+--     현재   1,000행
+--     개선      45행
+--
+-- (wallet_id, txn_type, txn_date)도 만들어 비교했다. 대시보드는 23행으로 조금 더 낫지만
+-- 목록 쿼리의 정렬을 없애지 못한다. 목록이 훨씬 자주 열리는 화면이고 정렬 제거가 이득이
+-- 커서 이쪽을 택했다. 대시보드는 한 달치 범위라 45행으로도 충분히 빠르다.
+CREATE INDEX `idx_txn_wallet_date` ON `transaction` (`wallet_id`, `txn_date`, `txn_id`);
+
+-- idx_txn_wallet(wallet_id)은 이제 위 인덱스의 접두사라 중복이다.
+--
+-- 사실 이 인덱스는 처음부터 필요 없었다. uk_txn_wallet_idempotency_key가
+-- (wallet_id, idempotency_key)로 이미 wallet_id를 선두에 두고 있어, 옵티마이저도
+-- idx_txn_wallet 대신 그쪽을 골라 쓰고 있었다.
+--
+-- 지우고 나서 실행 계획을 다시 확인했다. 목록 쿼리는 새 인덱스를 스스로 고르고,
+-- wallet_id 없이 txn_date만 보는 잔돈 적립 배치(findTodayRoundUpCandidates)는 그대로
+-- idx_txn_date를 쓴다. 그래서 idx_txn_date는 남긴다.
+DROP INDEX `idx_txn_wallet` ON `transaction`;
