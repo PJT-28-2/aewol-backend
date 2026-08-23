@@ -54,3 +54,8 @@ cookie:
 # Toss 없이 MAIN 지갑을 올리는 POST /api/wallet/deposit. 운영 기본값은 차단이다.
 wallet:
   allow-unverified-deposit: ${WALLET_ALLOW_UNVERIFIED_DEPOSIT:false}
+
+# 메트릭 스크레이핑 토큰. 없으면 /api/metrics는 404가 된다.
+# Prometheus는 JWT를 갱신할 수 없어 만료되는 토큰으로는 스크레이핑을 이어갈 수 없다.
+metrics:
+  token: ${METRICS_TOKEN:}
