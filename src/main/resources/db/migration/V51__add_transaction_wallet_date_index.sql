@@ -19,9 +19,19 @@
 --     개선      45행
 --
 -- (wallet_id, txn_type, txn_date)도 만들어 비교했다. 대시보드는 23행으로 조금 더 낫지만
--- 목록 쿼리의 정렬을 없애지 못한다. 목록이 훨씬 자주 열리는 화면이고 정렬 제거가 이득이
--- 커서 이쪽을 택했다. 대시보드는 한 달치 범위라 45행으로도 충분히 빠르다.
-CREATE INDEX `idx_txn_wallet_date` ON `transaction` (`wallet_id`, `txn_date`, `txn_id`);
+-- 목록 쿼리의 정렬을 없애지 못한다. 현재 사용자 흐름상 목록 조회가 더 잦을 것으로 보고
+-- 정렬 제거를 택했다. 아직 운영 요청 지표가 없어 이는 추정이며, #343 메트릭이 쌓이면
+-- 실제 호출량을 확인해 다시 판단한다. 대시보드는 한 달치 범위라 45행으로도 충분히 빠르다.
+--
+-- transaction은 결제가 계속 들어오는 원장이다. MySQL이 환경에 따라 더 강한 잠금 방식으로
+-- 조용히 폴백하지 못하도록 online DDL을 강제한다. 현재 엔진에서 LOCK=NONE을 지원하지 않으면
+-- 배포 중 쓰기를 막는 대신 마이그레이션이 실패해야 한다.
+-- 50만 행 측정은 인덱스 선택의 근거일 뿐 운영 DDL 소요 시간의 근거는 아니다. 배포 전 실제
+-- 행 수와 테이블·인덱스 크기를 확인하고, 운영 규모에서 걸린 시간을 기준으로 배포 창을 잡는다.
+ALTER TABLE `transaction`
+    ADD INDEX `idx_txn_wallet_date` (`wallet_id`, `txn_date`, `txn_id`),
+    ALGORITHM=INPLACE,
+    LOCK=NONE;
 
 -- idx_txn_wallet(wallet_id)은 이제 위 인덱스의 접두사라 중복이다.
 --
@@ -32,4 +42,9 @@ CREATE INDEX `idx_txn_wallet_date` ON `transaction` (`wallet_id`, `txn_date`, `t
 -- 지우고 나서 실행 계획을 다시 확인했다. 목록 쿼리는 새 인덱스를 스스로 고르고,
 -- wallet_id 없이 txn_date만 보는 잔돈 적립 배치(findTodayRoundUpCandidates)는 그대로
 -- idx_txn_date를 쓴다. 그래서 idx_txn_date는 남긴다.
-DROP INDEX `idx_txn_wallet` ON `transaction`;
+-- 새 인덱스를 먼저 만든 뒤 삭제하므로 fk_txn_wallet이 요구하는 wallet_id 선두 인덱스가
+-- 사라지는 순간은 없다. 삭제도 쓰기를 막지 않는 방식만 허용한다.
+ALTER TABLE `transaction`
+    DROP INDEX `idx_txn_wallet`,
+    ALGORITHM=INPLACE,
+    LOCK=NONE;
