@@ -203,6 +203,19 @@ class EmergencyControllerTest {
         assertFalse(violations.isEmpty());
     }
 
+    /*
+     * 상한이 없으면 바운딩박스 선필터가 무의미해진다. 반경을 크게 넣는 것만으로
+     * 전체 스캔을 유발할 수 있다.
+     */
+    @Test
+    @DisplayName("radiusKm이 상한을 넘으면 ConstraintViolation이 발생한다")
+    void should_violateConstraint_when_radiusKmTooLarge() throws Exception {
+        Set<ConstraintViolation<EmergencyController>> violations =
+                validateSearchNearbyParams(new Object[]{33.45, 126.56, 99999.0, false});
+
+        assertFalse(violations.isEmpty());
+    }
+
     @Test
     @DisplayName("유효 범위 내 값은 ConstraintViolation이 발생하지 않는다")
     void should_haveNoViolation_when_paramsWithinRange() throws Exception {
