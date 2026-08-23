@@ -570,8 +570,8 @@ class CareDiaryServiceImplTest {
         givenPetOwnedBy("pet-1", "owner-1");
         when(careDiaryMapper.findById("diary-1"))
                 .thenReturn(diaryRow("diary-1", "pet-1", "member-2", "2026-08-10", "산책"));
-        when(careDiaryMapper.findImagesByDiaryIds(List.of("diary-1"))).thenReturn(List.of(
-                map("diaryId", "diary-1", "imageUrl", "diary/a.png")));
+        when(careDiaryMapper.findImagesForPublish("diary-1")).thenReturn(List.of(
+                map("imageId", "img-1", "imageUrl", "diary/a.png")));
         when(careDiaryMapper.updateVisibility("diary-1", "PUBLIC")).thenReturn(1);
         when(shareMapper.findAcceptedAccess("pet-1", "member-2")).thenReturn(map("access_id", "access-1"));
 
@@ -591,11 +591,13 @@ class CareDiaryServiceImplTest {
         givenPetOwnedBy("pet-1", "owner-1");
         when(careDiaryMapper.findById("diary-1"))
                 .thenReturn(diaryRow("diary-1", "pet-1", "owner-1", "2026-08-10", "글만 있는 일기"));
-        when(careDiaryMapper.findImagesByDiaryIds(List.of("diary-1"))).thenReturn(List.of());
+        when(careDiaryMapper.findImagesForPublish("diary-1")).thenReturn(List.of());
 
-        assertThrows(BusinessException.class,
+        BusinessException e = assertThrows(BusinessException.class,
                 () -> service.changeVisibility("owner-1", "diary-1", visibilityRequest("PUBLIC")));
 
+        // 왜 막혔는지가 그대로 화면에 뜬다. 문구가 바뀌면 알아채야 한다.
+        assertTrue(e.getMessage().contains("사진이 있는 일기만"), e.getMessage());
         verify(careDiaryMapper, never()).updateVisibility(anyString(), anyString());
     }
 
