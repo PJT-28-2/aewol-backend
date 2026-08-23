@@ -23,15 +23,20 @@ import org.springframework.scheduling.concurrent.ThreadPoolTaskScheduler;
 public class SchedulingConfig {
 
     /**
-     * 동시에 겹칠 수 있는 잡 수를 기준으로 잡는다.
+     * 등록된 배치 수만큼 잡는다.
      *
-     * <p>가장 몰리는 새벽 구간이 정부24(04:00) · 인사이트 예열(04:30) · 공동구매 환불(10분마다)
-     * 셋이고, 여기에 월 1회 병원 시딩(03:00)이 길어져 겹칠 수 있다. 넷을 동시에 받을 수 있도록
-     * 하고 한 자리를 여유로 둔다.
+     * <p>cron 잡은 자기 자신과 겹치지 않는다. Spring은 실행이 끝난 뒤에 다음 시각을 다시
+     * 계산하므로, 한 실행이 길어지면 그 사이 회차는 쌓이지 않고 합쳐진다(3초짜리 잡을
+     * 매초 트리거해도 동시 실행은 1개다). 그래서 최대 동시 실행 수는 <b>서로 다른 잡의
+     * 개수</b>가 상한이다.
      *
-     * <p>잡이 늘면 이 값도 같이 올려야 한다. 부족하면 조용히 예전처럼 줄을 서기 시작한다.
+     * <p>상한에 맞추면 어떤 잡도 다른 잡을 기다리지 않는다. 대부분 놀고 있는 스레드가
+     * 몇 개 생기지만, 하루 몇 번 도는 배치 때문에 09시 정기결제가 밀리는 것보다 낫다.
+     *
+     * <p>잡을 추가하면 이 값도 같이 올려야 한다. 주석으로만 남기면 놓치기 쉬워
+     * {@code SchedulingConfigTest}가 실제 {@code @Scheduled} 개수를 세어 확인한다.
      */
-    private static final int POOL_SIZE = 5;
+    private static final int POOL_SIZE = 7;
 
     @Bean
     public TaskScheduler taskScheduler() {
@@ -41,13 +46,20 @@ public class SchedulingConfig {
         // 경로라 스레드 이름이 유일한 단서다.
         scheduler.setThreadNamePrefix("batch-");
 
-        // 배포로 컨테이너가 내려갈 때 진행 중인 배치를 끊지 않는다. 정기결제가 중간에 잘리면
-        // 어디까지 나갔는지 알 수 없는 상태가 된다.
+        // 배포로 컨테이너가 내려갈 때 진행 중인 배치를 끊지 않는다.
         scheduler.setWaitForTasksToCompleteOnShutdown(true);
-        // 다만 무한정 기다리면 배포가 멈춘다. 여기서 끊기더라도 처리 단위가 항목마다
-        // 독립 트랜잭션이라 반쯤 된 항목은 롤백되고, 아직 못 한 항목은 다음 주기가 다시
-        // 집어간다(RecurringPaymentExecutor는 FOR UPDATE로 잠근 뒤 대상 여부를 재확인하고,
-        // GroupPurchaseRefundExecutor는 조건부 UPDATE로 이미 처리된 건을 걸러낸다).
+
+        // 60초는 배치 하나가 끝나기를 기다리는 시간이 아니다. 인사이트 예열은 회원이 많으면
+        // 몇 시간이 걸리므로 애초에 기다릴 수 있는 값이 아니다. 이 시간이 지키는 것은
+        // "처리 중인 한 건"이다.
+        //
+        //   정기결제·공동구매 환불 — 한 건이 밀리초 단위의 독립 트랜잭션이다. 60초면
+        //     처리 중인 건을 마치고도 한참 남는다. 중간에 잘리면 롤백되고 다음 주기가
+        //     같은 건을 다시 집어간다(FOR UPDATE로 잠근 뒤 대상 여부 재확인 / 조건부 UPDATE).
+        //
+        //   인사이트 예열 — 끊겨도 된다. 이미 만들어 둔 카드는 건너뛰므로 다음 실행이
+        //     남은 회원부터 이어가고, 그 사이 홈 화면은 데이터로 만든 대체 문장을 보여준다
+        //     (HomeInsightServiceImpl 참고). 문구가 덜 다듬어질 뿐 화면이 비지 않는다.
         scheduler.setAwaitTerminationSeconds(60);
 
         return scheduler;
