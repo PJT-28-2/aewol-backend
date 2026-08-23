@@ -31,13 +31,18 @@ public class PaymentLedgerService {
     private final WalletMapper walletMapper;
 
     /**
-     * 잔액을 차감하고 거래를 기록한다.
+     * 잔액을 차감하고 거래를 기록한 뒤, 방금 기록한 행을 돌려준다.
+     *
+     * <p><b>기록한 행을 읽는 것까지 이 트랜잭션 안에서 한다.</b> 커밋된 뒤에 읽으면, 그
+     * 조회가 실패했을 때 돈은 빠지고 거래도 남았는데 사용자는 오류를 받는 상태가 된다.
+     * 안에서 읽으면 실패가 곧 롤백이라 예전 동작과 같아진다.
      *
      * @param category 외부 호출로 미리 판정해 둔 카테고리
-     * @return 생성된 거래 id
+     * @return 방금 기록한 거래 행. 응답으로 옮기는 일은 부르는 쪽이 한다 — 그 변환은
+     *         DB를 건드리지 않으므로 트랜잭션 밖에서 해도 안전하다.
      */
     @Transactional
-    public String record(PaymentRecordCommand command, String category) {
+    public Map<String, Object> record(PaymentRecordCommand command, String category) {
         Map<String, Object> wallet = walletMapper.findByMemberId(command.getMemberId());
         if (wallet == null) {
             throw BusinessException.notFound("지갑을 찾을 수 없습니다.");
@@ -45,6 +50,10 @@ public class PaymentLedgerService {
         String walletId = String.valueOf(wallet.get("wallet_id"));
 
         // 지갑 잔액 차감 (V1에서 버킷 폐기 — 지갑 단일 잔액)
+        //
+        // 아래 두 검사는 역할이 다르다. 이 검사는 방금 읽은 값으로 미리 걸러 실패를 빨리
+        // 알리는 용도다. 동시에 결제가 들어오면 읽은 뒤 값이 바뀔 수 있어 이것만으로는
+        // 부족하고, 실제 정합성은 그다음 원자적 UPDATE가 보장한다.
         BigDecimal balance = (BigDecimal) wallet.get("balance");
         if (balance.compareTo(command.getAmount()) < 0) {
             throw new BusinessException("잔액이 부족합니다.");
@@ -69,6 +78,12 @@ public class PaymentLedgerService {
         txn.put("txnDate", LocalDateTime.now());
         transactionMapper.insert(txn);
 
-        return String.valueOf(txn.get("txnId"));
+        String txnId = String.valueOf(txn.get("txnId"));
+        Map<String, Object> saved = transactionMapper.findById(txnId);
+        if (saved == null) {
+            // 방금 넣은 행을 못 읽는다면 원장을 신뢰할 수 없는 상태다. 롤백시킨다.
+            throw new IllegalStateException("방금 기록한 거래를 읽지 못했습니다. txnId=" + txnId);
+        }
+        return saved;
     }
 }

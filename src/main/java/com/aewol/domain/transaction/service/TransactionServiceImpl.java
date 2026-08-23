@@ -58,9 +58,12 @@ public class TransactionServiceImpl implements TransactionService {
     @Override
     public TransactionResponse processPayment(String memberId, PaymentRequest request) {
         validatePaymentRequest(request);
-        // 소유권 확인은 짧은 조회라 커넥션을 바로 반납한다. 외부 호출보다 먼저 걸러
-        // 남의 반려동물로 결제를 시도하는 요청이 카카오까지 가지 않게 한다.
+        // 반려동물 소유권과 지갑 존재는 짧은 조회라 커넥션을 바로 반납한다. 외부 호출보다
+        // 먼저 걸러야 처음부터 안 될 요청이 카카오 응답을 20초 기다린 뒤에 실패하지 않는다.
         assertOwnedPet(memberId, request.getPetId());
+        if (walletMapper.findByMemberId(memberId) == null) {
+            throw BusinessException.notFound("지갑을 찾을 수 없습니다.");
+        }
 
         // 외부 호출은 트랜잭션 밖에서 끝낸다.
         String category = autoTaggingService.categorize(request.getMerchantName());
@@ -74,8 +77,9 @@ public class TransactionServiceImpl implements TransactionService {
                 .memo(request.getMemo())
                 .build();
 
-        String txnId = paymentLedgerService.record(command, category);
-        return getTransaction(memberId, txnId);
+        // 원장 기록과 그 결과를 읽는 것까지 한 트랜잭션이다. 커밋 뒤에 읽으면 그 조회가
+        // 실패했을 때 돈은 빠지고 사용자는 오류를 받는 상태가 된다.
+        return toResponse(paymentLedgerService.record(command, category));
     }
 
     private void validatePaymentRequest(PaymentRequest request) {

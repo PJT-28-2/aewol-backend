@@ -94,7 +94,6 @@ class TransactionServiceImplTest {
         ReflectionTestUtils.setField(request, "petId", "pet-1");
         when(walletMapper.findByMemberId("member-1")).thenReturn(map(
                 "wallet_id", "wallet-1", "balance", new BigDecimal("100000")));
-        when(walletMapper.findById("wallet-1")).thenReturn(map("member_id", "member-1"));
         when(walletMapper.deductBalance("wallet-1", new BigDecimal("72000"))).thenReturn(1);
         when(autoTaggingService.categorize("애월동물병원")).thenReturn("HOSPITAL");
         when(transactionMapper.findById(any())).thenAnswer(invocation -> map(
@@ -392,7 +391,6 @@ class TransactionServiceImplTest {
         ReflectionTestUtils.setField(request, "amount", new BigDecimal("72000"));
         when(walletMapper.findByMemberId("member-1")).thenReturn(map(
                 "wallet_id", "wallet-1", "balance", new BigDecimal("100000")));
-        when(walletMapper.findById("wallet-1")).thenReturn(map("member_id", "member-1"));
         when(walletMapper.deductBalance("wallet-1", new BigDecimal("72000"))).thenReturn(1);
         when(autoTaggingService.categorize("애월동물병원")).thenReturn("HOSPITAL");
         when(transactionMapper.findById(any())).thenAnswer(invocation -> map(
