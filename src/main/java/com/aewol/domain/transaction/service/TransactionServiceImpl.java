@@ -37,11 +37,38 @@ public class TransactionServiceImpl implements TransactionService {
     private final WalletMapper walletMapper;
     private final AutoTaggingService autoTaggingService;
     private final PetMapper petMapper;
+    private final PaymentLedgerService paymentLedgerService;
 
+    /**
+     * 결제 처리.
+     *
+     * <p><b>여기에 {@code @Transactional}을 붙이지 않는다.</b> 카테고리 판정이 카카오 로컬
+     * API를 호출하는데, {@code DataSourceTransactionManager}는 트랜잭션 시작 시점에 커넥션을
+     * 바인딩한다. 트랜잭션 안에서 호출하면 카카오 응답을 기다리는 내내 커넥션 하나를 붙잡고
+     * 있게 된다. 풀은 10개(DataSourceConfig.java:47)이고 이 호출은 최대 20초까지 걸릴 수
+     * 있어(연결 10초 + 읽기 10초), 처음 보는 상호로 결제가 몰리면 풀이 비고 결제와 무관한
+     * 요청까지 함께 멈춘다.
+     *
+     * <p>실제로 재현해 봤다. 결제 10건이 동시에 들어오고 카카오가 20초간 응답하지 않을 때,
+     * 무관한 요청의 대기 시간이 <b>19.9초에서 29ms로</b> 줄었다.
+     *
+     * <p>같은 이유로 {@code TossChargeService}도 비트랜잭셔널 오케스트레이터다. 원장 기록만
+     * {@link PaymentLedgerService#record}의 짧은 트랜잭션으로 넘긴다.
+     */
     @Override
-    @Transactional
     public TransactionResponse processPayment(String memberId, PaymentRequest request) {
         validatePaymentRequest(request);
+        // 반려동물 소유권과 지갑 존재는 짧은 조회라 커넥션을 바로 반납한다. 외부 호출보다
+        // 먼저 걸러야 처음부터 안 될 요청이 카카오 응답을 20초 기다린 뒤에 실패하지 않는다.
+        assertOwnedPet(memberId, request.getPetId());
+        if (walletMapper.findByMemberId(memberId) == null) {
+            throw BusinessException.notFound("지갑을 찾을 수 없습니다.");
+        }
+
+        // 외부 호출은 트랜잭션 밖에서 끝낸다.
+        String category = autoTaggingService.categorize(request.getMerchantName());
+        log.info("자동 태깅 결과 - merchant: {}, category: {}", request.getMerchantName(), category);
+
         PaymentRecordCommand command = PaymentRecordCommand.builder()
                 .memberId(memberId)
                 .merchantName(request.getMerchantName())
@@ -49,7 +76,10 @@ public class TransactionServiceImpl implements TransactionService {
                 .petId(request.getPetId())
                 .memo(request.getMemo())
                 .build();
-        return recordPayment(command);
+
+        // 원장 기록과 그 결과를 읽는 것까지 한 트랜잭션이다. 커밋 뒤에 읽으면 그 조회가
+        // 실패했을 때 돈은 빠지고 사용자는 오류를 받는 상태가 된다.
+        return toResponse(paymentLedgerService.record(command, category));
     }
 
     private void validatePaymentRequest(PaymentRequest request) {
@@ -73,47 +103,6 @@ public class TransactionServiceImpl implements TransactionService {
         if (amount.compareTo(PaymentRequest.MAX_AMOUNT) > 0) {
             throw new BusinessException(PaymentRequest.AMOUNT_MAX_MESSAGE);
         }
-    }
-
-    private TransactionResponse recordPayment(PaymentRecordCommand command) {
-        Map<String, Object> wallet = walletMapper.findByMemberId(command.getMemberId());
-        if (wallet == null) {
-            throw BusinessException.notFound("지갑을 찾을 수 없습니다.");
-        }
-
-        String walletId = String.valueOf(wallet.get("wallet_id"));
-        assertOwnedPet(command.getMemberId(), command.getPetId());
-
-        // 자동 태깅
-        String category = autoTaggingService.categorize(command.getMerchantName());
-        log.info("자동 태깅 결과 - merchant: {}, category: {}", command.getMerchantName(), category);
-
-        // 지갑 잔액 차감 (V1에서 버킷 폐기 — 지갑 단일 잔액)
-        BigDecimal balance = (BigDecimal) wallet.get("balance");
-        if (balance.compareTo(command.getAmount()) < 0) {
-            throw new BusinessException("잔액이 부족합니다.");
-        }
-        // balance 조회 후 절대값을 저장하면 동시 결제에서 갱신이 유실될 수 있어,
-        // balance - amount와 balance >= amount 조건을 하나의 원자적 UPDATE로 수행한다.
-        if (walletMapper.deductBalance(walletId, command.getAmount()) == 0) {
-            throw new BusinessException("잔액이 부족합니다.");
-        }
-
-        // 거래 기록 생성 — txn_id는 AUTO_INCREMENT 생성 키
-        Map<String, Object> txn = new HashMap<>();
-        txn.put("walletId", walletId);
-        txn.put("petId", command.getPetId());
-        txn.put("txnType", "PAYMENT");
-        txn.put("price", command.getAmount());
-        txn.put("category", category);
-        txn.put("merchantName", command.getMerchantName());
-        txn.put("merchantCategoryCode", null);
-        txn.put("memo", command.getMemo());
-        txn.put("autoTagged", "Y");
-        txn.put("txnDate", LocalDateTime.now());
-        transactionMapper.insert(txn);
-
-        return getTransaction(command.getMemberId(), String.valueOf(txn.get("txnId")));
     }
 
     @Override

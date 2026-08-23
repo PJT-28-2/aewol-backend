@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  운영 로그 설정.
+
+  Spring Boot가 아니라 logback-spring.xml의 프로파일 조건(<springProfile>)을 쓸 수 없다.
+  대신 환경변수로 레벨과 출력 형태를 정한다. 로컬은 기본값 그대로 두면 되고, 운영은
+  LOG_LEVEL만 조정하면 된다.
+
+  파일 appender는 두지 않는다. 컨테이너로 배포하므로 stdout으로 내보내면 docker logs와
+  CloudWatch가 그대로 수집한다. 컨테이너 안 파일에 쌓으면 재배포 때 사라진다.
+-->
+<configuration>
+
+    <!--
+      요청 단위 추적 id를 패턴에 넣는다. 이게 없으면 동시 요청의 로그가 뒤섞여
+      "이 오류가 어느 요청에서 났는지"를 되짚을 수 없다.
+    -->
+    <property name="LOG_PATTERN"
+              value="%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [%X{requestId:-}] %logger{36} - %msg%n"/>
+
+    <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder>
+            <pattern>${LOG_PATTERN}</pattern>
+        </encoder>
+    </appender>
+
+    <!-- 프레임워크 로그는 기본적으로 줄인다. 켜야 할 때만 환경변수로 올린다. -->
+    <logger name="org.springframework" level="${SPRING_LOG_LEVEL:-WARN}"/>
+    <logger name="org.apache" level="WARN"/>
+    <logger name="org.mybatis" level="WARN"/>
+    <logger name="com.zaxxer.hikari" level="WARN"/>
+
+    <!-- 우리 코드는 기본 INFO. 장애 조사 시 DEBUG로 올린다. -->
+    <logger name="com.aewol" level="${APP_LOG_LEVEL:-INFO}"/>
+
+    <!--
+      쿼리 로그. 기본은 끈다. 켜면 파라미터까지 찍혀 계좌번호·전화번호 같은 값이
+      로그에 남으므로, 로컬 디버깅에서만 환경변수로 올릴 것.
+
+      MyBatis의 logPrefix로 매퍼 로거 이름 앞에 sql.을 붙여 둔 덕에 여기 한 줄로 묶인다
+      (DataSourceConfig 참고). 앞서 com.aewol.domain으로 걸었을 때는 매퍼가 아닌
+      서비스·컨트롤러까지 함께 걸렸고, com.aewol보다 구체적이라 도메인 계층 전체의
+      APP_LOG_LEVEL을 덮어써서 정작 APP_LOG_LEVEL이 거의 듣지 않았다.
+    -->
+    <logger name="sql" level="${SQL_LOG_LEVEL:-INFO}"/>
+
+    <root level="${LOG_LEVEL:-INFO}">
+        <appender-ref ref="CONSOLE"/>
+    </root>
+</configuration>

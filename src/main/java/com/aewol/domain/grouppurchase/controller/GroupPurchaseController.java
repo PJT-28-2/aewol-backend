@@ -35,6 +35,13 @@ public class GroupPurchaseController {
 
     private final GroupPurchaseService groupPurchaseService;
 
+    /**
+     * 배포 전환 기간 호환(P1 리뷰 반영): page는 곧 제거될 파라미터다. cursor를 아직 모르는
+     * 구 프론트가 계속 page를 보내는 동안 백엔드가 이를 무시하면 cursor가 항상 없어 첫
+     * 페이지만 반복 조회되므로, 당분간 둘 다 받는다 — cursor가 있으면 그쪽을 우선한다.
+     * 프론트 배포가 끝나면 page 파라미터와 GroupPurchaseService의 legacyPage 오버로드를
+     * 함께 제거한다.
+     */
     @Operation(summary = "공동구매 게시글 조회")
     @GetMapping
     public ResponseEntity<ApiResponse<GroupPurchaseListResponse>> list(
@@ -42,10 +49,11 @@ public class GroupPurchaseController {
             @RequestParam(required = false) String status,
             @RequestParam(required = false) String keyword,
             @RequestParam(required = false) String category,
-            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(required = false) String cursor,
+            @RequestParam(required = false) Integer page,
             @RequestParam(defaultValue = "10") int size) {
         return ResponseEntity.ok(ApiResponse.success("공동구매 목록 조회 성공",
-                groupPurchaseService.list(memberId, status, keyword, category, page, size)));
+                groupPurchaseService.list(memberId, status, keyword, category, cursor, page, size)));
     }
 
     /** 일반 유저(role=USER) 전용. SecurityConfig에서 GET /api/group-purchase/my에 ROLE_USER를 요구한다(관리자의 작성글 관리는 별도 엔드포인트 예정). */

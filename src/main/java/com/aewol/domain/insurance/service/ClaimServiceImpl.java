@@ -36,31 +36,45 @@ public class ClaimServiceImpl implements ClaimService {
         if (petMapper.findByIdAndMemberId(petId, memberId) == null) {
             throw BusinessException.notFound("반려동물을 찾을 수 없습니다.");
         }
+        String receiptKey = null;
+        // insert가 지나가면 청구 행은 이미 커밋돼 있다. 이 메서드는 OCR을 트랜잭션 밖에서
+        // 부르려고 @Transactional을 붙이지 않았으므로, 뒤에서 무엇이 실패하든 행은 남는다.
+        // 그 뒤에 영수증을 지우면 멀쩡히 만들어진 청구가 깨진 이미지를 가리키게 된다.
+        boolean claimPersisted = false;
         try {
             // 저장 위치는 FileStorage가 정한다. 예전에는 여기서 디스크에 직접 쓰고
             // "/uploads/receipts/..." 형태의 URL을 DB에 넣었는데, 조회는 이미
             // fileStorage.signedUrl로 하고 있어 저장소를 옮기면 읽기와 어긋났다.
-            String imageUrl = fileStorage.store(receipt.getBytes(), "receipts",
+            byte[] receiptBytes = receipt.getBytes();
+            receiptKey = fileStorage.store(receiptBytes, "receipts",
                     extensionOf(receipt.getOriginalFilename()));
 
             // PaddleOCR (트랜잭션 밖에서 호출 - 응답 지연이 DB 커넥션을 점유하지 않도록)
-            String extractedJson = paddleOcrClient.extractReceiptData(
-                    receipt.getBytes(), receipt.getContentType());
+            String extractedJson = paddleOcrClient.extractReceiptData(receiptBytes, receipt.getContentType());
 
             Map<String, Object> claim = new HashMap<>();
             claim.put("petId", petId);
             claim.put("memberId", memberId);
-            claim.put("receiptImageUrl", imageUrl);
+            claim.put("receiptImageUrl", receiptKey);
             claim.put("extractedData", extractedJson);
             claim.put("hospitalName", null);
             claim.put("treatmentDate", null);
             claim.put("totalAmount", null);
             claim.put("claimStatus", "DRAFT");
             insuranceMapper.insertClaim(claim);
+            claimPersisted = true;
 
             return toResponse(insuranceMapper.findClaimById(String.valueOf(claim.get("claimId"))));
         } catch (IOException e) {
-            throw new BusinessException("영수증 업로드에 실패했습니다.");
+            if (!claimPersisted) {
+                deleteReceiptQuietly(receiptKey);
+            }
+            throw new BusinessException("영수증 업로드에 실패했습니다.", e);
+        } catch (RuntimeException e) {
+            if (!claimPersisted) {
+                deleteReceiptQuietly(receiptKey);
+            }
+            throw e;
         }
     }
 
@@ -120,6 +134,21 @@ public class ClaimServiceImpl implements ClaimService {
                 .receiptImageUrl(fileStorage.signedUrl((String) claim.get("receipt_image_url")))
                 .extractedData(claim.get("extracted_data"))
                 .build();
+    }
+
+    /**
+     * 청구가 저장되기 전에 실패했을 때 방금 올린 영수증만 지운다.
+     *
+     * <p>저장된 뒤에는 부르면 안 된다. 남아 있는 청구 행이 그 파일을 가리키기 때문이다.
+     *
+     * <p>삭제 실패는 {@link com.aewol.common.storage.FileStorage#delete(String)}가 삼킨다.
+     * 여기서 새 예외가 나면 원래 실패 원인을 가려버린다.
+     */
+    private void deleteReceiptQuietly(String receiptKey) {
+        if (receiptKey == null || receiptKey.isBlank()) {
+            return;
+        }
+        fileStorage.delete(receiptKey);
     }
 
     /**

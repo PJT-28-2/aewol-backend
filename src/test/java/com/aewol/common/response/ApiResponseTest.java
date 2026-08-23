@@ -1,6 +1,7 @@
 package com.aewol.common.response;
 
 import com.aewol.common.exception.BusinessException;
+import com.aewol.common.exception.ErrorCode;
 import com.aewol.common.exception.GlobalExceptionHandler;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -27,6 +28,7 @@ class ApiResponseTest {
         assertEquals("success", json.get("message").asText());
         assertEquals(1, json.get("result").get("id").asInt());
         assertFalse(json.has("data"));
+        assertFalse(json.has("errorCode"));
     }
 
     @Test
@@ -64,5 +66,24 @@ class ApiResponseTest {
         assertTrue(json.has("result"));
         assertTrue(json.get("result").isNull());
         assertFalse(json.has("data"));
+        assertFalse(json.has("errorCode"));
+    }
+
+    @Test
+    void codedBusinessExceptionResponseIncludesMachineReadableErrorCode() throws Exception {
+        GlobalExceptionHandler handler = new GlobalExceptionHandler();
+        ResponseEntity<ApiResponse<Void>> entity = handler.handleBusinessException(
+                new BusinessException(
+                        org.springframework.http.HttpStatus.BAD_REQUEST,
+                        "invalid registration session",
+                        ErrorCode.KAKAO_REGISTRATION_SESSION_INVALID_OR_EXPIRED));
+        JsonNode json = objectMapper.readTree(objectMapper.writeValueAsString(entity.getBody()));
+
+        assertEquals(400, entity.getStatusCodeValue());
+        assertEquals(400, json.get("status").asInt());
+        assertEquals("invalid registration session", json.get("message").asText());
+        assertTrue(json.get("result").isNull());
+        assertEquals("KAKAO_REGISTRATION_SESSION_INVALID_OR_EXPIRED",
+                json.get("errorCode").asText());
     }
 }

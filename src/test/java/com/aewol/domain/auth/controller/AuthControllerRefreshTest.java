@@ -2,6 +2,7 @@ package com.aewol.domain.auth.controller;
 
 import com.aewol.common.exception.GlobalExceptionHandler;
 import com.aewol.common.filter.JwtAuthenticationFilter;
+import com.aewol.common.cache.MemberAuthStateCache;
 import com.aewol.common.util.JwtUtil;
 import com.aewol.config.SecurityConfig;
 import com.aewol.domain.auth.dto.TokenResponse;
@@ -216,7 +217,7 @@ class AuthControllerRefreshTest {
 
         @Bean
         JwtAuthenticationFilter jwtAuthenticationFilter(JwtUtil jwtUtil, MemberMapper memberMapper) {
-            return new JwtAuthenticationFilter(jwtUtil, memberMapper);
+            return new JwtAuthenticationFilter(jwtUtil, MemberAuthStateCache.withoutCache(memberMapper));
         }
 
         @Bean

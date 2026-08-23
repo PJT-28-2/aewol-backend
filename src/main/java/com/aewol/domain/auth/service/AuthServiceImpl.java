@@ -17,6 +17,7 @@ import com.aewol.domain.auth.dto.SignupEmailCodeRequest;
 import com.aewol.domain.auth.dto.SignupEmailCodeResponse;
 import com.aewol.domain.auth.dto.SignupEmailVerificationRequest;
 import com.aewol.domain.auth.dto.TokenResponse;
+import com.aewol.common.cache.MemberAuthStateCache;
 import com.aewol.domain.member.mapper.MemberMapper;
 import com.aewol.domain.notification.mapper.NotificationSettingMapper;
 import com.aewol.domain.wallet.mapper.WalletMapper;
@@ -54,8 +55,13 @@ public class AuthServiceImpl implements AuthService {
 
     private static final SecureRandom SECURE_RANDOM = new SecureRandom();
     private static final long SIGNUP_VERIFICATION_TTL_SECONDS = 300L;
+    private static final int SIGNUP_MAX_VERIFICATION_ATTEMPTS = 5;
     private static final String SIGNUP_VERIFICATION_CODE_KEY_PREFIX = "signup:verify:";
     private static final String SIGNUP_VERIFICATION_COMPLETED_KEY_PREFIX = "signup:verify:completed:";
+    private static final String SIGNUP_REQUEST_RATE_LIMIT_KEY_PREFIX =
+            "signup:verify:request-count:";
+    private static final long SIGNUP_REQUEST_RATE_LIMIT_WINDOW_SECONDS = 1800L;
+    private static final long SIGNUP_REQUEST_RATE_LIMIT_MAX = 5L;
     private static final long PASSWORD_RESET_VERIFICATION_TTL_SECONDS = 300L;
     private static final long PASSWORD_RESET_TOKEN_TTL_SECONDS = 300L;
     private static final int PASSWORD_RESET_MAX_VERIFICATION_ATTEMPTS = 5;
@@ -82,28 +88,30 @@ public class AuthServiceImpl implements AuthService {
             "if not stored then\n" +
             "    return 0\n" +
             "end\n" +
-            "local delimiter = string.find(stored, '|', 1, true)\n" +
-            "if not delimiter then\n" +
+            "local requestId, code, attempts = string.match(stored, '^([0-9a-fA-F%-]+)|(%d%d%d%d%d%d)|(%d+)$')\n" +
+            "if not requestId then\n" +
             "    return -1\n" +
             "end\n" +
-            "local requestId = string.sub(stored, 1, delimiter - 1)\n" +
-            "local code = string.sub(stored, delimiter + 1)\n" +
             "if string.len(requestId) ~= 36\n" +
             "        or string.sub(requestId, 9, 9) ~= '-'\n" +
             "        or string.sub(requestId, 14, 14) ~= '-'\n" +
             "        or string.sub(requestId, 19, 19) ~= '-'\n" +
             "        or string.sub(requestId, 24, 24) ~= '-'\n" +
-            "        or string.find(requestId, '[^0-9a-fA-F%-]')\n" +
-            "        or string.len(code) ~= 6\n" +
-            "        or string.find(code, '%D') then\n" +
+            "        or string.find(requestId, '[^0-9a-fA-F%-]') then\n" +
             "    return -1\n" +
             "end\n" +
             "if code ~= ARGV[1] then\n" +
+            "    attempts = tonumber(attempts) + 1\n" +
+            "    if attempts >= tonumber(ARGV[2]) then\n" +
+            "        redis.call('DEL', KEYS[1])\n" +
+            "    else\n" +
+            "        redis.call('SET', KEYS[1], requestId .. '|' .. code .. '|' .. attempts, 'KEEPTTL')\n" +
+            "    end\n" +
             "    return -1\n" +
             "end\n" +
             "redis.call('DEL', KEYS[1])\n" +
-            // requestId를 클라이언에 노출하지 않고도 최종 가입이 같은 인증 결과를 소비하는지 확인할 수 있게 전체 값을 유지한다.
-            "redis.call('SET', KEYS[2], stored, 'EX', ARGV[2])\n" +
+            // attempt는 OTP 검증에만 쓰고, 최종 가입이 소비하는 기존 requestId|code 계약은 유지한다.
+            "redis.call('SET', KEYS[2], requestId .. '|' .. code, 'EX', ARGV[3])\n" +
             "return 1",
             Long.class);
     private static final DefaultRedisScript<Long> VERIFY_PASSWORD_RESET_CODE_SCRIPT = new DefaultRedisScript<>(
@@ -151,6 +159,8 @@ public class AuthServiceImpl implements AuthService {
     private final AuthCredentialStore authCredentialStore;
     private final KakaoRegistrationStore kakaoRegistrationStore;
     private final TransactionOperations transactionOperations;
+    /** 탈퇴·복구 뒤 인증 캐시를 즉시 버리기 위해 쓴다. */
+    private final MemberAuthStateCache authStateCache;
 
     @Override
     public SignupEmailCodeResponse sendSignupVerificationCode(SignupEmailCodeRequest request) {
@@ -159,8 +169,17 @@ public class AuthServiceImpl implements AuthService {
             throw BusinessException.conflict("이미 사용 중인 이메일입니다.");
         }
 
+        long requestCount = redisRateLimiter.incrementWithExpiry(
+                SIGNUP_REQUEST_RATE_LIMIT_KEY_PREFIX + email,
+                SIGNUP_REQUEST_RATE_LIMIT_WINDOW_SECONDS);
+        if (requestCount > SIGNUP_REQUEST_RATE_LIMIT_MAX) {
+            throw new BusinessException(HttpStatus.TOO_MANY_REQUESTS,
+                    "회원가입 인증번호 요청이 너무 많습니다. 30분 후 다시 시도해주세요.");
+        }
+
         String code = generateVerificationCode();
-        String verificationValue = UUID.randomUUID() + VERIFICATION_VALUE_DELIMITER + code;
+        String verificationValue = UUID.randomUUID() + VERIFICATION_VALUE_DELIMITER + code
+                + VERIFICATION_VALUE_DELIMITER + "0";
         String verificationKey = verificationCodeKey(email);
         redisTemplate.opsForValue().set(
                 verificationKey, verificationValue, SIGNUP_VERIFICATION_TTL_SECONDS, TimeUnit.SECONDS);
@@ -187,7 +206,9 @@ public class AuthServiceImpl implements AuthService {
         Long result = redisTemplate.execute(
                 VERIFY_CODE_SCRIPT,
                 List.of(verificationKey, verificationCompletedKey(email)),
-                request.getVerificationCode(), String.valueOf(SIGNUP_VERIFICATION_TTL_SECONDS));
+                request.getVerificationCode(),
+                String.valueOf(SIGNUP_MAX_VERIFICATION_ATTEMPTS),
+                String.valueOf(SIGNUP_VERIFICATION_TTL_SECONDS));
 
         if (result == null || result == 0L) {
             throw new BusinessException(HttpStatus.BAD_REQUEST, "인증번호가 만료되었거나 발급되지 않았습니다.");
@@ -407,6 +428,9 @@ public class AuthServiceImpl implements AuthService {
         if (memberMapper.restoreKakaoMember(memberId) != 1) {
             throw BusinessException.conflict("이미 활성화된 회원입니다.");
         }
+        // 캐시에 비활성 상태가 남아 있으면 복구된 회원이 그대로 막힌다.
+        // 커밋 전에 지우면 아직 비활성인 DB를 다른 요청이 읽어 다시 캐싱하므로 커밋 이후로 미룬다.
+        authStateCache.evictAfterCommit(String.valueOf(memberId));
         notificationSettingMapper.ensureForRecovery(memberId);
         return new KakaoRecovery(memberId, role);
     }
@@ -519,6 +543,7 @@ public class AuthServiceImpl implements AuthService {
             if (memberMapper.restoreLocalMember(restored) != 1) {
                 throw BusinessException.conflict("이미 활성화된 회원입니다.");
             }
+            authStateCache.evictAfterCommit(String.valueOf(memberId));
         } catch (DuplicateKeyException e) {
             // 잠금 대기 중 다른 계정이 활성화된 경우에도 DB unique 충돌을 409로 일관되게 응답한다.
             throw BusinessException.conflict("이미 가입된 이메일입니다.");

@@ -87,15 +87,13 @@ class TransactionServiceImplTest {
     @Test
     @DisplayName("반려동물을 선택해 결제하면 거래에 반려동물 태그를 직접 저장한다")
     void should_savePetId_when_paymentHasSelectedPet() {
-        TransactionServiceImpl service = new TransactionServiceImpl(
-                transactionMapper, walletMapper, autoTaggingService, petMapper);
+        TransactionServiceImpl service = service();
         PaymentRequest request = new PaymentRequest();
         ReflectionTestUtils.setField(request, "merchantName", "애월동물병원");
         ReflectionTestUtils.setField(request, "amount", new BigDecimal("72000"));
         ReflectionTestUtils.setField(request, "petId", "pet-1");
         when(walletMapper.findByMemberId("member-1")).thenReturn(map(
                 "wallet_id", "wallet-1", "balance", new BigDecimal("100000")));
-        when(walletMapper.findById("wallet-1")).thenReturn(map("member_id", "member-1"));
         when(walletMapper.deductBalance("wallet-1", new BigDecimal("72000"))).thenReturn(1);
         when(autoTaggingService.categorize("애월동물병원")).thenReturn("HOSPITAL");
         when(transactionMapper.findById(any())).thenAnswer(invocation -> map(
@@ -393,7 +391,6 @@ class TransactionServiceImplTest {
         ReflectionTestUtils.setField(request, "amount", new BigDecimal("72000"));
         when(walletMapper.findByMemberId("member-1")).thenReturn(map(
                 "wallet_id", "wallet-1", "balance", new BigDecimal("100000")));
-        when(walletMapper.findById("wallet-1")).thenReturn(map("member_id", "member-1"));
         when(walletMapper.deductBalance("wallet-1", new BigDecimal("72000"))).thenReturn(1);
         when(autoTaggingService.categorize("애월동물병원")).thenReturn("HOSPITAL");
         when(transactionMapper.findById(any())).thenAnswer(invocation -> map(
@@ -416,8 +413,6 @@ class TransactionServiceImplTest {
         ReflectionTestUtils.setField(request, "merchantName", "애월동물병원");
         ReflectionTestUtils.setField(request, "amount", new BigDecimal("72000"));
         ReflectionTestUtils.setField(request, "petId", "pet-2");
-        when(walletMapper.findByMemberId("member-1")).thenReturn(map(
-                "wallet_id", "wallet-1", "balance", new BigDecimal("100000")));
         when(petMapper.findByIdAndMemberId("pet-2", "member-1")).thenReturn(null);
 
         BusinessException exception = assertThrows(BusinessException.class,
@@ -426,10 +421,15 @@ class TransactionServiceImplTest {
         assertEquals(HttpStatus.NOT_FOUND, exception.getStatus());
         verify(walletMapper, never()).deductBalance(any(), any());
         verify(transactionMapper, never()).insert(any());
+        // 남의 반려동물로 시도한 요청이 카카오까지 가지 않는다. 외부 호출은 공짜가 아니다.
+        verify(autoTaggingService, never()).categorize(any());
     }
 
     private TransactionServiceImpl service() {
-        return new TransactionServiceImpl(transactionMapper, walletMapper, autoTaggingService, petMapper);
+        // 원장 기록은 진짜 객체를 넣는다. 매퍼가 모의 객체라 검증은 그대로 되고,
+        // 트랜잭션 경계가 어디인지는 구조 자체로 드러난다.
+        return new TransactionServiceImpl(transactionMapper, walletMapper, autoTaggingService, petMapper,
+                new PaymentLedgerService(transactionMapper, walletMapper));
     }
 
     private static PaymentRequest paymentRequest(String merchantName, BigDecimal amount) {

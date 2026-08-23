@@ -110,17 +110,18 @@ docker-compose up -d
 ```yaml
 spring:
   datasource:
-    url: jdbc:mysql://localhost:3306/aewol?useSSL=false&serverTimezone=Asia/Seoul&characterEncoding=UTF-8
+    url: jdbc:mysql://localhost:3307/aewol?useSSL=false&serverTimezone=Asia/Seoul&characterEncoding=UTF-8
     username: aewol
     password: aewol1234
-  redis:
-    host: localhost
-    port: 6379
+  data:
+    redis:
+      host: localhost
+      port: 6379
 
 external:
   kakao:
     client-id: {카카오 REST API 키}
-    redirect-uri: http://localhost:8080/api/auth/kakao/callback
+    redirect-uri: http://localhost:5173/callback/kakao
   gemini:
     api-key: {Gemini API 키}
   codef:
@@ -134,8 +135,8 @@ external:
 
 jwt:
   secret: {JWT 시크릿 키 (256비트 이상)}
-  access-expiration: 1800000
-  refresh-expiration: 604800000
+  access-token-expiry: 1800000
+  refresh-token-expiry: 604800000
 ```
 
 ### 애플리케이션 실행
@@ -200,6 +201,39 @@ curl -X POST http://localhost:8080/api/admin/support/sync -H "Authorization: Bea
 
 ---
 
+## 메트릭 보기
+
+지금까지는 성능 문제를 의심한 뒤에야 측정 도구를 따로 만들었다. 상시로 보이게 해 둔다.
+
+앱에 토큰을 주고 띄운다. 없으면 `/api/metrics`는 404가 된다 — 설정을 깜빡한 환경에서
+메트릭이 열려 있는 쪽보다 안 열리는 쪽이 낫다.
+
+```bash
+METRICS_TOKEN=local-scrape-secret ./gradlew run
+```
+
+Prometheus와 Grafana를 띄운다. 평소 `docker compose up`에는 딸려오지 않는다.
+
+```bash
+docker compose --profile monitoring up -d
+```
+
+- Prometheus http://localhost:9090
+- Grafana http://localhost:3000 (로컬 전용이라 로그인 없이 열린다)
+
+무엇부터 보면 되는지.
+
+| 지표 | 무엇을 알려주나 |
+| --- | --- |
+| `hikaricp_connections_pending` | 커넥션을 못 얻고 기다리는 스레드. **0보다 크면 풀이 부족하거나 무언가 커넥션을 오래 쥐고 있다** |
+| `hikaricp_connections_active` | 사용 중인 커넥션. 최대 10개(`DataSourceConfig`) |
+| `http_server_requests_seconds` | API별 소요 시간. `uri` 태그는 `/api/pets/{petId}` 같은 패턴이다 |
+
+Prometheus는 JWT를 갱신할 수 없어 `X-Metrics-Token` 헤더로 스크레이핑한다
+(`monitoring/prometheus.yml`).
+
+운영 환경 구성은 배포 담당과 상의가 필요해 아직 로컬까지만 있다.
+
 ## 브랜치 전략
 
 | 브랜치 | 용도 |
@@ -220,8 +254,8 @@ PR은 `feature/{기능명}` → `develop` → `main` 순서로 병합합니다.
 |--------|--------|------|------|
 | 인증 | POST | `/api/auth/signup` | 이메일 회원가입 |
 | 인증 | POST | `/api/auth/login` | 로그인 (JWT 발급) |
-| 인증 | GET | `/api/auth/kakao/callback` | 카카오 OAuth 콜백 |
-| 인증 | POST | `/api/auth/reissue` | 토큰 재발급 (RTR) |
+| 인증 | POST | `/api/auth/oauth/kakao` | 카카오 OAuth 로그인 |
+| 인증 | POST | `/api/auth/refresh` | 토큰 재발급 (RTR) |
 | 반려동물 | GET | `/api/pets` | 반려동물 목록 조회 |
 | 반려동물 | POST | `/api/pets` | 반려동물 등록 |
 | 반려동물 | GET | `/api/pets/{petId}` | 반려동물 상세 조회 |

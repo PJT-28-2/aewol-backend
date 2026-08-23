@@ -4,7 +4,7 @@
     <!-- V1: 작성자 컴럼은 member_id, 참여 테이블은 group_purchase_participant(purchase_quantity) -->
 
     <!-- status 필터는 저장 코드가 아니라 GroupPurchaseServiceImpl#computeStatus와 동일한
-         계산 규칙(마감 시각, 목표 수량 달성 여부)으로 판정한다. 필터는 반드시 LIMIT/OFFSET 이전에 적용한다.
+         계산 규칙(마감 시각, 목표 수량 달성 여부)으로 판정한다. 필터는 반드시 LIMIT 이전에 적용한다.
          OPEN/COMPLETED/FAILED는 다른 3개 조회 API(getDetail/getStatus/getMyList)와 동일한 값이다 —
          마감(취소)된 게시글은 이 목록에서 아예 노출하지 않으므로(status != 'CANCELLED') CANCELLED 분기는 없다.
          target_quantity <= 0인 행(정상 생성 경로로는 나올 수 없는 레거시/비정상 데이터)은 목록 자체에서
@@ -16,7 +16,13 @@
         delivery_* 는 목록 응답(GroupPurchaseListItemResponse)에 없다. image는 목록 카드
         썸네일에 필요해 포함한다 — 저장값은 키이고 화면에 보일 서명 URL은 조회 시점에
         FileStorage#signedUrl로 만든다(GroupPurchaseServiceImpl#toListItemResponse).
+        is_urgent_active는 응답 DTO에 노출하지 않는다 — 정렬/커서 전용 내부 컬럼이다(V49).
     -->
+    <!-- 키워드는 LIKE '%...%' 대신 FULLTEXT(ngram) MATCH...AGAINST로 찾는다(V48). 한 글자
+         검색어는 ngram_token_size(기본값 2) 미만이라 색인되지 않으므로 매칭되지 않는다 —
+         GroupPurchaseServiceImpl에서 최소 2자 이상만 여기로 넘어오게 걸러낸다. 서비스가
+         boolean mode 예약문자를 큰따옴표 구문(phrase) 검색으로 감싸 전달하므로 이 쿼리는
+         키워드를 가공하지 않고 그대로 쓴다. -->
     <select id="findList" resultType="map">
         SELECT gp_id,
                member_id,
@@ -28,6 +34,7 @@
                target_quantity,
                current_quantity,
                status,
+               is_urgent_active,
                deadline,
                created_at
         FROM group_purchase
@@ -48,30 +55,66 @@
                 AND category = #{category}
             </if>
             <if test="keyword != null and keyword != ''">
-                AND product_name LIKE CONCAT('%', #{keyword}, '%')
+                AND MATCH(product_name) AGAINST(#{keyword} IN BOOLEAN MODE)
+            </if>
+            <!-- 커서(keyset) 페이지네이션. 정렬 기준과 정확히 같은 컬럼 순서로 "그 행보다 뒤에 오는
+                 행"만 남긴다. OFFSET과 달리 앞선 행을 읽고 버리지 않아 페이지가 깊어져도 비용이
+                 늘지 않는다. 첫 페이지(cursorGpId == null)는 조건 없이 처음부터 조회한다.
+
+                 legacyOffset은 배포 전환 기간 호환 전용이다(GroupPurchaseServiceImpl 참고) —
+                 cursor 없이 구 프론트의 page만 오는 요청을 위한 것으로, cursor와 동시에
+                 채워지지 않는다(서비스 레이어가 상호 배타적으로 보장). 새 정렬 기준(is_urgent_active
+                 포함)을 그대로 쓰므로 예전 CASE WHEN NOW() 버그는 재도입되지 않는다.
+
+                 주의: cursorGpId != null 하나로만 이 블록 전체를 게이팅하고, 안에서는
+                 cursorIsUrgentActive/cursorDeadline/cursorCreatedAt도 무조건 같이 참조한다.
+                 네 필드는 항상 함께 null이거나 함께 값이 있어야 한다(GroupPurchaseMapper.java
+                 참고) — 일부만 채워서 호출하면 예외 없이 조용히 빈 결과가 나온다(NULL 비교는
+                 항상 false). -->
+            <if test="cursorGpId != null">
+                <choose>
+                    <when test="status == null or status == ''">
+                        AND (
+                            is_urgent_active &lt; #{cursorIsUrgentActive}
+                            OR (is_urgent_active = #{cursorIsUrgentActive} AND deadline &gt; #{cursorDeadline})
+                            OR (is_urgent_active = #{cursorIsUrgentActive} AND deadline = #{cursorDeadline} AND created_at &lt; #{cursorCreatedAt})
+                            OR (is_urgent_active = #{cursorIsUrgentActive} AND deadline = #{cursorDeadline} AND created_at = #{cursorCreatedAt} AND gp_id &lt; #{cursorGpId})
+                        )
+                    </when>
+                    <otherwise>
+                        AND (
+                            deadline &gt; #{cursorDeadline}
+                            OR (deadline = #{cursorDeadline} AND created_at &lt; #{cursorCreatedAt})
+                            OR (deadline = #{cursorDeadline} AND created_at = #{cursorCreatedAt} AND gp_id &lt; #{cursorGpId})
+                        )
+                    </otherwise>
+                </choose>
             </if>
         </where>
         <!-- 진행중(마감 전이고 목표 미달)인 게시글을 먼저, 마감된(목표 달성/미달) 게시글을 뒤로 묶고,
              각 그룹 안에서는 마감이 임박한(deadline 오름차순) 순으로, 마감이 같으면 최신 등록순으로 보여준다.
 
-             상태 필터가 걸린 경우에는 이 CASE가 항상 같은 값이다. WHERE가 이미 한쪽으로
-             좁혀놓기 때문이다(OPEN이면 0, COMPLETED·FAILED면 1). 그래서 정렬에서 빼도
+             상태 필터가 걸린 경우에는 is_urgent_active가 항상 같은 값이다. WHERE가 이미 한쪽으로
+             좁혀놓기 때문이다(OPEN이면 1, COMPLETED·FAILED면 0). 그래서 정렬에서 빼도
              결과 순서가 같고, 대신 (deadline, created_at DESC, gp_id DESC) 인덱스가 정렬을 그대로 제공할 수 있다.
 
-             빼지 않으면 NOW()가 든 계산식이라 어떤 인덱스도 순서를 줄 수 없어 20만 행을
-             전부 정렬한다(V39 당시 created_at 단일 인덱스 기준 측정치는 101ms -> 2.7ms.
-             deadline 기준으로 바뀐 이 인덱스도 20만 행 시드 데이터로 재확인함: OPEN/FAILED는
-             idx_gp_deadline_created range 스캔, COMPLETED는 그 인덱스의 전체 스캔으로 정렬을
-             그대로 제공하고 셋 다 Using filesort가 없다).
-
-             필터가 없는 전체 탭은 두 그룹이 섞여 있어 CASE가 필요하다. 이 경로는 여전히
-             풀스캔이며 별도 과제다. -->
+             필터가 없는 전체 탭은 두 그룹이 섞여 있어 is_urgent_active가 필요하다. 예전에는
+             CASE WHEN ... NOW() ...로 매 요청 계산해서 어떤 인덱스도 순서를 줄 수 없었지만(V39/V42에
+             "별도 과제"로 명시), 이제는 미리 계산해 저장해둔 is_urgent_active 컬럼을 읽기만 하므로
+             idx_gp_urgent_deadline_created(V49)가 정렬을 그대로 제공한다. -->
         ORDER BY
             <if test="status == null or status == ''">
-            CASE WHEN current_quantity &lt; target_quantity AND deadline &gt;= NOW() THEN 0 ELSE 1 END,
+            is_urgent_active DESC,
             </if>
             deadline ASC, created_at DESC, gp_id DESC
-        LIMIT #{limit} OFFSET #{offset}
+        <choose>
+            <when test="legacyOffset != null">
+                LIMIT #{limit} OFFSET #{legacyOffset}
+            </when>
+            <otherwise>
+                LIMIT #{limit}
+            </otherwise>
+        </choose>
     </select>
 
     <select id="findById" resultType="map">
@@ -79,24 +122,43 @@
     </select>
 
     <!-- delivery_date는 등록 시 deadline + delivery_estimate_days(잠정치)로 채워지고, 목표 수량 달성
-         시점에 updateDeliveryDate로 confirmedDate + delivery_estimate_days로 갱신된다(V22). -->
+         시점에 updateDeliveryDate로 confirmedDate + delivery_estimate_days로 갱신된다(V22).
+         is_urgent_active는 등록 직후 항상 1이다 — GroupPurchaseCreateRequest가 deadline을 @Future로
+         검증하고(생성 시점엔 반드시 미래) current_quantity는 0이라 current < target이 항상 참이다. -->
     <insert id="insert" parameterType="map" useGeneratedKeys="true" keyProperty="gpId" keyColumn="gp_id">
         INSERT INTO group_purchase
             (member_id, product_name, category, image, unit_price, group_price,
-             delivery_method, delivery_fee, delivery_date, delivery_estimate_days, description, target_quantity, deadline)
+             delivery_method, delivery_fee, delivery_date, delivery_estimate_days, description, target_quantity, deadline, is_urgent_active)
         VALUES
             (#{memberId}, #{productName}, #{category}, #{image}, #{unitPrice}, #{groupPrice},
-             #{deliveryMethod}, #{deliveryFee}, #{deliveryDate}, #{deliveryEstimateDays}, #{description}, #{targetQuantity}, #{deadline})
+             #{deliveryMethod}, #{deliveryFee}, #{deliveryDate}, #{deliveryEstimateDays}, #{description}, #{targetQuantity}, #{deadline}, 1)
     </insert>
 
     <!-- 목표 수량 초과·마감 여부·취소 여부를 조건절에 포함한 조건부 원자 UPDATE로 수량을 예약한다.
          current_quantity/target_quantity/deadline/status를 애플리케이션에서 미리 읽어 비교하면
          동시 요청 사이에 값이 바뀌어 목표 수량을 초과하거나 취소된 공동구매에 참여할 수 있으므로,
          반드시 이 WHERE 절 안에서 판정해야 한다.
-         영향받은 행이 0이면(조건 불충족) 호출부에서 참여를 거절해야 한다. -->
+         영향받은 행이 0이면(조건 불충족) 호출부에서 참여를 거절해야 한다.
+         이 UPDATE로 목표 수량에 도달하면(current_quantity + quantity = target_quantity) 같은 문장 안에서
+         is_urgent_active를 0으로 함께 내린다 — 배치를 기다리지 않고 그 즉시 전체 탭 정렬에 반영된다.
+
+         SET 절의 순서가 중요하다(리뷰로 발견한 실제 버그): MySQL은 같은 UPDATE 문 안의 SET 절을
+         왼쪽에서 오른쪽으로 순차 평가하고, 뒤에 오는 절은 앞에서 이미 갱신된 값을 본다. is_urgent_active
+         CASE를 current_quantity 갱신 뒤에 두면 그 안의 current_quantity가 "이미 quantity만큼 더해진"
+         값을 가리켜, 거기에 quantity를 한 번 더 더한 것과 같아진다(사실상 목표 도달 여부를 실제
+         증가분의 두 배 기준으로 판정). 예: current=7, target=10, quantity=2로 참여하면 실제
+         새 current_quantity=9(아직 미달, urgent 유지돼야 함)인데, 잘못된 순서에서는
+         9+2=11 >= target(10)로 오판해 is_urgent_active를 0으로 내려버린다 — 이후 leave()도
+         자정 배치도 이 값을 되돌리지 않아 V50 주석이 경계한 "영구히 잘못 박힌 채 남는" 상태가 된다.
+         반드시 is_urgent_active를 먼저 계산해(이 시점엔 current_quantity가 아직 원본 값이라
+         + #{quantity}가 순수하게 "이번에 참여할 양"만 의미한다) current_quantity 갱신보다 앞에 둔다.
+         H2(GroupPurchaseMapperTest)는 이 순차 평가 방식을 따르지 않아(모든 SET 절이 갱신 전 스냅숏을
+         봄) 이 버그를 재현하지 못한다 — 그래서 실 MySQL 통합 테스트로 별도 검증한다
+         (GroupPurchaseUpdateQuantitySetOrderIntegrationTest). -->
     <update id="updateQuantity">
         UPDATE group_purchase
-        SET current_quantity = current_quantity + #{quantity}
+        SET is_urgent_active = CASE WHEN current_quantity + #{quantity} &lt; target_quantity THEN 1 ELSE 0 END,
+            current_quantity = current_quantity + #{quantity}
         WHERE gp_id = #{gpId}
           AND current_quantity + #{quantity} &lt;= target_quantity
           AND deadline &gt;= NOW()
@@ -231,7 +293,7 @@
          배치의 deadline 통과 전까지 영구히 취소 불가 상태로 남는다). -->
     <update id="cancelGroupPurchase">
         UPDATE group_purchase
-        SET status = 'CANCELLED'
+        SET status = 'CANCELLED', is_urgent_active = 0
         WHERE gp_id = #{gpId}
           AND status != 'CANCELLED'
           AND (target_quantity &lt;= 0 OR current_quantity &lt; target_quantity)
@@ -253,5 +315,16 @@
         WHERE gp_id = #{gpId} AND payment_status != 'CANCELLED'
         FOR UPDATE
     </select>
+
+    <!-- GroupPurchaseUrgentFlagJob 전용(V49). 마감 시각 경과는 그 행에 대한 쓰기 이벤트가 아니라
+         DB 트리거로 감지할 수 없으므로, 매일 자정 직후 배치가 is_urgent_active=1인데 이미
+         deadline이 지난 행만 골라 0으로 내린다. idx_gp_urgent_deadline_created의 선두 컬럼이
+         is_urgent_active라 이 UPDATE 자체도 "1인 행"만 골라내는 인덱스 스캔이라 저비용이다. -->
+    <update id="deactivateExpiredUrgentFlags">
+        UPDATE group_purchase
+        SET is_urgent_active = 0
+        WHERE is_urgent_active = 1
+          AND deadline &lt; NOW()
+    </update>
 
 </mapper>

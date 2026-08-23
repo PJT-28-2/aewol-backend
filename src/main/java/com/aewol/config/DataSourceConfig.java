@@ -1,6 +1,7 @@
 package com.aewol.config;
 
 import com.zaxxer.hikari.HikariDataSource;
+import io.micrometer.core.instrument.MeterRegistry;
 import org.apache.ibatis.session.SqlSessionFactory;
 import org.mybatis.spring.SqlSessionFactoryBean;
 import org.mybatis.spring.SqlSessionTemplate;
@@ -39,7 +40,7 @@ public class DataSourceConfig {
     private String driverClassName;
 
     @Bean
-    public DataSource dataSource() {
+    public DataSource dataSource(MeterRegistry meterRegistry) {
         HikariDataSource ds = new HikariDataSource();
         ds.setJdbcUrl(url);
         ds.setUsername(username);
@@ -48,6 +49,9 @@ public class DataSourceConfig {
         ds.setMaximumPoolSize(10);
         ds.setMinimumIdle(5);
         ds.setConnectionTimeout(30_000);
+        // HikariCP는 첫 커넥션을 만든 뒤 metricRegistry를 바꾸지 못한다. BatchConfig의
+        // 스키마 초기화처럼 기동 중 커넥션을 여는 빈보다 먼저, 풀 설정 단계에서 붙인다.
+        ds.setMetricRegistry(meterRegistry);
         return ds;
     }
 
@@ -63,6 +67,13 @@ public class DataSourceConfig {
         cfg.setMapUnderscoreToCamelCase(true);
         cfg.setDefaultFetchSize(100);
         cfg.setDefaultStatementTimeout(30);
+        // 쿼리 로그를 한 스위치로 켜고 끄기 위한 접두사.
+        //
+        // MyBatis는 매퍼 인터페이스의 전체 이름으로 로그를 남긴다. 매퍼가
+        // com.aewol.domain.*.mapper 아래 흩어져 있어 logback에서 한 줄로 묶을 수 없고,
+        // com.aewol.domain으로 묶으면 매퍼가 아닌 서비스·컨트롤러까지 전부 딸려온다.
+        // 접두사를 붙이면 로거 이름이 sql.* 이 되어 SQL만 따로 제어할 수 있다.
+        cfg.setLogPrefix("sql.");
         fb.setConfiguration(cfg);
         return fb.getObject();
     }

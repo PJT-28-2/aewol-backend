@@ -1,22 +1,41 @@
 package com.aewol;
 
 import com.aewol.config.MultipartLimits;
+import com.aewol.config.RequestIdFilter;
+
 import org.apache.catalina.Context;
 import org.apache.catalina.startup.Tomcat;
 import org.apache.tomcat.util.descriptor.web.FilterDef;
 import org.apache.tomcat.util.descriptor.web.FilterMap;
+import org.slf4j.bridge.SLF4JBridgeHandler;
 import org.springframework.web.context.support.AnnotationConfigWebApplicationContext;
 import org.springframework.web.filter.CharacterEncodingFilter;
 import org.springframework.web.filter.DelegatingFilterProxy;
 import org.springframework.web.servlet.DispatcherServlet;
 
+import java.io.File;
 import javax.servlet.Filter;
 import javax.servlet.MultipartConfigElement;
-import java.io.File;
 
 public class AewolApplication {
 
+    /**
+     * JUL로 나가는 로그를 slf4j로 넘긴다.
+     *
+     * <p>jul-to-slf4j는 클래스패스에 두는 것만으로는 아무 일도 하지 않는다. 이 호출이
+     * 없으면 톰캣 내부 로그가 logback.xml을 거치지 않고 JUL 기본 설정대로 따로 찍혀,
+     * 요청 추적 id도 붙지 않고 레벨 조정도 먹지 않는다.
+     *
+     * <p>기존 핸들러를 먼저 지우지 않으면 같은 로그가 두 번 찍힌다.
+     */
+    private static void installJulBridge() {
+        SLF4JBridgeHandler.removeHandlersForRootLogger();
+        SLF4JBridgeHandler.install();
+    }
+
     public static void main(String[] args) throws Exception {
+        installJulBridge();
+
         // 활성 프로파일 설정 (기본값: local)
         String profile = System.getProperty("spring.profiles.active", "local");
 
@@ -56,6 +75,15 @@ public class AewolApplication {
         // CharacterEncoding 필터 (UTF-8)
         registerFilter(context, "encodingFilter",
                 new CharacterEncodingFilter("UTF-8", true), "/*");
+
+        // 요청 추적 id는 보안 필터보다 먼저 붙인다. 인증에서 튕겨 나가는 요청의 로그도
+        // 같은 id로 묶여야 "누가 왜 401을 받았는지"를 되짚을 수 있다.
+        registerFilter(context, "requestIdFilter", new RequestIdFilter(), "/*");
+
+        // 요청 소요 시간은 보안 필터보다 바깥에서 잰다. 인증에서 튕겨 나가는 요청도
+        // 서버가 쓴 시간이고, 401이 몰리는 상황 자체가 봐야 할 신호다.
+        registerFilter(context, "httpMetricsFilter",
+                new DelegatingFilterProxy("httpMetricsFilter"), "/*");
 
         // Spring Security 필터
         registerFilter(context, "springSecurityFilterChain",

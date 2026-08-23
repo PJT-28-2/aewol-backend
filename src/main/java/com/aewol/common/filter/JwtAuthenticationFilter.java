@@ -1,7 +1,7 @@
 package com.aewol.common.filter;
 
+import com.aewol.common.cache.MemberAuthStateCache;
 import com.aewol.common.util.JwtUtil;
-import com.aewol.domain.member.mapper.MemberMapper;
 import io.jsonwebtoken.Claims;
 import javax.servlet.FilterChain;
 import javax.servlet.ServletException;
@@ -28,7 +28,7 @@ import java.util.Map;
 public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
     private final JwtUtil jwtUtil;
-    private final MemberMapper memberMapper;
+    private final MemberAuthStateCache authStateCache;
 
     @Override
     protected boolean shouldNotFilter(HttpServletRequest request) {
@@ -52,7 +52,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             String memberId = claims.getSubject();
             Map<String, Object> authState;
             try {
-                authState = memberMapper.findAuthStateById(memberId);
+                authState = authStateCache.find(memberId);
             } catch (DataAccessException e) {
                 log.error("인증 과정에서 회원 활성 상태를 확인하지 못했습니다.", e);
                 throw e;
