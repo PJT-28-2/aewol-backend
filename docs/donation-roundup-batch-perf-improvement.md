@@ -102,8 +102,8 @@ AS-IS는 처리 순서가 앞설수록 락 보유 시간이 배치 나머지 전
 - `DonationRoundUpExecutor` 신규(`GroupPurchaseRefundExecutor` 패턴 그대로) — `execute(candidate)`에 `@Transactional`, 기존 5쿼리 로직을 그대로 이동
 - `DonationRoundUpJob`이 후보 목록을 직접 조회하고 for 루프 + try/catch로 `executor.execute(candidate)`에 위임하는 구조로 변경(`GroupPurchaseRefundJob`과 동일). 성공/스킵/오류 건수 집계 로그. 스킵은 건별 warn을 남기지 않는다 — "결제액이 저금 단위로 딱 떨어짐"이 대부분이라 정상적인 흔한 케이스이기 때문(`GroupPurchaseRefundJob`과의 의도적인 차이)
 - `DonationService`/`DonationServiceImpl`에서 `processDailyRoundUps()`와 그 전용 헬퍼(`roundUpAmount()`) 완전히 제거 — 더 이상 호출되지 않는 경로를 죽은 코드로 남기지 않았다
-- `insertRoundUp`의 `ON DUPLICATE KEY UPDATE` 멱등성은 그대로 유지 — 독립 트랜잭션으로 바뀌어도 재실행 안전성에 영향 없음
-- 테스트: `DonationRoundUpExecutorTest`(8건, 정상 적립/신규 저금통/SKIPPED/중복 스킵/유효성/예외), `DonationRoundUpTransactionBoundaryTest`(4건, 트랜잭션 경계 구조 검증), 기존 `DonationServiceImplTest`의 `processDailyRoundUps` 테스트 3건은 커버리지 손실 없이 제거
+- `insertRoundUp`을 `ON DUPLICATE KEY UPDATE source_txn_id = VALUES(source_txn_id)`(no-op 업데이트 흉내)에서 `INSERT IGNORE`로 변경(리뷰로 발견) — 이 프로젝트의 JDBC URL은 `useAffectedRows`를 명시하지 않아 MySQL Connector/J 기본값(found-rows 모드)이 적용되는데, 이 모드에서는 no-op 업데이트도 영향 행이 0이 아니라 1로 보고되어 재실행 시 중복 건을 신규 삽입으로 오인해 잔돈을 두 번 적립할 수 있었다. `INSERT IGNORE`는 커넥터 모드와 무관하게 신규 삽입=1, 중복 무시=0을 항상 보장한다
+- 테스트: `DonationRoundUpExecutorTest`(8건, 정상 적립/신규 저금통/SKIPPED/중복 스킵/유효성/예외), `DonationRoundUpTransactionBoundaryTest`(4건, 트랜잭션 경계 구조 검증), `DonationRoundUpInsertIdempotencyIntegrationTest`(신규, 실 MySQL로 `insertRoundUp` 재실행 시 영향 행이 항상 0임을 검증 — H2는 커넥터별 affected-rows 해석 차이를 재현하지 못해 실 MySQL 전용 테스트로 분리), 기존 `DonationServiceImplTest`의 `processDailyRoundUps` 테스트 3건은 커버리지 손실 없이 제거
 
 ## 5. 관련 파일
 
@@ -112,6 +112,7 @@ AS-IS는 처리 순서가 앞설수록 락 보유 시간이 배치 나머지 전
 - `src/main/java/com/aewol/domain/donation/service/DonationService.java`, `DonationServiceImpl.java`
 - `src/main/resources/mapper/donation/DonationMapper.xml` (`findTodayRoundUpCandidates`, `findPotForUpdate`, `insertRoundUp`, `increasePotBalance`, `completeRoundUp`)
 - `src/test/java/com/aewol/batch/DonationRoundUpExecutorTest.java`, `DonationRoundUpTransactionBoundaryTest.java` (신규)
+- `src/test/java/com/aewol/domain/donation/mapper/DonationRoundUpInsertIdempotencyIntegrationTest.java` (신규, 실 MySQL)
 - `src/test/java/com/aewol/domain/donation/service/DonationServiceImplTest.java`
 - 참고 패턴: `src/main/java/com/aewol/batch/GroupPurchaseRefundJob.java`, `GroupPurchaseRefundExecutor.java`, `RecurringPaymentJob.java`, `RecurringPaymentExecutor.java`, `PaymentTransactionBoundaryTest.java`
 - `src/main/java/com/aewol/batch/ScheduledJobLock.java` (동시 인스턴스 실행 방지 — 이번 개선과 무관하게 이미 해결돼 있음, 참고용)

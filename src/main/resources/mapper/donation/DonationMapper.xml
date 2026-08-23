@@ -193,12 +193,16 @@
     </select>
 
     <!-- uk_dr_source_txn 충돌 시 no-op 업데이트라 affected rows 0 -> 중복 적립 자동 스킵 -->
+    <!-- INSERT IGNORE(우선순위: ON DUPLICATE KEY UPDATE 아님) — 커넥터의 useAffectedRows 설정과
+         무관하게 신규 삽입은 항상 1, 중복 키로 무시된 경우는 항상 0을 반환한다. ON DUPLICATE KEY
+         UPDATE로 값이 그대로인 no-op 업데이트를 흉내 내면, MySQL 커넥터/J 기본값(useAffectedRows=false,
+         CLIENT_FOUND_ROWS)에서는 그 경우도 영향 행이 0이 아니라 1로 보고되어 재실행 중복 건을 신규
+         삽입으로 오인해 잔돈을 중복 적립하게 된다(리뷰로 발견) -->
     <insert id="insertRoundUp" parameterType="map" useGeneratedKeys="true" keyProperty="roundupId" keyColumn="roundup_id">
-        INSERT INTO donation_roundup
+        INSERT IGNORE INTO donation_roundup
             (source_txn_id, wallet_id, saving_unit, roundup_amount, status)
         VALUES
             (#{sourceTxnId}, #{walletId}, #{savingUnit}, #{roundupAmount}, #{status})
-        ON DUPLICATE KEY UPDATE source_txn_id = VALUES(source_txn_id)
     </insert>
 
     <update id="completeRoundUp">

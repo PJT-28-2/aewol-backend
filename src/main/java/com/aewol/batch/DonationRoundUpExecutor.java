@@ -45,10 +45,12 @@ public class DonationRoundUpExecutor {
         roundUp.put("roundupAmount", roundUpAmount);
         roundUp.put("status", roundUpAmount.signum() == 0 ? "SKIPPED" : "PENDING");
 
-        // insertRoundUp은 ON DUPLICATE KEY UPDATE source_txn_id = VALUES(source_txn_id)라, 같은
-        // source_txn_id로 이미 기록된 건이면(재실행 등) 영향 행이 0으로 감지되어 여기서 스킵된다 —
-        // 이게 이 배치의 멱등성을 지키는 핵심이다. roundUpAmount가 0(딱 떨어지는 결제액)인 경우도
-        // SKIPPED로 기록만 하고 잔액 반영 없이 스킵한다.
+        // insertRoundUp은 INSERT IGNORE라, 같은 source_txn_id로 이미 기록된 건이면(재실행 등)
+        // 영향 행이 항상 0으로 감지되어 여기서 스킵된다 — 이게 이 배치의 멱등성을 지키는 핵심이다.
+        // (ON DUPLICATE KEY UPDATE로 값이 그대로인 no-op을 흉내 내면, useAffectedRows를 별도
+        // 설정하지 않은 이 프로젝트의 커넥터 기본값(found-rows 모드)에서는 그 경우도 1을 반환해
+        // 중복 건을 신규 삽입으로 오인한다 — 실측으로 확인된 회귀라 INSERT IGNORE로 바꿨다.)
+        // roundUpAmount가 0(딱 떨어지는 결제액)인 경우도 SKIPPED로 기록만 하고 잔액 반영 없이 스킵한다.
         if (donationMapper.insertRoundUp(roundUp) != 1 || roundUpAmount.signum() == 0) {
             return false;
         }
