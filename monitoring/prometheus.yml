@@ -10,7 +10,8 @@ scrape_configs:
     metrics_path: /api/metrics
     # 메트릭은 JWT가 아니라 전용 토큰으로 지킨다. Prometheus는 토큰을 갱신할 수 없어
     # 만료되는 JWT로는 스크레이핑을 이어갈 수 없다.
-    # METRICS_TOKEN과 같은 값을 넣는다. 로컬 전용 값이라 그대로 커밋한다.
+    # METRICS_TOKEN과 같은 값을 넣는다. 아래 값은 로컬 전용이며 스테이징·운영에서
+    # 절대 복사하거나 재사용하지 않는다.
     http_headers:
       X-Metrics-Token:
         values: ["local-scrape-secret"]

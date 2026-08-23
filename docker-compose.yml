@@ -55,7 +55,8 @@ services:
     profiles: ["monitoring"]
     restart: unless-stopped
     ports:
-      - "${PROMETHEUS_PORT:-9090}:9090"
+      # 로컬 메트릭과 설정을 같은 네트워크의 다른 기기에 노출하지 않는다.
+      - "127.0.0.1:${PROMETHEUS_PORT:-9090}:9090"
     volumes:
       - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus-data:/prometheus
@@ -66,9 +67,9 @@ services:
     profiles: ["monitoring"]
     restart: unless-stopped
     ports:
-      - "${GRAFANA_PORT:-3000}:3000"
+      - "127.0.0.1:${GRAFANA_PORT:-3000}:3000"
     environment:
-      # 로컬 전용이라 익명 접근을 열어 둔다. 운영에 그대로 가져가면 안 된다.
+      # 로컬호스트 전용이라 익명 접근을 연다. 다른 환경에 복사하거나 재사용하지 않는다.
       GF_AUTH_ANONYMOUS_ENABLED: "true"
       GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
       GF_AUTH_DISABLE_LOGIN_FORM: "true"
