@@ -30,6 +30,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -90,6 +91,49 @@ class ClaimServiceImplTest {
         assertNull(result.getHospitalName());
         verify(insuranceMapper).insertClaim(argThat((Map<String, Object> m) ->
                 "DRAFT".equals(m.get("claimStatus")) && m.get("hospitalName") == null));
+        verify(fileStorage, never()).delete(anyString());
+    }
+
+    @Test
+    @DisplayName("createClaim은 DB 저장이 실패하면 올려 둔 영수증 파일을 지운다")
+    void should_deleteStoredReceipt_whenInsertClaimFails() {
+        service = new ClaimServiceImpl(insuranceMapper, petMapper, paddleOcrClient, fileStorage);
+        when(petMapper.findByIdAndMemberId("10", "100")).thenReturn(Map.of("pet_id", "10"));
+        when(fileStorage.store(any(), eq("receipts"), eq("jpg"))).thenReturn("receipts/x.jpg");
+        when(paddleOcrClient.extractReceiptData(any(), anyString())).thenReturn("{}");
+        doThrow(new RuntimeException("db")).when(insuranceMapper).insertClaim(any());
+
+        MockMultipartFile receipt = new MockMultipartFile("receipt", "receipt.jpg", "image/jpeg", "img".getBytes());
+
+        assertThrows(RuntimeException.class, () -> service.createClaim("100", "10", receipt));
+        verify(fileStorage).delete("receipts/x.jpg");
+    }
+
+    /*
+     * insert가 지나가면 청구 행은 이미 커밋돼 있다. createClaim은 OCR을 트랜잭션 밖에서
+     * 부르려고 @Transactional을 붙이지 않았으므로, 뒤에서 무엇이 실패하든 행은 남는다.
+     * 그때 영수증까지 지우면 멀쩡히 만들어진 청구가 깨진 이미지를 가리키게 된다.
+     */
+    @Test
+    @DisplayName("createClaim은 저장이 끝난 뒤에 실패하면 영수증을 지우지 않는다")
+    void should_keepStoredReceipt_whenFailureHappensAfterInsert() {
+        service = new ClaimServiceImpl(insuranceMapper, petMapper, paddleOcrClient, fileStorage);
+        when(petMapper.findByIdAndMemberId("10", "100")).thenReturn(Map.of("pet_id", "10"));
+        when(fileStorage.store(any(), eq("receipts"), eq("jpg"))).thenReturn("receipts/x.jpg");
+        when(paddleOcrClient.extractReceiptData(any(), anyString())).thenReturn("{}");
+        doAnswer(invocation -> {
+            ((Map<String, Object>) invocation.getArgument(0)).put("claimId", 1);
+            return 1;
+        }).when(insuranceMapper).insertClaim(any());
+        // 저장은 끝났는데 되돌려줄 값을 읽는 데서 넘어진 상황
+        when(insuranceMapper.findClaimById("1")).thenThrow(new RuntimeException("조회 실패"));
+
+        MockMultipartFile receipt = new MockMultipartFile("receipt", "receipt.jpg", "image/jpeg", "img".getBytes());
+
+        assertThrows(RuntimeException.class, () -> service.createClaim("100", "10", receipt));
+
+        verify(insuranceMapper).insertClaim(any());
+        verify(fileStorage, never()).delete(anyString());
     }
 
     @Test
