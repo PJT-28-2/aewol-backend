@@ -228,71 +228,8 @@ class DonationServiceImplTest {
         verify(donationMapper).updateSettings(anyMap());
     }
 
-    @Test
-    @DisplayName("결제 금액을 저금 단위로 올린 차액을 저금통에 한 번 적립한다")
-    void should_saveRoundUpAmount_when_paymentHasRemainder() {
-        DonationServiceImpl service = service();
-        when(donationMapper.findTodayRoundUpCandidates()).thenReturn(List.of(map(
-                "txnId", "txn-1", "memberId", "member-1",
-                "amount", new BigDecimal("12600"), "savingUnit", new BigDecimal("1000"))));
-        when(donationMapper.findPotByMemberId("member-1"))
-                .thenReturn(map("wallet_id", "pot-1", "balance", BigDecimal.ZERO));
-        when(donationMapper.findPotForUpdate("member-1"))
-                .thenReturn(map("wallet_id", "pot-1", "balance", BigDecimal.ZERO));
-        when(donationMapper.insertRoundUp(anyMap())).thenReturn(1);
-        when(donationMapper.increasePotBalance("pot-1", new BigDecimal("400"))).thenReturn(1);
-        when(donationMapper.completeRoundUp(any())).thenReturn(1);
-
-        int completedCount = service.processDailyRoundUps();
-
-        ArgumentCaptor<Map<String, Object>> captor = ArgumentCaptor.forClass(Map.class);
-        verify(donationMapper).insertRoundUp(captor.capture());
-        assertEquals(new BigDecimal("400"), captor.getValue().get("roundupAmount"));
-        assertEquals(1, completedCount);
-    }
-
-    @Test
-    @DisplayName("결제 금액이 저금 단위로 딱 떨어지면 올릴 차액이 없어 적립하지 않는다")
-    void should_skipSaving_when_paymentHasNoRemainder() {
-        DonationServiceImpl service = service();
-        when(donationMapper.findTodayRoundUpCandidates()).thenReturn(List.of(map(
-                "txnId", "txn-1", "memberId", "member-1",
-                "amount", new BigDecimal("12000"), "savingUnit", new BigDecimal("1000"))));
-        when(donationMapper.findPotByMemberId("member-1"))
-                .thenReturn(map("wallet_id", "pot-1", "balance", BigDecimal.ZERO));
-        when(donationMapper.findPotForUpdate("member-1"))
-                .thenReturn(map("wallet_id", "pot-1", "balance", BigDecimal.ZERO));
-        when(donationMapper.insertRoundUp(anyMap())).thenReturn(1);
-
-        int completedCount = service.processDailyRoundUps();
-
-        verify(donationMapper, never()).increasePotBalance(any(), any());
-        assertEquals(0, completedCount);
-    }
-
-    // 예전에는 나머지를 적립했다(34,800원이면 800원). 화면 문구가 "결제 잔돈 자동 적립"이라
-    // 올림 차액(200원)을 기대하게 되는데 실제로는 반대여서 3배 넘게 차이가 났다.
-    @Test
-    @DisplayName("나머지가 아니라 올림 차액을 적립한다")
-    void should_saveGapToNextUnit_notRemainder() {
-        DonationServiceImpl service = service();
-        when(donationMapper.findTodayRoundUpCandidates()).thenReturn(List.of(map(
-                "txnId", "txn-1", "memberId", "member-1",
-                "amount", new BigDecimal("34800"), "savingUnit", new BigDecimal("1000"))));
-        when(donationMapper.findPotByMemberId("member-1"))
-                .thenReturn(map("wallet_id", "pot-1", "balance", BigDecimal.ZERO));
-        when(donationMapper.findPotForUpdate("member-1"))
-                .thenReturn(map("wallet_id", "pot-1", "balance", BigDecimal.ZERO));
-        when(donationMapper.insertRoundUp(anyMap())).thenReturn(1);
-        when(donationMapper.increasePotBalance(any(), any())).thenReturn(1);
-        when(donationMapper.completeRoundUp(any())).thenReturn(1);
-
-        service.processDailyRoundUps();
-
-        ArgumentCaptor<Map<String, Object>> captor = ArgumentCaptor.forClass(Map.class);
-        verify(donationMapper).insertRoundUp(captor.capture());
-        assertEquals(new BigDecimal("200"), captor.getValue().get("roundupAmount"));
-    }
+    // 잔돈 적립(processDailyRoundUps) 테스트는 DonationRoundUpExecutorTest로 옮겼다 — 그 로직이
+    // DonationServiceImpl에서 DonationRoundUpExecutor로 이동했다(#349, 건별 독립 트랜잭션).
 
     @Test
     @DisplayName("월말 자동 기부 대상이면 저금통 전액을 선택 캠페인에 한 번 기부한다")
