@@ -11,7 +11,10 @@ EC2 한 대에 Docker Compose로 MySQL·Redis·OCR·애플리케이션을 함께
 | EC2 | `i-0b63ce3e8f7d98f9d` (m7i-flex.large, 8GB) |
 | 탄력적 IP | `43.200.225.176` |
 | 오리진 DNS | `ec2-43-200-225-176.ap-northeast-2.compute.amazonaws.com` |
+| 도메인 | `aewol.store` (대표), `www.aewol.store` |
 | CloudFront | `E2AXIIBUB4L66H` / `d2wzfpczojllq5.cloudfront.net` |
+| ACM 인증서 | `a8dc7687-f0dc-4b84-9969-1a9ed99c3d7d` (**us-east-1**) |
+| DNS | Route 53 호스팅 영역 (가비아 등록, 네임서버만 위임) |
 | 정적 호스팅 버킷 | `aewol-prod-596617418243-ap-northeast-2-an` |
 | 업로드 파일 버킷 | `aewol-uploads-prods-596617418243-ap-northeast-2-an` |
 | DB 백업 버킷 | `aewol-old-backup-596617418243-ap-northeast-2-an` |
@@ -19,8 +22,17 @@ EC2 한 대에 Docker Compose로 MySQL·Redis·OCR·애플리케이션을 함께
 | EC2 역할 | `aewol-ec2-role` |
 | SSM 경로 | `/aewol/prod/*` |
 
-커스텀 도메인 없이 CloudFront 기본 도메인을 쓴다. HTTPS가 자동으로 제공되어 ACM 발급이
-필요 없고, QR 스캔(`getUserMedia`)·Toss·카카오 OAuth 요건을 모두 만족한다.
+도메인은 가비아에서 등록하고 네임서버만 Route 53으로 위임했다. **루트 도메인(`aewol.store`)을
+CloudFront에 연결하려면 별칭(ALIAS) 레코드가 필요한데**, CloudFront는 IP가 고정되지 않아
+A 레코드에 주소를 박을 수 없고 DNS 규약상 루트에는 CNAME을 둘 수 없다. Route 53의 ALIAS는
+이 문제를 위해 만들어진 기능이라, 등록 기관의 DNS를 쓰는 대신 위임하는 쪽을 택했다.
+
+> **인증서는 반드시 us-east-1에서 발급한다.** 다른 리소스가 전부 서울 리전에 있어 헷갈리기
+> 쉽지만, 서울에서 발급하면 CloudFront 설정 화면의 인증서 목록에 아예 나타나지 않는다.
+
+기존 CloudFront 기본 도메인(`*.cloudfront.net`)도 계속 살아 있다. 커스텀 도메인 도입 전에는
+그쪽만 썼고, ACM 발급 없이 HTTPS가 제공되어 QR 스캔(`getUserMedia`)·Toss·카카오 OAuth 요건을
+모두 만족했다.
 
 **m7i-flex.large를 고른 이유는 OCR이다.** 추론 시 700MB에서 1GB를 쓰는데 MySQL·Redis·앱까지
 합치면 4GB로는 여유가 없다. flex 계열은 기준 성능 40퍼센트 지속에 버스트가 가능해, 짧고 굵게

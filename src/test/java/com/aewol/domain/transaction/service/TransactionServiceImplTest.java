@@ -306,6 +306,57 @@ class TransactionServiceImplTest {
     }
 
     @Test
+    @DisplayName("최근 거래 조회에서도 type=PAYMENT을 매퍼에 그대로 전달한다")
+    void should_passPaymentFilter_forRecentTransactions() {
+        TransactionServiceImpl service = service();
+        when(walletMapper.findByMemberId("member-1")).thenReturn(map("wallet_id", "wallet-1"));
+        when(transactionMapper.findRecentByWalletId("wallet-1", "PAYMENT", 4)).thenReturn(List.of());
+
+        service.getRecentTransactions("member-1", "PAYMENT", 4);
+
+        verify(transactionMapper).findRecentByWalletId("wallet-1", "PAYMENT", 4);
+    }
+
+    @Test
+    void should_throwException_when_recentTransactionTypeIsUnknown() {
+        TransactionServiceImpl service = service();
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.getRecentTransactions("member-1", "REFUND", 4));
+
+        assertEquals("거래 유형은 ALL, CHARGE, WITHDRAW, PAYMENT 중 하나여야 합니다.", exception.getMessage());
+        verifyNoInteractions(walletMapper, transactionMapper);
+    }
+
+    @Test
+    @DisplayName("type=PAYMENT을 넘기면 매퍼에 PAYMENT 필터로 그대로 전달된다")
+    void should_passPaymentFilter_when_typeIsPayment() {
+        TransactionServiceImpl service = service();
+        when(walletMapper.findByMemberId("member-1")).thenReturn(map("wallet_id", "wallet-1"));
+        when(transactionMapper.findByWalletId(
+                eq("wallet-1"), eq("PAYMENT"), any(LocalDateTime.class),
+                any(LocalDateTime.class), isNull(), isNull(), eq(21)))
+                .thenReturn(List.of());
+
+        service.getTransactions("member-1", "PAYMENT", "2026-08", null, 20);
+
+        verify(transactionMapper).findByWalletId(
+                eq("wallet-1"), eq("PAYMENT"), any(LocalDateTime.class),
+                any(LocalDateTime.class), isNull(), isNull(), eq(21));
+    }
+
+    @Test
+    void should_throwException_when_transactionTypeIsUnknown() {
+        TransactionServiceImpl service = service();
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.getTransactions("member-1", "REFUND", "2026-08", null, 20));
+
+        assertEquals("거래 유형은 ALL, CHARGE, WITHDRAW, PAYMENT 중 하나여야 합니다.", exception.getMessage());
+        verifyNoInteractions(walletMapper, transactionMapper);
+    }
+
+    @Test
     void should_throwException_when_cursorIsInvalid() {
         TransactionServiceImpl service = service();
 

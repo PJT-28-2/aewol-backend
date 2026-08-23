@@ -119,6 +119,18 @@ file:
   s3:
     bucket: ${S3_BUCKET}
     region: ${S3_REGION:ap-northeast-2}
+    # 멍스타그램 공개 사진 서빙.
+    #
+    # 공개로 전환한 일기 사진만 이 prefix로 복사되고 CDN이 그대로 서빙한다. 비공개
+    # 사진은 지금처럼 만료되는 서명 URL로만 나간다.
+    #
+    # 값이 비면 공개 사본을 만들지 않는다. 설정을 빠뜨렸다고 사진이 잘못 공개되는 일은
+    # 없지만, 대신 탐색 피드가 비어 보인다. 기동 로그에 "공개 서빙: 꺼짐"이 찍힌다.
+    #
+    # 설정하기 전에 버킷의 해당 prefix만 CDN이 읽도록 열어야 한다. 버킷 전체를 열면
+    # 비공개 일기 사진까지 노출된다.
+    public-prefix: ${S3_PUBLIC_PREFIX:public}
+    public-base-url: ${S3_PUBLIC_BASE_URL:}
   # FileUtil(레거시 경로)이 아직 로컬 디스크를 쓴다. 통합 전까지 유지한다.
   upload-dir: ${FILE_UPLOAD_DIR:/app/uploads}
 

@@ -8,8 +8,12 @@ import com.aewol.common.exception.BusinessException;
 import com.aewol.common.storage.FileStorage;
 import com.aewol.domain.activity.mapper.ActivityLogMapper;
 import com.aewol.domain.pet.mapper.PetMapper;
+import com.aewol.domain.share.dto.CareDiaryReportRequest;
+import com.aewol.domain.share.dto.CareDiaryReportResponse;
 import com.aewol.domain.share.dto.CareDiaryResponse;
 import com.aewol.domain.share.dto.CareDiaryUpdateRequest;
+import com.aewol.domain.share.dto.CareDiaryVisibilityRequest;
+import com.aewol.domain.inquiry.mapper.InquiryMapper;
 import com.aewol.domain.share.mapper.CareDiaryMapper;
 import com.aewol.domain.share.mapper.ShareMapper;
 import java.io.IOException;
@@ -36,6 +40,7 @@ class CareDiaryServiceImplTest {
     @Mock PetMapper petMapper;
     @Mock ActivityLogMapper activityLogMapper;
     @Mock FileStorage fileStorage;
+    @Mock InquiryMapper inquiryMapper;
 
     @BeforeEach
     void setUp() {
@@ -286,7 +291,7 @@ class CareDiaryServiceImplTest {
     // ── helpers ──────────────────────────────────────────────────
 
     private CareDiaryServiceImpl service() {
-        return new CareDiaryServiceImpl(careDiaryMapper, shareMapper, petMapper, activityLogMapper, fileStorage);
+        return new CareDiaryServiceImpl(careDiaryMapper, shareMapper, petMapper, activityLogMapper, fileStorage, inquiryMapper);
     }
 
     private void givenPetOwnedBy(String petId, String ownerId) {
@@ -357,6 +362,283 @@ class CareDiaryServiceImplTest {
         CareDiaryResponse response = service.getDetail("owner-1", "diary-1");
 
         assertEquals(3L, response.getVersion());
+    }
+
+    @Test
+    @DisplayName("공개로 바꾸면 사진의 공개 사본을 만들어 키를 저장한다")
+    void should_createPublicImageCopy_when_publishing() {
+        CareDiaryServiceImpl service = service();
+        givenPetOwnedBy("pet-1", "owner-1");
+        when(careDiaryMapper.findById("diary-1"))
+                .thenReturn(diaryRow("diary-1", "pet-1", "owner-1", "2026-08-10", "산책"));
+        when(careDiaryMapper.updateVisibility("diary-1", "PUBLIC")).thenReturn(1);
+        when(careDiaryMapper.findImagesForPublish("diary-1")).thenReturn(List.of(
+                map("imageId", "img-1", "imageUrl", "diary/a.png")));
+        when(fileStorage.publish("diary/a.png")).thenReturn("public/xyz.png");
+        when(careDiaryMapper.findImagesByDiaryIds(List.of("diary-1"))).thenReturn(List.of());
+
+        service.changeVisibility("owner-1", "diary-1", visibilityRequest("PUBLIC"));
+
+        verify(fileStorage).publish("diary/a.png");
+        verify(careDiaryMapper).updatePublicImageKey("img-1", "public/xyz.png");
+    }
+
+    @Test
+    @DisplayName("비공개로 되돌리면 공개 사본을 지우고 키를 비운다")
+    void should_removePublicImageCopy_when_unpublishing() {
+        CareDiaryServiceImpl service = service();
+        givenPetOwnedBy("pet-1", "owner-1");
+        when(careDiaryMapper.findById("diary-1"))
+                .thenReturn(diaryRow("diary-1", "pet-1", "owner-1", "2026-08-10", "산책"));
+        when(careDiaryMapper.updateVisibility("diary-1", "PRIVATE")).thenReturn(1);
+        when(careDiaryMapper.findImagesForPublish("diary-1")).thenReturn(List.of(
+                map("imageId", "img-1", "imageUrl", "diary/a.png", "publicImageKey", "public/xyz.png")));
+        when(careDiaryMapper.findImagesByDiaryIds(List.of("diary-1"))).thenReturn(List.of());
+
+        service.changeVisibility("owner-1", "diary-1", visibilityRequest("PRIVATE"));
+
+        verify(fileStorage).unpublish("public/xyz.png");
+        verify(careDiaryMapper).updatePublicImageKey("img-1", null);
+        // 원본은 건드리지 않는다. 지우면 일기 자체가 깨진다.
+        verify(fileStorage, never()).delete("diary/a.png");
+    }
+
+    // 사본 만들기가 실패해도 공개 전환 자체는 진행된다. 그 글은 사진이 없어 피드에서 빠진다.
+    @Test
+    @DisplayName("공개 사본 생성이 실패해도 공개 전환은 막지 않는다")
+    void should_notFail_when_publishReturnsNull() {
+        CareDiaryServiceImpl service = service();
+        givenPetOwnedBy("pet-1", "owner-1");
+        when(careDiaryMapper.findById("diary-1"))
+                .thenReturn(diaryRow("diary-1", "pet-1", "owner-1", "2026-08-10", "산책"));
+        when(careDiaryMapper.updateVisibility("diary-1", "PUBLIC")).thenReturn(1);
+        when(careDiaryMapper.findImagesForPublish("diary-1")).thenReturn(List.of(
+                map("imageId", "img-1", "imageUrl", "diary/a.png")));
+        when(fileStorage.publish("diary/a.png")).thenReturn(null);
+        when(careDiaryMapper.findImagesByDiaryIds(List.of("diary-1"))).thenReturn(List.of());
+
+        assertDoesNotThrow(() -> service.changeVisibility("owner-1", "diary-1", visibilityRequest("PUBLIC")));
+        verify(careDiaryMapper, never()).updatePublicImageKey(anyString(), anyString());
+    }
+
+    // 원본만 지우면 CDN 사본은 주소를 아는 사람에게 영구히 보인다.
+    @Test
+    @DisplayName("일기를 지우면 공개 사본까지 정리한다")
+    void should_removePublicCopy_when_diaryDeleted() {
+        CareDiaryServiceImpl service = service();
+        givenPetOwnedBy("pet-1", "owner-1");
+        when(careDiaryMapper.findById("diary-1"))
+                .thenReturn(diaryRow("diary-1", "pet-1", "owner-1", "2026-08-10", "산책"));
+        when(careDiaryMapper.findImagesByDiaryIds(List.of("diary-1"))).thenReturn(List.of(
+                map("diaryId", "diary-1", "imageUrl", "diary/a.png", "publicImageKey", "public/x.png")));
+        when(careDiaryMapper.softDelete("diary-1")).thenReturn(1);
+
+        service.delete("owner-1", "diary-1");
+
+        verify(fileStorage).delete("diary/a.png");
+        verify(fileStorage).unpublish("public/x.png");
+    }
+
+    // 피드에서 빼는 것만으로는 부족하다. 이미 아는 주소로는 계속 열린다.
+    @Test
+    @DisplayName("신고로 내려가면 공개 사본도 내린다")
+    void should_removePublicCopy_when_hiddenByReport() {
+        CareDiaryServiceImpl service = service();
+        when(careDiaryMapper.findById("diary-1")).thenReturn(publicDiaryRow("author-1"));
+        when(careDiaryMapper.insertReport(anyMap())).thenAnswer(invocation -> {
+            ((Map<String, Object>) invocation.getArgument(0)).put("reportId", 77L);
+            return 1;
+        });
+        when(careDiaryMapper.hideByReport("diary-1")).thenReturn(1);
+        when(careDiaryMapper.findImagesForPublish("diary-1")).thenReturn(List.of(
+                map("imageId", "img-1", "imageUrl", "diary/a.png", "publicImageKey", "public/x.png")));
+
+        service.report("reporter-1", "diary-1", reportRequest("PRIVACY"));
+
+        verify(fileStorage).unpublish("public/x.png");
+        verify(careDiaryMapper).updatePublicImageKey("img-1", null);
+        // 원본은 남긴다. 오탐이면 사본을 다시 만들어야 한다.
+        verify(fileStorage, never()).delete("diary/a.png");
+    }
+
+    private static CareDiaryReportRequest reportRequest(String reason) {
+        CareDiaryReportRequest request = new CareDiaryReportRequest();
+        ReflectionTestUtils.setField(request, "reason", reason);
+        return request;
+    }
+
+    private static Map<String, Object> publicDiaryRow(String authorId) {
+        Map<String, Object> row = diaryRow("diary-1", "pet-1", authorId, "2026-08-10", "산책");
+        row.put("visibility", "PUBLIC");
+        return row;
+    }
+
+    // 고객센터에 답변 API가 없어 처리까지 시간이 걸린다. 그동안 글이 계속 보이면 신고가
+    // 의미를 잃는다.
+    @Test
+    @DisplayName("신고하면 즉시 노출을 멈추고 문의로 잇는다")
+    void should_hideImmediately_and_createInquiry() {
+        CareDiaryServiceImpl service = service();
+        when(careDiaryMapper.findById("diary-1")).thenReturn(publicDiaryRow("author-1"));
+        when(careDiaryMapper.insertReport(anyMap())).thenAnswer(invocation -> {
+            ((Map<String, Object>) invocation.getArgument(0)).put("reportId", 77L);
+            return 1;
+        });
+        when(careDiaryMapper.hideByReport("diary-1")).thenReturn(1);
+        doAnswer(invocation -> {
+            ((Map<String, Object>) invocation.getArgument(0)).put("inquiryId", 55L);
+            return null;
+        }).when(inquiryMapper).insert(anyMap());
+
+        CareDiaryReportResponse response = service.report("reporter-1", "diary-1", reportRequest("SPAM"));
+
+        verify(careDiaryMapper).hideByReport("diary-1");
+        verify(careDiaryMapper).linkReportInquiry("77", "55");
+        assertTrue(response.isHidden());
+        assertTrue(response.getInquiryNumber().startsWith("AEW-"));
+    }
+
+    @Test
+    @DisplayName("같은 사람이 다시 신고하면 409로 막는다")
+    void should_rejectDuplicateReport() {
+        CareDiaryServiceImpl service = service();
+        when(careDiaryMapper.findById("diary-1")).thenReturn(publicDiaryRow("author-1"));
+        when(careDiaryMapper.insertReport(anyMap())).thenReturn(0);
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.report("reporter-1", "diary-1", reportRequest("SPAM")));
+
+        assertEquals(409, exception.getStatus().value());
+        verify(careDiaryMapper, never()).hideByReport(anyString());
+    }
+
+    // 신고로 내리면 관리자만 되돌릴 수 있어 스스로를 잠그는 셈이 된다.
+    @Test
+    @DisplayName("자기가 쓴 글은 신고할 수 없다")
+    void should_rejectSelfReport() {
+        CareDiaryServiceImpl service = service();
+        when(careDiaryMapper.findById("diary-1")).thenReturn(publicDiaryRow("author-1"));
+
+        assertThrows(BusinessException.class,
+                () -> service.report("author-1", "diary-1", reportRequest("SPAM")));
+        verify(careDiaryMapper, never()).insertReport(anyMap());
+    }
+
+    @Test
+    @DisplayName("공개되지 않은 일기는 신고 대상이 아니다")
+    void should_rejectReport_when_diaryIsPrivate() {
+        CareDiaryServiceImpl service = service();
+        when(careDiaryMapper.findById("diary-1"))
+                .thenReturn(diaryRow("diary-1", "pet-1", "author-1", "2026-08-10", "산책"));
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.report("reporter-1", "diary-1", reportRequest("SPAM")));
+        assertEquals(404, exception.getStatus().value());
+    }
+
+    // 접수번호를 주는 것보다 노출을 멈추는 것이 중요하다.
+    @Test
+    @DisplayName("문의 생성이 실패해도 신고와 비공개 처리는 남는다")
+    void should_keepReport_when_inquiryCreationFails() {
+        CareDiaryServiceImpl service = service();
+        when(careDiaryMapper.findById("diary-1")).thenReturn(publicDiaryRow("author-1"));
+        when(careDiaryMapper.insertReport(anyMap())).thenAnswer(invocation -> {
+            ((Map<String, Object>) invocation.getArgument(0)).put("reportId", 77L);
+            return 1;
+        });
+        when(careDiaryMapper.hideByReport("diary-1")).thenReturn(1);
+        doThrow(new RuntimeException("DB 장애")).when(inquiryMapper).insert(anyMap());
+
+        CareDiaryReportResponse response = service.report("reporter-1", "diary-1", reportRequest("ABUSE"));
+
+        assertTrue(response.isHidden());
+        assertNull(response.getInquiryNumber());
+    }
+
+    private static CareDiaryVisibilityRequest visibilityRequest(String visibility) {
+        CareDiaryVisibilityRequest request = new CareDiaryVisibilityRequest();
+        ReflectionTestUtils.setField(request, "visibility", visibility);
+        return request;
+    }
+
+    @Test
+    @DisplayName("작성자는 자기 일기를 공개로 바꿀 수 있다")
+    void should_allowAuthorToPublish() {
+        CareDiaryServiceImpl service = service();
+        givenPetOwnedBy("pet-1", "owner-1");
+        when(careDiaryMapper.findById("diary-1"))
+                .thenReturn(diaryRow("diary-1", "pet-1", "member-2", "2026-08-10", "산책"));
+        when(careDiaryMapper.updateVisibility("diary-1", "PUBLIC")).thenReturn(1);
+        when(careDiaryMapper.findImagesByDiaryIds(List.of("diary-1"))).thenReturn(List.of());
+        when(shareMapper.findAcceptedAccess("pet-1", "member-2")).thenReturn(map("access_id", "access-1"));
+
+        service.changeVisibility("member-2", "diary-1", visibilityRequest("PUBLIC"));
+
+        verify(careDiaryMapper).updateVisibility("diary-1", "PUBLIC");
+    }
+
+    // 대표 보호자가 남이 쓴 글을 마음대로 공개하면 "내가 쓴 글인데 내 통제 밖에서
+    // 공개됐다"가 된다. 올리는 것은 쓴 사람만 한다.
+    @Test
+    @DisplayName("대표 보호자라도 남이 쓴 일기를 공개할 수는 없다")
+    void should_rejectPublish_when_notAuthorEvenIfPetOwner() {
+        CareDiaryServiceImpl service = service();
+        givenPetOwnedBy("pet-1", "owner-1");
+        when(careDiaryMapper.findById("diary-1"))
+                .thenReturn(diaryRow("diary-1", "pet-1", "member-2", "2026-08-10", "산책"));
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.changeVisibility("owner-1", "diary-1", visibilityRequest("PUBLIC")));
+
+        assertEquals(403, exception.getStatus().value());
+        verify(careDiaryMapper, never()).updateVisibility(anyString(), anyString());
+    }
+
+    @Test
+    @DisplayName("대표 보호자는 남이 쓴 일기를 비공개로 내릴 수 있다")
+    void should_allowPetOwnerToUnpublishOthersDiary() {
+        CareDiaryServiceImpl service = service();
+        givenPetOwnedBy("pet-1", "owner-1");
+        when(careDiaryMapper.findById("diary-1"))
+                .thenReturn(diaryRow("diary-1", "pet-1", "member-2", "2026-08-10", "산책"));
+        when(careDiaryMapper.updateVisibility("diary-1", "PRIVATE")).thenReturn(1);
+        when(careDiaryMapper.findImagesByDiaryIds(List.of("diary-1"))).thenReturn(List.of());
+
+        service.changeVisibility("owner-1", "diary-1", visibilityRequest("PRIVATE"));
+
+        verify(careDiaryMapper).updateVisibility("diary-1", "PRIVATE");
+    }
+
+    @Test
+    @DisplayName("작성자도 대표 보호자도 아니면 비공개로 내릴 수 없다")
+    void should_rejectUnpublish_when_neitherAuthorNorPetOwner() {
+        CareDiaryServiceImpl service = service();
+        givenPetOwnedBy("pet-1", "owner-1");
+        when(careDiaryMapper.findById("diary-1"))
+                .thenReturn(diaryRow("diary-1", "pet-1", "member-2", "2026-08-10", "산책"));
+        when(shareMapper.findAcceptedAccess("pet-1", "member-3")).thenReturn(map("access_id", "access-2"));
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.changeVisibility("member-3", "diary-1", visibilityRequest("PRIVATE")));
+
+        assertEquals(403, exception.getStatus().value());
+    }
+
+    // 신고로 내려간 글을 작성자가 되살릴 수 있으면 신고가 무력해진다.
+    @Test
+    @DisplayName("신고로 내려간 일기는 작성자도 다시 공개할 수 없다")
+    void should_rejectPublish_when_hiddenByReport() {
+        CareDiaryServiceImpl service = service();
+        givenPetOwnedBy("pet-1", "owner-1");
+        Map<String, Object> row = diaryRow("diary-1", "pet-1", "owner-1", "2026-08-10", "산책");
+        row.put("hiddenByReportAt", java.sql.Timestamp.valueOf("2026-08-21 10:00:00"));
+        when(careDiaryMapper.findById("diary-1")).thenReturn(row);
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.changeVisibility("owner-1", "diary-1", visibilityRequest("PUBLIC")));
+
+        assertEquals(409, exception.getStatus().value());
+        verify(careDiaryMapper, never()).updateVisibility(anyString(), anyString());
     }
 
     private static Map<String, Object> diaryRow(String diaryId, String petId, String authorId,

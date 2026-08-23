@@ -64,6 +64,29 @@ public class LocalFileStorage implements FileStorage {
         }
     }
 
+    /**
+     * 로컬은 CDN이 없다. 사본을 만들지 않고 원본 키를 그대로 공개 키로 쓴다.
+     *
+     * <p>로컬 개발에서 공개 전환 흐름과 화면을 확인할 수 있으면 충분하고, 운영에서만
+     * S3 사본 + CDN이 동작한다. 사본을 흉내 내면 로컬 디스크만 두 배로 쓴다.
+     */
+    @Override
+    public String publish(String key) {
+        return normalize(key);
+    }
+
+    /** 사본을 만들지 않았으므로 지울 것도 없다. 원본을 지우면 일기 자체가 깨진다. */
+    @Override
+    public void unpublish(String publicKey) {
+        // 의도적으로 비워 둔다.
+    }
+
+    /** 로컬은 서명 URL을 그대로 쓴다. 만료가 있지만 개발 환경이라 문제되지 않는다. */
+    @Override
+    public String publicUrl(String publicKey) {
+        return publicKey == null ? null : signedUrl(publicKey);
+    }
+
     @Override
     public InputStream read(String key) {
         Path target = resolve(normalize(key));

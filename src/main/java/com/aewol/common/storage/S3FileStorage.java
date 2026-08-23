@@ -13,11 +13,13 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Profile;
+import org.springframework.util.StringUtils;
 import org.springframework.stereotype.Component;
 import software.amazon.awssdk.core.exception.SdkException;
 import software.amazon.awssdk.core.sync.RequestBody;
 import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.s3.S3Client;
+import software.amazon.awssdk.services.s3.model.CopyObjectRequest;
 import software.amazon.awssdk.services.s3.model.DeleteObjectRequest;
 import software.amazon.awssdk.services.s3.model.GetObjectRequest;
 import software.amazon.awssdk.services.s3.model.NoSuchKeyException;
@@ -44,6 +46,10 @@ public class S3FileStorage implements FileStorage {
     private final S3Client s3;
     private final S3Presigner presigner;
     private final String bucket;
+    /** 공개 사본이 놓이는 prefix. 이 아래만 CDN이 서빙하도록 버킷 정책을 연다. */
+    private final String publicPrefix;
+    /** 공개 사본을 서빙하는 CDN 도메인. 비어 있으면 공개 기능을 끈 것으로 본다. */
+    private final String publicBaseUrl;
     private final FileSignature signature;
 
     /**
@@ -67,19 +73,39 @@ public class S3FileStorage implements FileStorage {
     @Autowired
     public S3FileStorage(@Value("${file.s3.bucket}") String bucket,
                          @Value("${file.s3.region:ap-northeast-2}") String region,
+                         @Value("${file.s3.public-prefix:public}") String publicPrefix,
+                         @Value("${file.s3.public-base-url:}") String publicBaseUrl,
                          FileSignature signature) {
         this(S3Client.builder().region(Region.of(region)).build(),
                 S3Presigner.builder().region(Region.of(region)).build(),
-                bucket, signature);
-        log.info("S3 파일 저장소 사용 - bucket: {}, region: {}", bucket, region);
+                bucket, publicPrefix, publicBaseUrl, signature);
+        if (StringUtils.hasText(publicBaseUrl)) {
+            log.info("S3 파일 저장소 사용 - bucket: {}, region: {}, 공개 서빙: {}",
+                    bucket, region, publicBaseUrl);
+        } else {
+            // 조용히 꺼진 채로 배포되면 탐색 피드가 이유 없이 비어 보인다. 원인을 바로
+            // 짚을 수 있게 경고로 남긴다.
+            log.warn("S3 파일 저장소 사용 - bucket: {}, region: {}. "
+                    + "[PUBLIC_SERVING_DISABLED] S3_PUBLIC_BASE_URL이 비어 있어 공개 사본을 만들지 않는다. "
+                    + "멍스타그램 탐색 피드가 비어 보인다면 이 설정과 버킷 공개 prefix 정책을 확인할 것.",
+                    bucket, region);
+        }
     }
 
     /** 테스트에서 S3 클라이언트를 직접 주입하기 위한 생성자다. */
-    S3FileStorage(S3Client s3, S3Presigner presigner, String bucket, FileSignature signature) {
+    S3FileStorage(S3Client s3, S3Presigner presigner, String bucket,
+                  String publicPrefix, String publicBaseUrl, FileSignature signature) {
         this.s3 = s3;
         this.presigner = presigner;
         this.bucket = bucket;
+        this.publicPrefix = trimSlashes(publicPrefix);
+        // 끝 슬래시가 있으면 주소에 //가 생긴다.
+        this.publicBaseUrl = publicBaseUrl == null ? "" : publicBaseUrl.replaceAll("/+$", "");
         this.signature = signature;
+    }
+
+    private static String trimSlashes(String value) {
+        return value == null ? "public" : value.replaceAll("^/+|/+$", "");
     }
 
     @Override
@@ -115,6 +141,59 @@ public class S3FileStorage implements FileStorage {
         } catch (RuntimeException e) {
             log.warn("[FILE_DELETE_FAILED] S3 삭제 실패 - key: {}", key, e);
         }
+    }
+
+    /**
+     * 원본을 공개 prefix로 복사한다. 원본은 그대로 둔다.
+     *
+     * <p>공개 키에 UUID를 새로 쓰는 이유는 원본 키에서 유추할 수 없게 하려는 것이다.
+     * 규칙적이면 비공개 일기의 키를 추측해 공개 주소를 맞혀볼 수 있다.
+     */
+    @Override
+    public String publish(String key) {
+        if (!StringUtils.hasText(publicBaseUrl)) {
+            log.warn("[FILE_PUBLISH_DISABLED] 공개 CDN 주소가 설정되지 않아 공개 사본을 만들지 않는다");
+            return null;
+        }
+        String source = normalize(key);
+        String extension = source.contains(".") ? source.substring(source.lastIndexOf('.')) : "";
+        String publicKey = publicPrefix + "/" + UUID.randomUUID() + extension;
+        try {
+            s3.copyObject(CopyObjectRequest.builder()
+                    .sourceBucket(bucket)
+                    .sourceKey(source)
+                    .destinationBucket(bucket)
+                    .destinationKey(publicKey)
+                    .build());
+            return publicKey;
+        } catch (SdkException e) {
+            log.error("[FILE_PUBLISH_FAILED] 공개 사본 복사 실패 - key: {}", key, e);
+            return null;
+        }
+    }
+
+    @Override
+    public void unpublish(String publicKey) {
+        // delete와 같은 계약이다. 비공개로 되돌리는 것이 사본 삭제 실패로 막히면 안 된다.
+        if (!StringUtils.hasText(publicKey)) {
+            return;
+        }
+        try {
+            s3.deleteObject(DeleteObjectRequest.builder()
+                    .bucket(bucket)
+                    .key(normalize(publicKey))
+                    .build());
+        } catch (RuntimeException e) {
+            log.warn("[FILE_UNPUBLISH_FAILED] 공개 사본 삭제 실패 - key: {}", publicKey, e);
+        }
+    }
+
+    @Override
+    public String publicUrl(String publicKey) {
+        if (!StringUtils.hasText(publicKey) || !StringUtils.hasText(publicBaseUrl)) {
+            return null;
+        }
+        return publicBaseUrl + "/" + normalize(publicKey);
     }
 
     @Override

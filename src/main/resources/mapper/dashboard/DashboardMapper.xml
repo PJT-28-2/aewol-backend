@@ -3,13 +3,24 @@
 <mapper namespace="com.aewol.domain.dashboard.mapper.DashboardMapper">
     <!-- V1 transaction: 금액 컴럼은 price, 반려동물 태그는 t.pet_id (버킷 폐기) -->
 
+    <!-- 세 쿼리 모두 환불(REFUND)된 원래 PAYMENT row를 제외한다 — 환불은 공동구매 경로에서만
+         발생하고(2026-08-21 기준 grep "REFUND" 전체 결과: GroupPurchaseServiceImpl, GroupPurchaseRefundExecutor
+         두 곳뿐 — 다른 도메인이 REFUND를 만들게 되면 이 전제와 아래 서브쿼리를 재검토해야 한다),
+         참여자 취소/작성자 취소/마감 미달 자동환불 세 경로 전부 동일하게
+         group_purchase_participant.payment_status를 CANCELLED로 남기므로 이 서브쿼리 하나로 세 경로를
+         모두 커버한다. group_purchase_participant.txn_id는 idx_gpp_txn 인덱스가 있어(V1__init_schema.sql)
+         상관 서브쿼리 성능 문제는 없다. -->
     <select id="getMonthlyTotal" resultType="java.math.BigDecimal">
         SELECT COALESCE(SUM(price), 0)
-        FROM `transaction`
-        WHERE wallet_id = #{walletId}
-          AND txn_date &gt;= STR_TO_DATE(CONCAT(#{month}, '-01'), '%Y-%m-%d')
-          AND txn_date &lt; DATE_ADD(STR_TO_DATE(CONCAT(#{month}, '-01'), '%Y-%m-%d'), INTERVAL 1 MONTH)
-          AND txn_type = 'PAYMENT'
+        FROM `transaction` t
+        WHERE t.wallet_id = #{walletId}
+          AND t.txn_date &gt;= STR_TO_DATE(CONCAT(#{month}, '-01'), '%Y-%m-%d')
+          AND t.txn_date &lt; DATE_ADD(STR_TO_DATE(CONCAT(#{month}, '-01'), '%Y-%m-%d'), INTERVAL 1 MONTH)
+          AND t.txn_type = 'PAYMENT'
+          AND NOT EXISTS (
+              SELECT 1 FROM group_purchase_participant gpp
+              WHERE gpp.txn_id = t.txn_id AND gpp.payment_status = 'CANCELLED'
+          )
     </select>
 
     <select id="getPetMonthlySummary" resultType="map">
@@ -20,6 +31,10 @@
           AND t.txn_type = 'PAYMENT'
           AND t.txn_date &gt;= STR_TO_DATE(CONCAT(#{month}, '-01'), '%Y-%m-%d')
           AND t.txn_date &lt; DATE_ADD(STR_TO_DATE(CONCAT(#{month}, '-01'), '%Y-%m-%d'), INTERVAL 1 MONTH)
+          AND NOT EXISTS (
+              SELECT 1 FROM group_purchase_participant gpp
+              WHERE gpp.txn_id = t.txn_id AND gpp.payment_status = 'CANCELLED'
+          )
         GROUP BY p.pet_id, p.name
         ORDER BY amount DESC, p.pet_id
     </select>
@@ -32,6 +47,10 @@
           AND t.txn_type = 'PAYMENT'
           AND t.txn_date &gt;= STR_TO_DATE(CONCAT(#{yearMonth}, '-01'), '%Y-%m-%d')
           AND t.txn_date &lt; DATE_ADD(STR_TO_DATE(CONCAT(#{yearMonth}, '-01'), '%Y-%m-%d'), INTERVAL 1 MONTH)
+          AND NOT EXISTS (
+              SELECT 1 FROM group_purchase_participant gpp
+              WHERE gpp.txn_id = t.txn_id AND gpp.payment_status = 'CANCELLED'
+          )
         GROUP BY t.category, p.pet_id, p.name
         ORDER BY t.category, amount DESC, p.pet_id
     </select>

@@ -4,8 +4,13 @@ import com.aewol.common.exception.BusinessException;
 import com.aewol.common.storage.FileStorage;
 import com.aewol.domain.activity.mapper.ActivityLogMapper;
 import com.aewol.domain.pet.mapper.PetMapper;
+import com.aewol.domain.share.dto.CareDiaryReportRequest;
+import com.aewol.domain.share.dto.CareDiaryReportResponse;
+import com.aewol.domain.inquiry.mapper.InquiryMapper;
+import java.time.format.DateTimeFormatter;
 import com.aewol.domain.share.dto.CareDiaryResponse;
 import com.aewol.domain.share.dto.CareDiaryUpdateRequest;
+import com.aewol.domain.share.dto.CareDiaryVisibilityRequest;
 import com.aewol.domain.share.mapper.CareDiaryMapper;
 import com.aewol.domain.share.mapper.ShareMapper;
 import java.io.IOException;
@@ -34,6 +39,7 @@ import org.springframework.web.multipart.MultipartFile;
 @RequiredArgsConstructor
 public class CareDiaryServiceImpl implements CareDiaryService {
 
+    private static final String PUBLIC = "PUBLIC";
     private static final int MAX_CONTENT_LENGTH = 500;
     private static final String UPLOAD_SUB_DIR = "diary";
     /** 업로드 경로로 공개되므로 스크립트가 실행될 수 있는 형식(svg, html 등)은 받지 않는다. */
@@ -48,6 +54,7 @@ public class CareDiaryServiceImpl implements CareDiaryService {
     private final PetMapper petMapper;
     private final ActivityLogMapper activityLogMapper;
     private final FileStorage fileStorage;
+    private final InquiryMapper inquiryMapper;
 
     @Override
     @Transactional
@@ -158,6 +165,159 @@ public class CareDiaryServiceImpl implements CareDiaryService {
         return getDetail(memberId, diaryId);
     }
 
+    /**
+     * 공개 여부 전환. 올리는 권한과 내리는 권한이 다르다.
+     *
+     * <p>일기는 공동 작성이라 여러 가족이 한 반려동물의 일기에 쓴다. 대표 보호자가 남이 쓴
+     * 글을 마음대로 공개하면 "내가 쓴 글인데 내 통제 밖에서 공개됐다"가 된다. 그래서 공개는
+     * 작성자만 하고, 내리는 것은 작성자와 대표 보호자 둘 다 할 수 있게 한다.
+     *
+     * <p>신고로 내려간 글은 작성자도 다시 공개하지 못한다. 되돌리는 것은 관리자 몫이다.
+     */
+    @Override
+    @Transactional
+    public CareDiaryResponse changeVisibility(String memberId, String diaryId,
+                                              CareDiaryVisibilityRequest request) {
+        memberId = requireMemberId(memberId);
+        Map<String, Object> row = findDiary(diaryId);
+        String petId = text(row, "petId");
+        Map<String, Object> pet = assertCanAccess(memberId, petId);
+
+        String visibility = request.getVisibility();
+        boolean isAuthor = memberId.equals(text(row, "authorMemberId"));
+        // petMapper.findById는 SELECT * 라 컬럼명이 그대로 온다. assertCanAccess와 동일하게
+        // 두 표기를 모두 받는다.
+        boolean isPetOwner = memberId.equals(text(pet, "member_id", "memberId"));
+
+        if (PUBLIC.equals(visibility)) {
+            if (!isAuthor) {
+                throw BusinessException.forbidden("일기를 공개하는 것은 작성자만 할 수 있습니다.");
+            }
+            if (value(row, "hiddenByReportAt") != null) {
+                throw BusinessException.conflict(
+                        "신고로 노출이 중단된 일기예요. 고객센터 확인 후에 다시 공개할 수 있어요.");
+            }
+        } else if (!isAuthor && !isPetOwner) {
+            throw BusinessException.forbidden("작성자 또는 대표 보호자만 일기를 비공개로 바꿀 수 있습니다.");
+        }
+
+        if (careDiaryMapper.updateVisibility(diaryId, visibility) != 1) {
+            throw BusinessException.notFound("공개 여부를 바꿀 일기를 찾을 수 없습니다.");
+        }
+        syncPublicImages(diaryId, PUBLIC.equals(visibility));
+        return getDetail(memberId, diaryId);
+    }
+
+    /**
+     * 공개 전환에 맞춰 사진 사본을 맞춘다.
+     *
+     * <p>공개로 바꾸면 CDN이 서빙할 사본을 만들고, 되돌리면 그 사본을 지운다. 원본은 어느
+     * 쪽이든 손대지 않는다.
+     *
+     * <p>사본 작업이 실패해도 예외를 던지지 않는다. 공개 전환 자체는 이미 커밋 대상이고,
+     * 특히 비공개로 되돌리는 흐름이 사본 삭제 실패 때문에 막히면 안 된다 — 노출을 멈추는
+     * 쪽이 먼저다. 사진이 없는 일기는 목록에서 빠지므로 사본 생성 실패는 글이 피드에
+     * 안 뜨는 것으로 드러난다.
+     */
+    private void syncPublicImages(String diaryId, boolean publishing) {
+        for (Map<String, Object> image : careDiaryMapper.findImagesForPublish(diaryId)) {
+            String imageId = text(image, "imageId");
+            String publicKey = text(image, "publicImageKey");
+            if (publishing) {
+                if (publicKey != null) {
+                    continue;
+                }
+                String created = fileStorage.publish(text(image, "imageUrl"));
+                if (created != null) {
+                    careDiaryMapper.updatePublicImageKey(imageId, created);
+                }
+            } else if (publicKey != null) {
+                fileStorage.unpublish(publicKey);
+                careDiaryMapper.updatePublicImageKey(imageId, null);
+            }
+        }
+    }
+
+    /**
+     * 신고 접수. 즉시 노출을 멈추고 고객센터 문의로 잇는다.
+     *
+     * <p>고객센터에는 아직 답변 API가 없어 처리까지 시간이 걸린다. 그동안 글이 계속 보이면
+     * 신고의 의미가 없으므로 <b>먼저 내리고</b> 나중에 판단한다. 오탐이면 관리자가 되돌린다.
+     *
+     * <p>공개된 글만 신고 대상이다. 비공개 일기는 신고자가 볼 수 없고, 볼 수 있다면 이미
+     * 그 가족이라 신고가 아니라 대화로 풀 일이다.
+     */
+    @Override
+    @Transactional
+    public CareDiaryReportResponse report(String memberId, String diaryId,
+                                          CareDiaryReportRequest request) {
+        memberId = requireMemberId(memberId);
+        Map<String, Object> row = findDiary(diaryId);
+
+        if (!PUBLIC.equals(text(row, "visibility"))) {
+            throw BusinessException.notFound("신고할 수 있는 게시물이 아닙니다.");
+        }
+        // 자기 글은 신고가 아니라 비공개로 내리면 된다. 신고로 내리면 관리자만 되돌릴 수
+        // 있어 스스로를 잠그는 셈이 된다.
+        if (memberId.equals(text(row, "authorMemberId"))) {
+            throw new BusinessException("자기가 쓴 글은 신고할 수 없어요. 비공개로 바꿔 주세요.");
+        }
+
+        Map<String, Object> report = new HashMap<>();
+        report.put("diaryId", diaryId);
+        report.put("reporterId", memberId);
+        report.put("reason", request.getReason());
+        if (careDiaryMapper.insertReport(report) == 0) {
+            throw BusinessException.conflict("이미 신고한 게시물이에요. 처리 결과를 기다려 주세요.");
+        }
+        String reportId = String.valueOf(report.get("reportId"));
+
+        boolean hidden = careDiaryMapper.hideByReport(diaryId) == 1;
+        if (hidden) {
+            // 피드에서 빼는 것만으로는 부족하다. CDN 주소를 이미 아는 사람에게는 사진이
+            // 계속 보인다. 오탐이면 원본이 남아 있으니 사본을 다시 만들면 된다.
+            syncPublicImages(diaryId, false);
+        }
+        String inquiryNumber = createReportInquiry(memberId, diaryId, request.getReason(), reportId);
+
+        return CareDiaryReportResponse.builder()
+                .reportId(reportId)
+                .inquiryNumber(inquiryNumber)
+                .hidden(hidden)
+                .build();
+    }
+
+    /**
+     * 신고를 고객센터 문의로 남긴다. 신고자가 자기 문의 내역에서 진행 상태를 볼 수 있게 된다.
+     *
+     * <p>사용자 입력을 받는 경로가 아니라 매퍼를 직접 쓴다. InquiryService의 카테고리 검증을
+     * 타면 ALLOWED_CATEGORIES에 '신고'를 넣어야 하고, 그러면 프론트 카테고리 목록과도 다시
+     * 맞춰야 한다. 내부 생성이라 그럴 이유가 없다.
+     */
+    private String createReportInquiry(String memberId, String diaryId, String reason, String reportId) {
+        try {
+            Map<String, Object> inquiry = new HashMap<>();
+            inquiry.put("memberId", memberId);
+            inquiry.put("category", "신고");
+            inquiry.put("title", "게시물 신고 (일기 " + diaryId + ")");
+            inquiry.put("content", "신고 사유: " + reason + "\n대상 일기 ID: " + diaryId);
+            inquiry.put("replyEmail", null);
+            inquiryMapper.insert(inquiry);
+
+            String inquiryId = String.valueOf(inquiry.get("inquiryId"));
+            String inquiryNumber = "AEW-" + LocalDate.now().format(DateTimeFormatter.ofPattern("yyyyMMdd"))
+                    + "-" + String.format("%04d", Long.parseLong(inquiryId));
+            inquiryMapper.updateInquiryNumber(inquiryId, inquiryNumber);
+            careDiaryMapper.linkReportInquiry(reportId, inquiryId);
+            return inquiryNumber;
+        } catch (RuntimeException e) {
+            // 문의 생성이 실패해도 신고와 비공개 처리는 남아야 한다. 노출을 멈추는 것이
+            // 접수번호를 주는 것보다 중요하다.
+            log.warn("[REPORT_INQUIRY_FAILED] 신고 문의 생성 실패 - reportId: {}", reportId, e);
+            return null;
+        }
+    }
+
     @Override
     @Transactional
     public void delete(String memberId, String diaryId) {
@@ -171,14 +331,22 @@ public class CareDiaryServiceImpl implements CareDiaryService {
             throw BusinessException.forbidden("작성자 또는 대표 보호자만 일기를 삭제할 수 있습니다.");
         }
 
-        List<String> imageKeys = careDiaryMapper.findImagesByDiaryIds(List.of(diaryId)).stream()
+        List<Map<String, Object>> images = careDiaryMapper.findImagesByDiaryIds(List.of(diaryId));
+        List<String> imageKeys = images.stream()
                 .map(image -> text(image, "imageUrl"))
+                .filter(key -> key != null && !key.isBlank())
+                .collect(Collectors.toList());
+        // 공개했던 일기는 CDN에 사본이 남아 있다. 원본만 지우면 주소를 아는 사람에게는
+        // 사진이 영구히 보인다.
+        List<String> publicKeys = images.stream()
+                .map(image -> text(image, "publicImageKey"))
                 .filter(key -> key != null && !key.isBlank())
                 .collect(Collectors.toList());
         if (careDiaryMapper.softDelete(diaryId) != 1) {
             throw BusinessException.notFound("삭제할 일기를 찾을 수 없습니다.");
         }
         arrangeCommittedCleanup(imageKeys);
+        arrangeCommittedPublicCleanup(publicKeys);
     }
 
     /**
@@ -252,6 +420,21 @@ public class CareDiaryServiceImpl implements CareDiaryService {
     }
 
     /** 삭제 트랜잭션이 확정된 뒤에만 실제 파일을 제거한다. */
+    /** 공개 사본 정리. 원본 정리와 같은 이유로 커밋 이후에 돌린다. */
+    private void arrangeCommittedPublicCleanup(List<String> publicKeys) {
+        if (publicKeys.isEmpty()) return;
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    publicKeys.forEach(fileStorage::unpublish);
+                }
+            });
+        } else {
+            publicKeys.forEach(fileStorage::unpublish);
+        }
+    }
+
     private void arrangeCommittedCleanup(List<String> keys) {
         if (keys.isEmpty()) return;
         if (TransactionSynchronizationManager.isSynchronizationActive()) {
@@ -352,6 +535,8 @@ public class CareDiaryServiceImpl implements CareDiaryService {
                 .authorName(text(row, "authorName"))
                 .createdAt(dateTimeText(value(row, "createdAt")))
                 .version(longValue(row, "version"))
+                .visibility(text(row, "visibility"))
+                .hiddenByReport(value(row, "hiddenByReportAt") != null)
                 .editable(isAuthor)
                 .deletable(isAuthor || requesterId.equals(ownerId))
                 .build();

@@ -20,6 +20,8 @@
                m.name             AS authorName,
                d.diary_date       AS diaryDate,
                d.content          AS content,
+               d.visibility       AS visibility,
+               d.hidden_by_report_at AS hiddenByReportAt,
                d.created_at       AS createdAt,
                d.updated_at       AS updatedAt
         FROM care_diary d
@@ -38,6 +40,8 @@
                d.diary_date       AS diaryDate,
                d.content          AS content,
                d.version          AS version,
+               d.visibility       AS visibility,
+               d.hidden_by_report_at AS hiddenByReportAt,
                d.created_at       AS createdAt,
                d.updated_at       AS updatedAt
         FROM care_diary d
@@ -48,8 +52,9 @@
 
     <!-- 목록 조회에서 일기마다 이미지를 따로 조회하지 않도록 한 번에 가져온다 (N+1 방지) -->
     <select id="findImagesByDiaryIds" resultType="map">
-        SELECT diary_id  AS diaryId,
-               image_url AS imageUrl
+        SELECT diary_id         AS diaryId,
+               image_url        AS imageUrl,
+               public_image_key AS publicImageKey
         FROM care_diary_image
         WHERE diary_id IN
         <foreach collection="diaryIds" item="diaryId" open="(" separator="," close=")">
@@ -75,6 +80,60 @@
         <if test="version != null">
           AND version = #{version}
         </if>
+    </update>
+
+    <!--
+        신고로 내려간 일기(hidden_by_report_at)는 여기서 다시 공개되지 않는다. 작성자가
+        스스로 내린 것과 구분하는 이유가 이것이다. 되돌리는 것은 관리자만 할 수 있다.
+    -->
+    <select id="findImagesForPublish" resultType="map">
+        SELECT image_id AS imageId, image_url AS imageUrl, public_image_key AS publicImageKey
+        FROM care_diary_image
+        WHERE diary_id = #{diaryId}
+        ORDER BY image_id
+    </select>
+
+    <update id="updatePublicImageKey">
+        UPDATE care_diary_image
+           SET public_image_key = #{publicImageKey}
+        WHERE image_id = #{imageId}
+    </update>
+
+    <update id="updateVisibility">
+        UPDATE care_diary
+           SET visibility = #{visibility}
+        WHERE diary_id = #{diaryId}
+          AND deleted_at IS NULL
+          <if test="visibility == 'PUBLIC'">
+          AND hidden_by_report_at IS NULL
+          </if>
+    </update>
+
+    <!--
+        같은 사람의 반복 신고는 UNIQUE(diary_id, reporter_id)로 걸러 한 건으로 센다.
+        INSERT IGNORE라 두 번째부터는 예외 없이 0행이 되고, 호출부가 그것으로 판단한다.
+    -->
+    <insert id="insertReport" parameterType="map" useGeneratedKeys="true" keyProperty="reportId" keyColumn="report_id">
+        INSERT IGNORE INTO diary_report (diary_id, reporter_id, reason)
+        VALUES (#{diaryId}, #{reporterId}, #{reason})
+    </insert>
+
+    <update id="linkReportInquiry">
+        UPDATE diary_report SET inquiry_id = #{inquiryId} WHERE report_id = #{reportId}
+    </update>
+
+    <!--
+        신고가 들어오면 즉시 노출을 멈춘다. 고객센터에 답변 API가 없어 처리까지 시간이
+        걸리므로, 확산을 먼저 막고 오탐이면 나중에 되돌린다.
+
+        이미 내려간 글은 시각을 덮어쓰지 않는다. 최초 신고 시점이 남아야 한다.
+    -->
+    <update id="hideByReport">
+        UPDATE care_diary
+           SET hidden_by_report_at = NOW()
+        WHERE diary_id = #{diaryId}
+          AND deleted_at IS NULL
+          AND hidden_by_report_at IS NULL
     </update>
 
     <update id="softDelete">

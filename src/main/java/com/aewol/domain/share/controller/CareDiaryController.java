@@ -1,8 +1,11 @@
 package com.aewol.domain.share.controller;
 
 import com.aewol.common.response.ApiResponse;
+import com.aewol.domain.share.dto.CareDiaryReportRequest;
+import com.aewol.domain.share.dto.CareDiaryReportResponse;
 import com.aewol.domain.share.dto.CareDiaryResponse;
 import com.aewol.domain.share.dto.CareDiaryUpdateRequest;
+import com.aewol.domain.share.dto.CareDiaryVisibilityRequest;
 import com.aewol.domain.share.service.CareDiaryService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -61,6 +64,28 @@ public class CareDiaryController {
             @Valid @RequestBody CareDiaryUpdateRequest request) {
         return ResponseEntity.ok(ApiResponse.success(
                 careDiaryService.update(memberId, diaryId, request)));
+    }
+
+    @Operation(summary = "공동육아 일기 공개/비공개 전환",
+            description = "공개는 작성자만, 비공개는 작성자 또는 대표 보호자가 할 수 있다.")
+    @PatchMapping("/diaries/{diaryId}/visibility")
+    public ResponseEntity<ApiResponse<CareDiaryResponse>> changeVisibility(
+            @AuthenticationPrincipal String memberId,
+            @PathVariable String diaryId,
+            @Valid @RequestBody CareDiaryVisibilityRequest request) {
+        return ResponseEntity.ok(ApiResponse.success(
+                careDiaryService.changeVisibility(memberId, diaryId, request)));
+    }
+
+    @Operation(summary = "공개 게시물 신고",
+            description = "접수 즉시 노출이 멈추고 고객센터 문의로 이어진다.")
+    @PostMapping("/diaries/{diaryId}/report")
+    public ResponseEntity<ApiResponse<CareDiaryReportResponse>> report(
+            @AuthenticationPrincipal String memberId,
+            @PathVariable String diaryId,
+            @Valid @RequestBody CareDiaryReportRequest request) {
+        return ResponseEntity.ok(ApiResponse.success(
+                careDiaryService.report(memberId, diaryId, request)));
     }
 
     @Operation(summary = "공동육아 일기 삭제")

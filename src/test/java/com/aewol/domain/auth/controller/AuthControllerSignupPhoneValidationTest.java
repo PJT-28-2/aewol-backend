@@ -89,6 +89,32 @@ class AuthControllerSignupPhoneValidationTest {
         assertEquals("01012345678", requestCaptor.getValue().getPhone());
     }
 
+    @Test
+    void signupAcceptsEmailAtMaxLength() throws Exception {
+        String email = validEmailOfLength(100);
+        ObjectNode body = validSignupBody();
+        body.put("email", email);
+        when(authService.signup(any())).thenReturn(new SignupResponse(1L, email, "홍길동"));
+
+        mockMvc.perform(post("/api/auth/signup")
+                        .contentType("application/json")
+                        .content(objectMapper.writeValueAsString(body)))
+                .andExpect(status().isCreated());
+
+        assertEquals(100, email.length());
+        verify(authService).signup(any());
+    }
+
+    @Test
+    void signupRejectsEmailOverMaxLengthBeforeService() throws Exception {
+        String email = validEmailOfLength(101);
+        ObjectNode body = validSignupBody();
+        body.put("email", email);
+
+        assertBadRequest(body);
+        assertEquals(101, email.length());
+    }
+
     private void assertBadRequest(ObjectNode body) throws Exception {
         mockMvc.perform(post("/api/auth/signup")
                         .contentType("application/json")
@@ -112,5 +138,11 @@ class AuthControllerSignupPhoneValidationTest {
         body.put("privacy", true);
         body.put("marketing", false);
         return body;
+    }
+
+    private String validEmailOfLength(int length) {
+        String localPart = "a".repeat(64);
+        String topLevelDomain = ".com";
+        return localPart + "@" + "b".repeat(length - 69) + topLevelDomain;
     }
 }
