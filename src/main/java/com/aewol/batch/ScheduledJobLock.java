@@ -18,6 +18,14 @@ import org.springframework.stereotype.Component;
  *
  * <p>락을 못 잡으면 예외를 던지지 않고 건너뛴다. 스케줄러를 예외로 멈추기보다
  * 다른 인스턴스가 이미 처리 중이라는 로그만 남긴다.
+ *
+ * <p>Redis가 죽어 락을 확인조차 못 하면 <b>실행하지 않는다.</b> 인증 캐시와 정반대의
+ * 선택이다. 거기서는 못 읽으면 DB를 보면 그만이지만, 여기서는 "다른 인스턴스가 지금
+ * 돌고 있는지"를 대신 알 방법이 없다. 모르는 채로 실행하면 정기결제가 이중 출금될 수
+ * 있으므로, 한 주기를 거르는 쪽을 택한다. 놓친 건은 다음 주기가 다시 집어간다.
+ *
+ * <p>그래서 건너뛴 이유를 로그에서 구별할 수 있어야 한다. 다른 인스턴스가 잡고 있어서
+ * 건너뛴 것과 Redis가 죽어서 건너뛴 것은 대응이 전혀 다르다.
  */
 @Component
 @RequiredArgsConstructor
@@ -36,7 +44,16 @@ public class ScheduledJobLock {
      */
     public boolean runExclusive(String lockKey, Duration ttl, Runnable action) {
         String token = UUID.randomUUID().toString();
-        Boolean acquired = redisTemplate.opsForValue().setIfAbsent(lockKey, token, ttl);
+
+        Boolean acquired;
+        try {
+            acquired = redisTemplate.opsForValue().setIfAbsent(lockKey, token, ttl);
+        } catch (RuntimeException e) {
+            // 중복 실행을 막을 수 없는 상태다. 실행하지 않고 다음 주기를 기다린다.
+            log.error("[Batch] Redis 장애로 잠금을 확인하지 못해 이번 주기를 건너뜁니다. lock={}", lockKey, e);
+            return false;
+        }
+
         if (!Boolean.TRUE.equals(acquired)) {
             log.info("[Batch] 다른 인스턴스가 이미 실행 중이라 건너뜁니다. lock={}", lockKey);
             return false;
