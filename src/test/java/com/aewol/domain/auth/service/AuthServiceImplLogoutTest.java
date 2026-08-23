@@ -1,6 +1,6 @@
 package com.aewol.domain.auth.service;
 
-import com.aewol.common.filter.MemberAuthStateCache;
+import com.aewol.common.cache.MemberAuthStateCache;
 import com.aewol.common.util.JwtUtil;
 import com.aewol.common.util.RedisRateLimiter;
 import com.aewol.domain.member.mapper.MemberMapper;

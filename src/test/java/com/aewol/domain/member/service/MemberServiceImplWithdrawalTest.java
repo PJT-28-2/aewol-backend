@@ -1,6 +1,6 @@
 package com.aewol.domain.member.service;
 
-import com.aewol.common.filter.MemberAuthStateCache;
+import com.aewol.common.cache.MemberAuthStateCache;
 import com.aewol.common.exception.BusinessException;
 import com.aewol.domain.auth.service.AuthCredentialStore;
 import com.aewol.domain.member.dto.MemberWithdrawRequest;

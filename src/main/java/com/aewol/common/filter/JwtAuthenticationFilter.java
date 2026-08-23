@@ -1,5 +1,6 @@
 package com.aewol.common.filter;
 
+import com.aewol.common.cache.MemberAuthStateCache;
 import com.aewol.common.util.JwtUtil;
 import io.jsonwebtoken.Claims;
 import javax.servlet.FilterChain;

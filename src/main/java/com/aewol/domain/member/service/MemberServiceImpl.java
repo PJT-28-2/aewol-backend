@@ -10,7 +10,7 @@ import com.aewol.domain.member.dto.MemberUpdateRequest;
 import com.aewol.domain.member.dto.MemberWithdrawRequest;
 import com.aewol.domain.member.dto.SimplePasswordRequest;
 import com.aewol.domain.member.mapper.MemberMapper;
-import com.aewol.common.filter.MemberAuthStateCache;
+import com.aewol.common.cache.MemberAuthStateCache;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.security.crypto.password.PasswordEncoder;

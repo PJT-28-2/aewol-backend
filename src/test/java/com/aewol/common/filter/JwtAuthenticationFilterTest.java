@@ -1,5 +1,6 @@
 package com.aewol.common.filter;
 
+import com.aewol.common.cache.MemberAuthStateCache;
 import com.aewol.common.util.JwtUtil;
 import com.aewol.domain.member.mapper.MemberMapper;
 import io.jsonwebtoken.Claims;
