@@ -5,6 +5,9 @@ import com.aewol.common.util.ChromaKeyRemover;
 import com.aewol.common.storage.FileStorage;
 import com.aewol.common.util.RedisRateLimiter;
 import com.aewol.domain.pet.dto.PetCharacterResponse;
+import com.aewol.domain.pet.job.PetCharacterJob;
+import com.aewol.domain.pet.job.PetCharacterJobRunner;
+import com.aewol.domain.pet.job.PetCharacterJobStore;
 import com.aewol.domain.pet.mapper.PetMapper;
 import com.aewol.external.gemini.GeminiImageClient;
 import java.io.IOException;
@@ -13,6 +16,7 @@ import java.time.Duration;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.Map;
+import java.util.UUID;
 import java.util.Set;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -48,6 +52,8 @@ public class PetCharacterServiceImpl implements PetCharacterService {
     private final FileStorage fileStorage;
     private final PetMapper petMapper;
     private final RedisRateLimiter rateLimiter;
+    private final PetCharacterJobRunner jobRunner;
+    private final PetCharacterJobStore jobStore;
 
     /** 호출마다 실제 비용이 나가므로 1인당 하루 횟수를 제한한다. */
     @Value("${external.gemini.image-daily-limit:5}")
@@ -57,7 +63,90 @@ public class PetCharacterServiceImpl implements PetCharacterService {
     private String profilePrompt;
 
     @Override
+    @Deprecated
     public PetCharacterResponse generate(String memberId, String petId, MultipartFile photo) {
+        Prepared prepared = prepare(memberId, petId, photo);
+        return produce(prepared);
+    }
+
+    @Override
+    public PetCharacterJob submit(String memberId, String petId, MultipartFile photo) {
+        Prepared prepared = prepare(memberId, petId, photo);
+        String jobId = UUID.randomUUID().toString();
+
+        PetCharacterJob accepted = PetCharacterJob.builder()
+                .jobId(jobId)
+                .memberId(memberId)
+                .petId(petId)
+                .status(PetCharacterJob.Status.RUNNING)
+                .build();
+        jobStore.save(accepted);
+
+        boolean queued = jobRunner.submit(() -> run(jobId, prepared));
+        if (!queued) {
+            // 접수하지 못했으니 방금 차감한 오늘 몫을 되돌린다. 그대로 두면 사용자는
+            // 아무것도 받지 못하고 횟수만 잃는다.
+            rateLimiter.rollback(prepared.quotaKey);
+            jobStore.save(failed(accepted, "지금은 만들고 있는 캐릭터가 많아요. 잠시 후 다시 시도해 주세요."));
+            throw BusinessException.conflict("지금은 만들고 있는 캐릭터가 많아요. 잠시 후 다시 시도해 주세요.");
+        }
+        return accepted;
+    }
+
+    @Override
+    public PetCharacterJob findJob(String memberId, String jobId) {
+        PetCharacterJob job = jobStore.find(jobId);
+        if (job == null || !job.getMemberId().equals(memberId)) {
+            // 남의 작업은 존재 여부부터 알리지 않는다.
+            return null;
+        }
+        return job;
+    }
+
+    /**
+     * 백그라운드에서 실제 생성을 돌리고 결과를 남긴다.
+     *
+     * <p>여기서 예외가 밖으로 나가면 아무도 잡지 않아 작업이 RUNNING인 채로 남는다.
+     * 사용자는 끝나지 않는 화면을 보게 되므로 실패도 반드시 상태로 남긴다.
+     */
+    private void run(String jobId, Prepared prepared) {
+        PetCharacterJob running = jobStore.find(jobId);
+        try {
+            PetCharacterResponse result = produce(prepared);
+            jobStore.save(PetCharacterJob.builder()
+                    .jobId(jobId)
+                    .memberId(prepared.memberId)
+                    .petId(prepared.petId)
+                    .status(PetCharacterJob.Status.DONE)
+                    .profileImg(result.getProfileImg())
+                    .characterImg(result.getCharacterImg())
+                    .remainingToday(result.getRemainingToday())
+                    .build());
+        } catch (BusinessException e) {
+            jobStore.save(failed(running, e.getMessage()));
+        } catch (RuntimeException e) {
+            log.error("[PET_CHARACTER_JOB_FAILED] 캐릭터 생성 실패 - jobId: {}", jobId, e);
+            jobStore.save(failed(running, "캐릭터를 만들지 못했어요. 잠시 후 다시 시도해 주세요."));
+        }
+    }
+
+    private PetCharacterJob failed(PetCharacterJob job, String message) {
+        return PetCharacterJob.builder()
+                .jobId(job.getJobId())
+                .memberId(job.getMemberId())
+                .petId(job.getPetId())
+                .status(PetCharacterJob.Status.FAILED)
+                .message(message)
+                .build();
+    }
+
+    /**
+     * 요청을 받아들일 수 있는지 확인하고 생성에 필요한 것만 남긴다.
+     *
+     * <p>사진은 여기서 바이트로 읽어 둔다. {@code MultipartFile}은 요청에 매여 있어 응답이
+     * 끝난 뒤 백그라운드에서 읽으면 이미 정리된 임시 파일을 보게 된다.
+     */
+    private Prepared prepare(String memberId, String petId, MultipartFile photo) {
         requireMemberId(memberId);
         Map<String, Object> pet = petMapper.findByIdAndMemberId(petId, memberId);
         if (pet == null) {
@@ -68,10 +157,20 @@ public class PetCharacterServiceImpl implements PetCharacterService {
             throw new BusinessException("AI 이미지 생성이 아직 준비되지 않았어요.");
         }
 
-        long used = consumeDailyQuota(memberId);
+        String quotaKey = quotaKey(memberId);
+        long used = consumeDailyQuota(quotaKey);
 
-        byte[] source = readBytes(photo);
-        String mimeType = photo.getContentType();
+        return new Prepared(memberId, petId, pet, readBytes(photo), photo.getContentType(), used, quotaKey);
+    }
+
+    /** 준비된 재료로 실제 이미지를 만든다. 20~25초가 걸린다. */
+    private PetCharacterResponse produce(Prepared p) {
+        String memberId = p.memberId;
+        String petId = p.petId;
+        Map<String, Object> pet = p.pet;
+        byte[] source = p.source;
+        String mimeType = p.mimeType;
+        long used = p.used;
 
         // 1단계 — 사진에서 전신 캐릭터를 만든다. 배경은 초록 단색으로 받는다.
         byte[] fullbodyRaw = geminiImageClient.generate(source, mimeType, prompt(true));
@@ -120,8 +219,11 @@ public class PetCharacterServiceImpl implements PetCharacterService {
                 .build();
     }
 
-    private long consumeDailyQuota(String memberId) {
-        String key = RATE_LIMIT_PREFIX + memberId + ":" + LocalDate.now();
+    private String quotaKey(String memberId) {
+        return RATE_LIMIT_PREFIX + memberId + ":" + LocalDate.now();
+    }
+
+    private long consumeDailyQuota(String key) {
         long count = rateLimiter.incrementWithExpiry(key, secondsUntilMidnight());
         if (count > dailyLimit) {
             throw BusinessException.conflict(
@@ -210,6 +312,28 @@ public class PetCharacterServiceImpl implements PetCharacterService {
     private void requireMemberId(String memberId) {
         if (memberId == null || memberId.isBlank()) {
             throw BusinessException.unauthorized("로그인이 필요합니다.");
+        }
+    }
+
+    /** 요청 스레드에서 준비를 마친 재료. 백그라운드로 그대로 넘어간다. */
+    private static class Prepared {
+        final String memberId;
+        final String petId;
+        final Map<String, Object> pet;
+        final byte[] source;
+        final String mimeType;
+        final long used;
+        final String quotaKey;
+
+        Prepared(String memberId, String petId, Map<String, Object> pet,
+                 byte[] source, String mimeType, long used, String quotaKey) {
+            this.memberId = memberId;
+            this.petId = petId;
+            this.pet = pet;
+            this.source = source;
+            this.mimeType = mimeType;
+            this.used = used;
+            this.quotaKey = quotaKey;
         }
     }
 }
