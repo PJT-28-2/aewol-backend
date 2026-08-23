@@ -1,0 +1,19 @@
+# 로컬에서 메트릭을 눈으로 보기 위한 최소 설정.
+#
+# 운영 환경 구성은 배포 담당과 상의가 필요해 여기서는 로컬까지만 다룬다.
+global:
+  scrape_interval: 5s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: aewol-backend
+    metrics_path: /api/metrics
+    # 메트릭은 JWT가 아니라 전용 토큰으로 지킨다. Prometheus는 토큰을 갱신할 수 없어
+    # 만료되는 JWT로는 스크레이핑을 이어갈 수 없다.
+    # METRICS_TOKEN과 같은 값을 넣는다. 로컬 전용 값이라 그대로 커밋한다.
+    http_headers:
+      X-Metrics-Token:
+        values: ["local-scrape-secret"]
+    static_configs:
+      # 앱은 컨테이너 밖(호스트)에서 도는 경우가 많아 host.docker.internal로 잡는다.
+      - targets: ["host.docker.internal:8080"]
