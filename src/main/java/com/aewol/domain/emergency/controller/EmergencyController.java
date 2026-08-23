@@ -37,6 +37,10 @@ public class EmergencyController {
             double longitude,
             @RequestParam(defaultValue = "5")
             @DecimalMin(value = "0.0", inclusive = false, message = "radiusKm은 0보다 커야 합니다.")
+            // 상한이 없으면 바운딩박스가 전국을 덮어 선필터가 무의미해진다. 누구나
+            // 전체 스캔을 유발할 수 있다는 뜻이기도 하다. 화면에서 쓰는 값은 5km라
+            // 50km면 충분히 넉넉하다.
+            @DecimalMax(value = "50.0", message = "radiusKm은 50 이하여야 합니다.")
             double radiusKm,
             @RequestParam(defaultValue = "false") boolean is24h) {
         return ResponseEntity.ok(ApiResponse.success(

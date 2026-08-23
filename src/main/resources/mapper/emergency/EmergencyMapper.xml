@@ -16,10 +16,10 @@
         위도 1도는 약 111km로 어디서나 같다. 경도 1도는 위도가 높을수록 짧아지므로
         cos(위도)로 나눈다.
 
-        SPATIAL INDEX를 쓰지 않는 이유는 V4 주석 그대로다. 좌표 미확보 병원도 저장하는
-        정책이라 컬럼이 nullable인데 MySQL은 SPATIAL 대상이 NOT NULL이어야 한다.
-
         측정(20만 행): 200,000행 스캔 64ms -> 344행 스캔 0.75ms
+
+        SPATIAL INDEX를 쓰지 않는 이유와 인덱스를 이렇게 구성한 배경은 V47 마이그레이션에
+        적어두었다.
     -->
     <select id="findNearby" resultType="map">
         SELECT *,
