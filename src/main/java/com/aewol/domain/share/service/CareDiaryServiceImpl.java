@@ -189,6 +189,10 @@ public class CareDiaryServiceImpl implements CareDiaryService {
         // 두 표기를 모두 받는다.
         boolean isPetOwner = memberId.equals(text(pet, "member_id", "memberId"));
 
+        // 사진은 한 번만 읽는다. 공개 가능 여부를 가리는 데도, 사본을 맞추는 데도
+        // 같은 목록이 필요하다.
+        List<Map<String, Object>> images = careDiaryMapper.findImagesForPublish(diaryId);
+
         if (PUBLIC.equals(visibility)) {
             if (!isAuthor) {
                 throw BusinessException.forbidden("일기를 공개하는 것은 작성자만 할 수 있습니다.");
@@ -197,6 +201,12 @@ public class CareDiaryServiceImpl implements CareDiaryService {
                 throw BusinessException.conflict(
                         "신고로 노출이 중단된 일기예요. 고객센터 확인 후에 다시 공개할 수 있어요.");
             }
+            // 멍스타그램은 사진으로 훑어보는 화면이라, 사진 없는 글은 탐색 그리드와
+            // 프로필 어디에도 자리가 없다. 공개는 됐는데 아무 데도 안 보이는 상태가
+            // 되므로 애초에 막고 이유를 알린다.
+            if (images.isEmpty()) {
+                throw new BusinessException("사진이 있는 일기만 공개할 수 있어요. 사진을 추가한 뒤 다시 시도해 주세요.");
+            }
         } else if (!isAuthor && !isPetOwner) {
             throw BusinessException.forbidden("작성자 또는 대표 보호자만 일기를 비공개로 바꿀 수 있습니다.");
         }
@@ -204,7 +214,7 @@ public class CareDiaryServiceImpl implements CareDiaryService {
         if (careDiaryMapper.updateVisibility(diaryId, visibility) != 1) {
             throw BusinessException.notFound("공개 여부를 바꿀 일기를 찾을 수 없습니다.");
         }
-        syncPublicImages(diaryId, PUBLIC.equals(visibility));
+        syncPublicImages(images, PUBLIC.equals(visibility));
         return getDetail(memberId, diaryId);
     }
 
@@ -219,8 +229,8 @@ public class CareDiaryServiceImpl implements CareDiaryService {
      * 쪽이 먼저다. 사진이 없는 일기는 목록에서 빠지므로 사본 생성 실패는 글이 피드에
      * 안 뜨는 것으로 드러난다.
      */
-    private void syncPublicImages(String diaryId, boolean publishing) {
-        for (Map<String, Object> image : careDiaryMapper.findImagesForPublish(diaryId)) {
+    private void syncPublicImages(List<Map<String, Object>> images, boolean publishing) {
+        for (Map<String, Object> image : images) {
             String imageId = text(image, "imageId");
             String publicKey = text(image, "publicImageKey");
             if (publishing) {
@@ -276,7 +286,7 @@ public class CareDiaryServiceImpl implements CareDiaryService {
         if (hidden) {
             // 피드에서 빼는 것만으로는 부족하다. CDN 주소를 이미 아는 사람에게는 사진이
             // 계속 보인다. 오탐이면 원본이 남아 있으니 사본을 다시 만들면 된다.
-            syncPublicImages(diaryId, false);
+            syncPublicImages(careDiaryMapper.findImagesForPublish(diaryId), false);
         }
         String inquiryNumber = createReportInquiry(memberId, diaryId, request.getReason(), reportId);
 
