@@ -1,5 +1,6 @@
 package com.aewol.domain.auth.service;
 
+import com.aewol.common.cache.MemberAuthStateCache;
 import com.aewol.common.exception.BusinessException;
 import com.aewol.common.util.JwtUtil;
 import com.aewol.common.util.RedisRateLimiter;
@@ -61,7 +62,8 @@ class AuthServiceImplInactiveMemberTest {
         service = new AuthServiceImpl(memberMapper, walletMapper, notificationSettingMapper,
                 jwtUtil, passwordEncoder, redisTemplate, redisRateLimiter, emailService,
                 kakaoAuthClient, authCredentialStore, kakaoRegistrationStore,
-                transactionOperations);
+                transactionOperations,
+                MemberAuthStateCache.withoutCache(memberMapper));
         lenient().when(transactionOperations.execute(org.mockito.ArgumentMatchers.any()))
                 .thenAnswer(invocation -> {
                     TransactionCallback<?> callback = invocation.getArgument(0);
