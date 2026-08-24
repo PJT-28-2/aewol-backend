@@ -37,9 +37,7 @@ import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.AbstractPlatformTransactionManager;
 import org.springframework.transaction.support.DefaultTransactionStatus;
-import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
-import org.springframework.transaction.support.TransactionSynchronizationUtils;
 import org.springframework.web.multipart.MultipartFile;
 
 @ExtendWith(MockitoExtension.class)
@@ -409,7 +407,8 @@ class CareDiaryServiceImplTest {
         CareDiaryServiceImpl service = service();
         givenPetOwnedBy("pet-1", "owner-1");
         when(careDiaryMapper.findById("diary-1"))
-                .thenReturn(diaryRow("diary-1", "pet-1", "owner-1", "2026-08-10", "산책"));
+                .thenReturn(diaryRow("diary-1", "pet-1", "owner-1", "2026-08-10", "산책"),
+                        publicDiaryRow("owner-1"));
         when(careDiaryMapper.findImagesByDiaryIds(List.of("diary-1"))).thenReturn(List.of(
                 map("diaryId", "diary-1", "imageUrl", "diary/a.png")));
         when(careDiaryMapper.updateVisibility("diary-1", "PUBLIC")).thenReturn(1);
@@ -417,8 +416,10 @@ class CareDiaryServiceImplTest {
                 map("imageId", "img-1", "imageUrl", "diary/a.png")));
         when(fileStorage.publish("diary/a.png")).thenReturn("public/xyz.png");
 
-        service.changeVisibility("owner-1", "diary-1", visibilityRequest("PUBLIC"));
+        CareDiaryResponse result = service.changeVisibility(
+                "owner-1", "diary-1", visibilityRequest("PUBLIC"));
 
+        assertEquals("PUBLIC", result.getVisibility());
         verify(fileStorage).publish("diary/a.png");
         verify(careDiaryMapper).updatePublicImageKey("img-1", "public/xyz.png");
     }
@@ -486,9 +487,8 @@ class CareDiaryServiceImplTest {
     }
 
     @Test
-    @DisplayName("공개 전환 트랜잭션이 롤백되면 공개 사본을 만들지 않는다")
-    void should_notCreatePublicCopies_when_publishTransactionRollsBack() {
-        TransactionSynchronizationManager.initSynchronization();
+    @DisplayName("공개 사본을 만든 뒤 DB 공개 전환이 실패하면 사본을 지운다")
+    void should_unpublishCreatedCopies_when_publishDatabaseUpdateFails() {
         CareDiaryServiceImpl service = service();
         givenPetOwnedBy("pet-1", "owner-1");
         when(careDiaryMapper.findById("diary-1"))
@@ -496,41 +496,19 @@ class CareDiaryServiceImplTest {
         when(careDiaryMapper.findImagesForPublish("diary-1")).thenReturn(List.of(
                 map("imageId", "img-1", "imageUrl", "diary/a.png"),
                 map("imageId", "img-2", "imageUrl", "diary/b.png")));
-        service.changeVisibility("owner-1", "diary-1", visibilityRequest("PUBLIC"));
-
-        verify(fileStorage, never()).publish(anyString());
-        verify(careDiaryMapper, never()).updateVisibility("diary-1", "PUBLIC");
-
-        TransactionSynchronizationUtils.triggerAfterCompletion(
-                TransactionSynchronization.STATUS_ROLLED_BACK);
-
-        verify(fileStorage, never()).publish(anyString());
-        verify(fileStorage, never()).unpublish(anyString());
-    }
-
-    @Test
-    @DisplayName("공개 전환은 DB 커밋 이후 공개 사본을 만든 뒤 PUBLIC으로 바꾼다")
-    void should_publishCopiesAfterCommit_when_publishing() {
-        TransactionSynchronizationManager.initSynchronization();
-        CareDiaryServiceImpl service = service();
-        givenPetOwnedBy("pet-1", "owner-1");
-        when(careDiaryMapper.findById("diary-1"))
-                .thenReturn(diaryRow("diary-1", "pet-1", "owner-1", "2026-08-10", "산책"));
-        when(careDiaryMapper.findImagesForPublish("diary-1")).thenReturn(List.of(
-                map("imageId", "img-1", "imageUrl", "diary/a.png")));
         when(fileStorage.publish("diary/a.png")).thenReturn("public/a.png");
-        when(careDiaryMapper.updateVisibility("diary-1", "PUBLIC")).thenReturn(1);
+        when(fileStorage.publish("diary/b.png")).thenReturn("public/b.png");
+        when(careDiaryMapper.updateVisibility("diary-1", "PUBLIC")).thenReturn(0);
 
-        service.changeVisibility("owner-1", "diary-1", visibilityRequest("PUBLIC"));
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.changeVisibility("owner-1", "diary-1", visibilityRequest("PUBLIC")));
 
-        verify(fileStorage, never()).publish(anyString());
-        verify(careDiaryMapper, never()).updateVisibility("diary-1", "PUBLIC");
-
-        TransactionSynchronizationUtils.triggerAfterCommit();
-
+        assertEquals(404, exception.getStatus().value());
         verify(fileStorage).publish("diary/a.png");
-        verify(careDiaryMapper).updatePublicImageKey("img-1", "public/a.png");
+        verify(fileStorage).publish("diary/b.png");
         verify(careDiaryMapper).updateVisibility("diary-1", "PUBLIC");
+        verify(fileStorage).unpublish("public/a.png");
+        verify(fileStorage).unpublish("public/b.png");
     }
 
     // 원본만 지우면 CDN 사본은 주소를 아는 사람에게 영구히 보인다.
@@ -878,7 +856,6 @@ class CareDiaryServiceImplTest {
                 .thenReturn(adminReportRow("PENDING", null));
         when(careDiaryMapper.findImagesForPublish("diary-1")).thenReturn(List.of(map(
                 "imageId", "image-1", "imageUrl", "diary/original.png", "publicImageKey", null)));
-        when(careDiaryMapper.restoreByReport("diary-1")).thenReturn(1);
         when(fileStorage.publish("diary/original.png")).thenReturn(null);
 
         BusinessException exception = assertThrows(BusinessException.class,
@@ -886,7 +863,7 @@ class CareDiaryServiceImplTest {
                         "admin-1", "report-1", resolutionRequest("RESTORE", null)));
 
         assertEquals(409, exception.getStatus().value());
-        verify(careDiaryMapper).restoreByReport("diary-1");
+        verify(careDiaryMapper, never()).restoreByReport(anyString());
         verify(careDiaryMapper, never()).resolvePendingReportsByDiary(
                 anyString(), anyString(), any(), anyString());
     }
@@ -902,7 +879,6 @@ class CareDiaryServiceImplTest {
                         "publicImageKey", "public/existing.png"),
                 map("imageId", "image-2", "imageUrl", "diary/b.png"),
                 map("imageId", "image-3", "imageUrl", "diary/c.png")));
-        when(careDiaryMapper.restoreByReport("diary-1")).thenReturn(1);
         when(fileStorage.publish("diary/b.png")).thenReturn("public/b.png");
         when(fileStorage.publish("diary/c.png")).thenReturn(null);
 
@@ -913,7 +889,7 @@ class CareDiaryServiceImplTest {
         assertEquals(409, exception.getStatus().value());
         verify(fileStorage).unpublish("public/b.png");
         verify(fileStorage, never()).unpublish("public/existing.png");
-        verify(careDiaryMapper).restoreByReport("diary-1");
+        verify(careDiaryMapper, never()).restoreByReport(anyString());
     }
 
     @Test
