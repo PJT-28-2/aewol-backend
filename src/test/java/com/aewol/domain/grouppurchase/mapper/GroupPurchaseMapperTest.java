@@ -9,9 +9,12 @@ import java.io.InputStream;
 import java.sql.PreparedStatement;
 import java.sql.Statement;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.stream.Collectors;
 import org.apache.ibatis.builder.xml.XMLMapperBuilder;
 import org.apache.ibatis.io.Resources;
 import org.apache.ibatis.mapping.Environment;
@@ -190,7 +193,7 @@ class GroupPurchaseMapperTest {
             + " — 회귀 재현: 이 필터가 없으면 NULL 행이 커서 경계로 뽑힐 때 GroupPurchaseServiceImpl#toCursor가 NPE로 500을 던졌다")
     void should_returnOnlyNormalRows_when_totalRowCountExceedsPageSize_withNullDeadlineMixedIn() {
         LocalDateTime now = LocalDateTime.now();
-        List<Long> normalIds = new java.util.ArrayList<>();
+        List<Long> normalIds = new ArrayList<>();
         for (int i = 0; i < 10; i++) {
             normalIds.add(insertGroupPurchase(99L, "OPEN", 3, 10, now.plusDays(i + 1)));
         }
@@ -200,8 +203,8 @@ class GroupPurchaseMapperTest {
 
         assertEquals(10, result.size());
         assertTrue(result.stream().noneMatch(row -> ((Number) row.get("gp_id")).longValue() == corruptedGpId));
-        assertEquals(new java.util.HashSet<>(normalIds),
-                result.stream().map(row -> ((Number) row.get("gp_id")).longValue()).collect(java.util.stream.Collectors.toSet()));
+        assertEquals(new HashSet<>(normalIds),
+                result.stream().map(row -> ((Number) row.get("gp_id")).longValue()).collect(Collectors.toSet()));
     }
 
     @Test
