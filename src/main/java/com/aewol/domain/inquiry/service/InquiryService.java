@@ -11,4 +11,7 @@ public interface InquiryService {
                                          String replyEmail, List<MultipartFile> attachments);
     InquiryListResponse getInquiries(String memberId, String status, int page, int size);
     InquiryDetailResponse getInquiry(String memberId, String inquiryId);
+    InquiryListResponse getAdminInquiries(String status, int page, int size);
+    InquiryDetailResponse getAdminInquiry(String inquiryId);
+    InquiryDetailResponse answerInquiry(String inquiryId, String answer);
 }
