@@ -200,6 +200,71 @@ class DonationServiceImplTest {
     }
 
     @Test
+    @DisplayName("기부 멱등키가 없으면 저금통을 차감하지 않는다")
+    void should_rejectDonate_whenIdempotencyKeyIsMissing() {
+        DonationServiceImpl service = service();
+        DonationRequest request = donationRequest("3000", "campaign-1", "  ");
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.donate("member-1", request));
+
+        assertEquals("중복 요청 방지 키를 입력해 주세요.", exception.getMessage());
+        verify(donationMapper, never()).findHistoryByIdempotencyKey(any(), any());
+        verify(donationMapper, never()).decreasePotBalance(any(), any());
+    }
+
+    @Test
+    @DisplayName("같은 기부 키로 재시도하면 이전 성공을 반환하고 다시 차감하지 않는다")
+    void should_returnExistingDonation_whenIdempotencyKeyIsReused() {
+        DonationServiceImpl service = service();
+        DonationRequest request = donationRequest("3000", "campaign-1", "request-1");
+        when(donationMapper.findHistoryByIdempotencyKey("member-1", "request-1"))
+                .thenReturn(map("donation_id", "donation-1", "amount", new BigDecimal("3000"),
+                        "campaign_id", "campaign-1"));
+        when(donationMapper.findPotByMemberId("member-1"))
+                .thenReturn(map("wallet_id", "pot-1", "balance", new BigDecimal("9400")));
+
+        var result = service.donate("member-1", request);
+
+        assertEquals("donation-1", result.getDonationId());
+        assertEquals(new BigDecimal("9400"), result.getBalance());
+        verify(donationMapper, never()).decreasePotBalance(any(), any());
+        verify(donationMapper, never()).insertHistory(anyMap());
+    }
+
+    @Test
+    @DisplayName("동일한 기부 키에 다른 금액을 요청하면 충돌로 거절한다")
+    void should_throwConflict_whenSameDonationKeyHasDifferentAmount() {
+        DonationServiceImpl service = service();
+        when(donationMapper.findHistoryByIdempotencyKey("member-1", "request-1"))
+                .thenReturn(map("donation_id", "donation-1", "amount", new BigDecimal("3000"),
+                        "campaign_id", "campaign-1"));
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.donate("member-1", donationRequest("5000", "campaign-1", "request-1")));
+
+        assertEquals(409, exception.getStatus().value());
+        verify(donationMapper, never()).decreasePotBalance(any(), any());
+        verify(donationMapper, never()).insertHistory(anyMap());
+    }
+
+    @Test
+    @DisplayName("동일한 기부 키에 다른 캠페인을 요청하면 충돌로 거절한다")
+    void should_throwConflict_whenSameDonationKeyHasDifferentCampaign() {
+        DonationServiceImpl service = service();
+        when(donationMapper.findHistoryByIdempotencyKey("member-1", "request-1"))
+                .thenReturn(map("donation_id", "donation-1", "amount", new BigDecimal("3000"),
+                        "campaign_id", "campaign-1"));
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.donate("member-1", donationRequest("3000", "campaign-2", "request-1")));
+
+        assertEquals(409, exception.getStatus().value());
+        verify(donationMapper, never()).decreasePotBalance(any(), any());
+        verify(donationMapper, never()).insertHistory(anyMap());
+    }
+
+    @Test
     @DisplayName("출금 응답이 유실되어 같은 키로 재시도해도 한 번만 이체한다")
     void should_transferOnce_when_withdrawRequestIsRetried() {
         DonationServiceImpl service = service();
