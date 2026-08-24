@@ -24,6 +24,18 @@ import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+/**
+ * 지갑에서 연동 계좌로 출금한다.
+ *
+ * <p><b>현재 구조:</b> {@link #withdraw}는 {@code @Transactional}이라 DB 트랜잭션이 열린 채로
+ * {@link BankWithdrawalGateway#withdraw}를 호출한다. 데모 게이트웨이({@code DemoBankWithdrawalGateway})는
+ * 실제 이체가 없어 롤백과 외부 효과가 어긋나지 않는다.
+ *
+ * <p><b>실 은행 연동 전 가드:</b> 외부 이체를 이 트랜잭션 안에 두면, 이체는 됐는데 DB가
+ * 롤백되거나 / DB는 커밋됐는데 이체가 실패하는 양쪽이 생긴다. 실연동 전에 출금 요청을
+ * outbox에 남기고 별도 워커/사가로 이체·보상을 처리하도록 바꿔야 한다. 이번 범위에서는
+ * 데모 게이트웨이를 유지하고, 그 전환이 끝나기 전에 실 게이트웨이로 교체하지 않는다.
+ */
 @Service
 @RequiredArgsConstructor
 public class WalletWithdrawalService {
@@ -96,8 +108,9 @@ public class WalletWithdrawalService {
         String accountNumber = accountNumberCrypto.decrypt(String.valueOf(account.get("account_number_encrypted")));
         LocalDateTime withdrawnAt = LocalDateTime.now();
 
-        // 현재 외부 연동은 DemoBankWithdrawalGateway라 실제 은행 입금은 발생하지 않는다.
-        // 정식 이체 사업자 도입 시 멱등키·보상 처리까지 포함한 비동기 출금 흐름으로 교체해야 한다.
+        // 외부 이체는 이 열린 DB 트랜잭션 안에서 나간다. 데모 게이트웨이는 실제 입금이
+        // 없어 롤백과 어긋나지 않는다. 실 은행 연동 전에는 outbox/saga로 분리해야 한다.
+        // 그 전환이 끝나기 전에 실 게이트웨이로 교체하지 않는다.
         bankWithdrawalGateway.withdraw(bankCode, accountNumber, amount);
 
         Map<String, Object> transaction = new HashMap<>();

@@ -26,9 +26,9 @@ public class TossConfirmResult {
     }
 
     /**
-     * 승인 성공(HTTP 200 && status == "DONE"). 원장 차감 기준 금액은 요청 DTO의
-     * amount가 아니라 여기서 반환하는 totalAmount를 써야 한다 — suppliedAmount는
-     * 부가세 제외분이라 차감액이 적어진다.
+     * 승인 성공(HTTP 200 && status == "DONE"). 원장에 넣기 전에 호출부가 주문 금액과
+     * {@link #getTotalAmount()}가 같은지 확인해야 한다. 다르면 적립하지 않고 취소한다.
+     * suppliedAmount는 부가세 제외분이라 차감액이 적어진다.
      */
     public static TossConfirmResult success(long totalAmount, Map<String, Object> rawBody) {
         return new TossConfirmResult(TossConfirmOutcome.SUCCESS, null, null, totalAmount, rawBody);
