@@ -6,6 +6,7 @@ import com.aewol.common.cache.MemberAuthStateCache;
 import com.aewol.common.util.JwtUtil;
 import com.aewol.config.SecurityConfig;
 import com.aewol.domain.member.dto.MemberResponse;
+import com.aewol.domain.member.dto.SimplePasswordRequest;
 import com.aewol.domain.member.mapper.MemberMapper;
 import com.aewol.domain.member.service.MemberService;
 import com.aewol.domain.member.service.SimplePasswordVerificationService;
@@ -32,6 +33,7 @@ import org.springframework.web.context.support.AnnotationConfigWebApplicationCon
 import org.springframework.web.servlet.config.annotation.EnableWebMvc;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.reset;
@@ -95,6 +97,39 @@ class MemberProfileSecurityTest {
         mockMvc.perform(post("/api/users/simple-password/verify")
                         .contentType("application/json").content("{\"password\":\"123456\"}"))
                 .andExpect(status().isUnauthorized());
+        mockMvc.perform(post("/api/users/simple-password")
+                        .contentType("application/json").content("{\"password\":\"123456\"}"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void frontendSimplePasswordSetupEndpointMatchesBackendContract() throws Exception {
+        stubAccessToken(true);
+
+        mockMvc.perform(post("/api/users/simple-password")
+                        .header("Authorization", "Bearer access-token")
+                        .contentType("application/json")
+                        .content("{\"password\":\"482913\"}"))
+                .andExpect(status().isOk());
+
+        ArgumentCaptor<SimplePasswordRequest> requestCaptor =
+                ArgumentCaptor.forClass(SimplePasswordRequest.class);
+        verify(memberService).setSimplePassword(eq("member-1"), requestCaptor.capture());
+        assertEquals("482913", requestCaptor.getValue().getPassword());
+    }
+
+    @Test
+    void legacyMembersSimplePasswordEndpointIsNotPartOfContract() throws Exception {
+        stubAccessToken(true);
+
+        mockMvc.perform(post("/api/members/simple-password")
+                        .header("Authorization", "Bearer access-token")
+                        .contentType("application/json")
+                        .content("{\"password\":\"482913\"}"))
+                .andExpect(status().isNotFound());
+
+        verify(memberService, never()).setSimplePassword(
+                org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.any());
     }
 
     @Test
