@@ -6,6 +6,8 @@ import com.aewol.domain.member.mapper.MemberMapper;
 import java.time.Duration;
 import java.util.Map;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.dao.DataAccessException;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -17,6 +19,7 @@ import org.springframework.stereotype.Service;
  */
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class SimplePasswordVerificationService {
     private static final int MAX_FAILURES = 5;
     private static final long LOCK_SECONDS = 60;
@@ -30,7 +33,7 @@ public class SimplePasswordVerificationService {
 
     public boolean verify(String memberId, String rawPassword) {
         String lockKey = LOCK_KEY_PREFIX + memberId;
-        if (Boolean.TRUE.equals(redisTemplate.hasKey(lockKey))) {
+        if (Boolean.TRUE.equals(hasKey(lockKey))) {
             throw lockedException();
         }
 
@@ -45,17 +48,62 @@ public class SimplePasswordVerificationService {
 
         String failureKey = FAILURE_KEY_PREFIX + memberId;
         if (passwordEncoder.matches(rawPassword, encodedPassword)) {
-            redisTemplate.delete(failureKey);
+            delete(failureKey);
             return true;
         }
 
-        long failures = redisRateLimiter.incrementWithExpiry(failureKey, LOCK_SECONDS);
+        long failures = incrementFailures(failureKey);
         if (failures >= MAX_FAILURES) {
-            redisTemplate.opsForValue().set(lockKey, "1", Duration.ofSeconds(LOCK_SECONDS));
-            redisTemplate.delete(failureKey);
+            setLock(lockKey);
+            delete(failureKey);
             throw lockedException();
         }
         return false;
+    }
+
+    private Boolean hasKey(String key) {
+        Boolean present;
+        try {
+            present = redisTemplate.hasKey(key);
+        } catch (DataAccessException e) {
+            log.warn("Redis 간편 비밀번호 잠금 상태 조회 중 오류가 발생했습니다.", e);
+            throw serviceUnavailable();
+        }
+        if (present == null) {
+            throw serviceUnavailable();
+        }
+        return present;
+    }
+
+    private long incrementFailures(String key) {
+        return redisRateLimiter.incrementWithExpiry(key, LOCK_SECONDS);
+    }
+
+    private void setLock(String key) {
+        try {
+            redisTemplate.opsForValue().set(key, "1", Duration.ofSeconds(LOCK_SECONDS));
+        } catch (DataAccessException e) {
+            log.warn("Redis 간편 비밀번호 잠금 정보 저장 중 오류가 발생했습니다.", e);
+            throw serviceUnavailable();
+        }
+    }
+
+    private void delete(String key) {
+        Boolean deleted;
+        try {
+            deleted = redisTemplate.delete(key);
+        } catch (DataAccessException e) {
+            log.warn("Redis 간편 비밀번호 실패 정보 삭제 중 오류가 발생했습니다.", e);
+            throw serviceUnavailable();
+        }
+        if (deleted == null) {
+            throw serviceUnavailable();
+        }
+    }
+
+    private BusinessException serviceUnavailable() {
+        return new BusinessException(HttpStatus.SERVICE_UNAVAILABLE,
+                "간편 비밀번호 인증 서비스를 일시적으로 사용할 수 없습니다. 잠시 후 다시 시도해주세요.");
     }
 
     private BusinessException lockedException() {

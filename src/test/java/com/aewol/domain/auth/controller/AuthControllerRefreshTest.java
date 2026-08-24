@@ -1,5 +1,6 @@
 package com.aewol.domain.auth.controller;
 
+import com.aewol.common.exception.BusinessException;
 import com.aewol.common.exception.GlobalExceptionHandler;
 import com.aewol.common.filter.JwtAuthenticationFilter;
 import com.aewol.common.cache.MemberAuthStateCache;
@@ -23,6 +24,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Import;
 import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpStatus;
 import org.springframework.mock.web.MockServletContext;
 import org.springframework.test.context.support.TestPropertySourceUtils;
 import org.springframework.test.web.servlet.MockMvc;
@@ -101,6 +103,27 @@ class AuthControllerRefreshTest {
         assertEquals("new-refresh-token", json.get("result").get("refreshToken").asText());
         verify(authService).refresh("refresh-token");
         verifyNoInteractions(jwtUtil, memberMapper);
+    }
+
+    @Test
+    void redisFailureUsesUncodedServiceUnavailableEnvelope() throws Exception {
+        when(authService.refresh("refresh-token")).thenThrow(new BusinessException(
+                HttpStatus.SERVICE_UNAVAILABLE,
+                "인증 서비스를 일시적으로 사용할 수 없습니다. 잠시 후 다시 시도해주세요."));
+
+        MvcResult result = mockMvc.perform(post("/api/auth/refresh")
+                        .with(csrf())
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer refresh-token"))
+                .andExpect(status().isServiceUnavailable())
+                .andReturn();
+
+        JsonNode json = objectMapper.readTree(
+                result.getResponse().getContentAsString(StandardCharsets.UTF_8));
+        assertEquals(503, json.get("status").asInt());
+        assertEquals("인증 서비스를 일시적으로 사용할 수 없습니다. 잠시 후 다시 시도해주세요.",
+                json.get("message").asText());
+        assertEquals(true, json.get("result").isNull());
+        assertEquals(false, json.has("errorCode"));
     }
 
     @Test
