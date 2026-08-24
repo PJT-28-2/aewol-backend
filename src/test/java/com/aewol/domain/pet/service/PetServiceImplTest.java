@@ -394,6 +394,23 @@ class PetServiceImplTest {
         verify(fileStorage, never()).store(any(), any(), any());
     }
 
+    // "RIFF"까지는 있지만 크기 필드(4~7바이트)에서 잘려 "WEBP" 태그(8~11바이트)에 도달하지
+    // 못하는 파일 — matchesAt의 길이 체크(bytes.length < offset + signature.length)가 이
+    // 경계에서도 예외 없이 false로 안전하게 거부하는지 검증한다(리뷰로 추가).
+    @Test
+    void should_rejectDocument_when_webpFileIsTruncatedBeforeFormatTag() {
+        PetServiceImpl service = service();
+        when(petMapper.findById("pet-1")).thenReturn(pet("member-1"));
+        byte[] truncated = {0x52, 0x49, 0x46, 0x46, 0x00, 0x00};
+        MockMultipartFile file = new MockMultipartFile("file", "vaccination.webp", "image/webp", truncated);
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.uploadPetDocument("member-1", "pet-1", "VACCINATION", file, null));
+
+        assertEquals("JPEG, PNG, WEBP, PDF 파일만 업로드할 수 있습니다.", exception.getMessage());
+        verify(fileStorage, never()).store(any(), any(), any());
+    }
+
     // 영수증만 올리고 아직 청구서류(claim_document_url)는 없는 DRAFT 상태 클레임이 흔하다 —
     // 이 경우 arrangeDeletedFileCleanup(null)이 예외 없이 조용히 넘어가야 한다.
     @Test
