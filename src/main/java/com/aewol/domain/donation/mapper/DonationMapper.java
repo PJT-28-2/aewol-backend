@@ -1,6 +1,7 @@
 package com.aewol.domain.donation.mapper;
 
 import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
 import org.apache.ibatis.annotations.Mapper;
@@ -18,7 +19,10 @@ public interface DonationMapper {
     int decreasePotBalance(@Param("walletId") String walletId, @Param("amount") BigDecimal amount);
     int increasePotBalance(@Param("walletId") String walletId, @Param("amount") BigDecimal amount);
     Map<String, Object> findMainWalletByMemberId(@Param("memberId") String memberId);
+    Map<String, Object> findMainWalletForUpdate(@Param("memberId") String memberId);
+    Map<String, Object> findSettingsForUpdate(@Param("memberId") String memberId);
     int increaseWalletBalance(@Param("walletId") String walletId, @Param("amount") BigDecimal amount);
+    int decreaseMainWalletBalance(@Param("walletId") String walletId, @Param("amount") BigDecimal amount);
     BigDecimal findMonthlySaved(@Param("walletId") String walletId);
     List<Map<String, Object>> findActiveCampaigns(@Param("memberId") String memberId);
     Map<String, Object> findCampaignById(@Param("campaignId") String campaignId);
@@ -39,8 +43,12 @@ public interface DonationMapper {
                                                         @Param("idempotencyKey") String idempotencyKey);
     void insertWalletTransaction(Map<String, Object> transaction);
     List<Map<String, Object>> findTodayRoundUpCandidates();
+    List<Map<String, Object>> findSpareTrimCandidates(@Param("today") LocalDate today);
+    int markSpareTrimmed(@Param("memberId") String memberId, @Param("today") LocalDate today);
     int insertRoundUp(Map<String, Object> roundUp);
     int completeRoundUp(@Param("roundupId") String roundupId);
+    Map<String, Object> findDepositByIdempotencyKey(@Param("memberId") String memberId,
+                                                     @Param("idempotencyKey") String idempotencyKey);
     List<Map<String, Object>> findMonthlyAutoDonationCandidates(@Param("yearMonth") String yearMonth);
     int markAutoDonationCompleted(@Param("memberId") String memberId,
                                   @Param("yearMonth") String yearMonth);

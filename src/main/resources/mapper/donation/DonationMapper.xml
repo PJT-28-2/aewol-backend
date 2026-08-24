@@ -44,19 +44,37 @@
         WHERE member_id = #{memberId} AND wallet_type = 'MAIN'
     </select>
 
+    <select id="findMainWalletForUpdate" resultType="map">
+        SELECT * FROM wallet
+        WHERE member_id = #{memberId} AND wallet_type = 'MAIN'
+        FOR UPDATE
+    </select>
+
+    <select id="findSettingsForUpdate" resultType="map">
+        SELECT * FROM donation_setting
+        WHERE member_id = #{memberId}
+        FOR UPDATE
+    </select>
+
     <update id="increaseWalletBalance">
         UPDATE wallet
         SET balance = balance + #{amount}, updated_at = NOW()
         WHERE wallet_id = #{walletId}
     </update>
 
+    <update id="decreaseMainWalletBalance">
+        UPDATE wallet
+        SET balance = balance - #{amount}, updated_at = NOW()
+        WHERE wallet_id = #{walletId} AND wallet_type = 'MAIN' AND balance &gt;= #{amount}
+    </update>
+
     <select id="findMonthlySaved" resultType="java.math.BigDecimal">
-        SELECT COALESCE(SUM(roundup_amount), 0)
-        FROM donation_roundup
-        WHERE wallet_id = #{walletId}
-          AND status = 'COMPLETED'
-          AND created_at &gt;= DATE_FORMAT(CURDATE(), '%Y-%m-01')
-          AND created_at &lt; DATE_ADD(DATE_FORMAT(CURDATE(), '%Y-%m-01'), INTERVAL 1 MONTH)
+        SELECT COALESCE(SUM(t.price), 0)
+        FROM `transaction` t
+        WHERE t.counter_wallet_id = #{walletId}
+          AND t.txn_type = 'TRANSFER'
+          AND t.txn_date &gt;= DATE_FORMAT(CURDATE(), '%Y-%m-01')
+          AND t.txn_date &lt; DATE_ADD(DATE_FORMAT(CURDATE(), '%Y-%m-01'), INTERVAL 1 MONTH)
     </select>
 
     <select id="findActiveCampaigns" resultType="map">
@@ -180,16 +198,43 @@
         FOR UPDATE
     </select>
 
-    <!-- 저금통 -> 실지갑 출금은 내부 이체(TRANSFER).
+    <!-- 저금통 <-> 실지갑 내부 이체(TRANSFER).
          chk_txn_type_consistency: TRANSFER는 counter_wallet_id 필수, recurring_id NULL. -->
     <insert id="insertWalletTransaction" parameterType="map" useGeneratedKeys="true" keyProperty="txnId" keyColumn="txn_id">
         INSERT INTO `transaction`
             (wallet_id, counter_wallet_id, pet_id, txn_type, price,
              category, merchant_name, memo, auto_tagged, idempotency_key, txn_date)
         VALUES
-            (#{donationWalletId}, #{walletId}, NULL, 'TRANSFER', #{amount},
-             'ETC', '짜투리 저금통', '짜투리 저금통 출금', 'N', #{idempotencyKey}, NOW())
+            (#{sourceWalletId}, #{counterWalletId}, NULL, 'TRANSFER', #{amount},
+             'ETC', '짜투리 저금통', #{memo}, 'N', #{idempotencyKey}, NOW())
     </insert>
+
+    <select id="findDepositByIdempotencyKey" resultType="map">
+        SELECT t.*
+        FROM `transaction` t
+        JOIN wallet w ON w.wallet_id = t.wallet_id
+        WHERE w.member_id = #{memberId}
+          AND w.wallet_type = 'MAIN'
+          AND t.txn_type = 'TRANSFER'
+          AND t.idempotency_key = #{idempotencyKey}
+        FOR UPDATE
+    </select>
+
+    <select id="findSpareTrimCandidates" resultType="map">
+        SELECT ds.member_id AS memberId,
+               ds.saving_unit AS savingUnit
+        FROM donation_setting ds
+        WHERE ds.piggy_bank_enabled = 1
+          AND (ds.last_spare_trimmed_on IS NULL OR ds.last_spare_trimmed_on &lt; #{today})
+        ORDER BY ds.member_id
+    </select>
+
+    <update id="markSpareTrimmed">
+        UPDATE donation_setting
+        SET last_spare_trimmed_on = #{today}, updated_at = NOW()
+        WHERE member_id = #{memberId}
+          AND (last_spare_trimmed_on IS NULL OR last_spare_trimmed_on &lt; #{today})
+    </update>
 
     <!-- transaction에는 member_id가 없다(V1) — wallet 경유로 결제자의 적립 설정을 찾는다 -->
     <select id="findTodayRoundUpCandidates" resultType="map">

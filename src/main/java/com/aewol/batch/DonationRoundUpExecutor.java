@@ -3,6 +3,9 @@ package com.aewol.batch;
 import com.aewol.common.exception.BusinessException;
 import com.aewol.domain.donation.mapper.DonationMapper;
 import java.math.BigDecimal;
+import java.sql.Date;
+import java.time.LocalDate;
+import java.time.ZoneId;
 import java.util.HashMap;
 import java.util.Map;
 import lombok.RequiredArgsConstructor;
@@ -10,67 +13,89 @@ import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * 잔돈 적립 후보 1건을 독립된 트랜잭션으로 처리한다.
- * (배치 메서드에서 self-invocation으로 @Transactional을 붙이면 프록시가 적용되지 않으므로 별도 빈으로 분리
- * — GroupPurchaseRefundExecutor/RecurringPaymentExecutor와 동일 패턴. 한 후보의 실패가 같은 배치 실행의
- * 다른 후보 처리를 롤백시키지 않는다. 로직 자체는 DonationServiceImpl#processDailyRoundUps에 있던 것을
- * 그대로 옮겼다 — findPotForUpdate의 FOR UPDATE 락이 배치 전체가 아니라 이 건 하나가 끝날 때까지만
- * 유지되는 게 이번 분리의 핵심이다.)
+ * 회원 1명의 애월지갑(MAIN) 잔액을 저금 단위로 절삭해 저금통(DONATION)으로 옮긴다.
+ *
+ * <p>배치 메서드에서 self-invocation으로 @Transactional을 붙이면 프록시가 적용되지 않으므로 별도 빈으로 분리
+ * — GroupPurchaseRefundExecutor/RecurringPaymentExecutor와 동일 패턴. 한 회원의 실패가 같은 배치
+ * 실행의 다른 회원 처리를 롤백시키지 않는다. MAIN → DONATION 순으로 잠가 넣기/출금과 교착을 피한다.
  */
 @Component
 @RequiredArgsConstructor
 public class DonationRoundUpExecutor {
 
+    static final ZoneId SEOUL = ZoneId.of("Asia/Seoul");
+
     private final DonationMapper donationMapper;
 
     /**
-     * @return 잔돈이 실제로 저금통에 반영되면 true, 처리할 게 없어(중복 재실행, 딱 떨어지는 결제액,
+     * @return 나머지를 실제로 저금통으로 옮기면 true, 처리할 게 없어(이미 오늘 처리, 나머지 0,
      * 유효하지 않은 값) 건너뛰면 false
      */
     @Transactional
     public boolean execute(Map<String, Object> candidate) {
-        BigDecimal paymentAmount = decimal(candidate, "amount");
-        BigDecimal savingUnit = decimal(candidate, "savingUnit", "saving_unit");
-        if (paymentAmount.signum() < 0 || savingUnit.signum() <= 0) {
+        String memberId = text(candidate, "memberId", "member_id");
+        if (memberId == null || memberId.isBlank()) {
             return false;
         }
 
-        BigDecimal roundUpAmount = roundUpAmount(paymentAmount, savingUnit);
-        Map<String, Object> pot = getOrCreatePotForUpdate(text(candidate, "memberId", "member_id"));
-        String walletId = text(pot, "wallet_id", "walletId");
-        Map<String, Object> roundUp = new HashMap<>();
-        roundUp.put("sourceTxnId", text(candidate, "txnId", "txn_id"));
-        roundUp.put("walletId", walletId);
-        roundUp.put("savingUnit", savingUnit);
-        roundUp.put("roundupAmount", roundUpAmount);
-        roundUp.put("status", roundUpAmount.signum() == 0 ? "SKIPPED" : "PENDING");
-
-        // insertRoundUp은 INSERT IGNORE라, 같은 source_txn_id로 이미 기록된 건이면(재실행 등)
-        // 영향 행이 항상 0으로 감지되어 여기서 스킵된다 — 이게 이 배치의 멱등성을 지키는 핵심이다.
-        // (ON DUPLICATE KEY UPDATE로 값이 그대로인 no-op을 흉내 내면, useAffectedRows를 별도
-        // 설정하지 않은 이 프로젝트의 커넥터 기본값(found-rows 모드)에서는 그 경우도 1을 반환해
-        // 중복 건을 신규 삽입으로 오인한다 — 실측으로 확인된 회귀라 INSERT IGNORE로 바꿨다.)
-        // roundUpAmount가 0(딱 떨어지는 결제액)인 경우도 SKIPPED로 기록만 하고 잔액 반영 없이 스킵한다.
-        if (donationMapper.insertRoundUp(roundUp) != 1 || roundUpAmount.signum() == 0) {
+        LocalDate today = LocalDate.now(SEOUL);
+        Map<String, Object> settings = donationMapper.findSettingsForUpdate(memberId);
+        if (settings == null || !bool(settings, "piggyBankEnabled", "piggy_bank_enabled")) {
             return false;
         }
-        // roundup_id는 AUTO_INCREMENT — useGeneratedKeys가 파라미터 맵에 채워준다
-        if (donationMapper.increasePotBalance(walletId, roundUpAmount) != 1
-                || donationMapper.completeRoundUp(text(roundUp, "roundupId")) != 1) {
-            throw BusinessException.conflict("잔돈 적립을 반영하지 못했습니다.");
+        if (alreadyTrimmedOn(settings, today)) {
+            return false;
+        }
+
+        BigDecimal savingUnit = decimal(settings, "savingUnit", "saving_unit");
+        if (savingUnit.signum() <= 0) {
+            return false;
+        }
+
+        Map<String, Object> mainWallet = donationMapper.findMainWalletForUpdate(memberId);
+        if (mainWallet == null) {
+            return false;
+        }
+
+        BigDecimal remainder = truncatedRemainder(decimal(mainWallet, "balance"), savingUnit);
+        if (remainder.signum() <= 0) {
+            donationMapper.markSpareTrimmed(memberId, today);
+            return false;
+        }
+
+        Map<String, Object> pot = getOrCreatePotForUpdate(memberId);
+        String mainWalletId = text(mainWallet, "wallet_id", "walletId");
+        String potWalletId = text(pot, "wallet_id", "walletId");
+        if (donationMapper.decreaseMainWalletBalance(mainWalletId, remainder) != 1
+                || donationMapper.increasePotBalance(potWalletId, remainder) != 1) {
+            throw BusinessException.conflict("자투리 이체를 반영하지 못했습니다.");
+        }
+
+        Map<String, Object> transaction = new HashMap<>();
+        transaction.put("sourceWalletId", mainWalletId);
+        transaction.put("counterWalletId", potWalletId);
+        transaction.put("amount", remainder);
+        transaction.put("memo", "짜투리 저금통 절삭");
+        transaction.put("idempotencyKey", "spare-trim-" + memberId + "-" + today);
+        donationMapper.insertWalletTransaction(transaction);
+
+        if (donationMapper.markSpareTrimmed(memberId, today) != 1) {
+            throw BusinessException.conflict("자투리 절삭 상태를 반영하지 못했습니다.");
         }
         return true;
     }
 
     /**
-     * 결제액을 적립 단위로 올렸을 때 생기는 차액.
+     * 지갑 잔액을 저금 단위로 깎고 남는 나머지.
      *
-     * <p>34,800원을 1,000원 단위로 올리면 35,000원이고 차액은 200원이다. 이 200원이
-     * 저금통에 들어간다. 딱 떨어지는 금액은 올릴 것이 없으므로 0을 준다(SKIPPED로 기록된다).
+     * <p>31,275원을 1,000원 단위로 깎으면 275원이 저금통으로 가고 지갑에는 31,000원이 남는다.
+     * 딱 떨어지면 옮길 것이 없으므로 0이다.
      */
-    private static BigDecimal roundUpAmount(BigDecimal paymentAmount, BigDecimal savingUnit) {
-        BigDecimal remainder = paymentAmount.remainder(savingUnit);
-        return remainder.signum() == 0 ? BigDecimal.ZERO : savingUnit.subtract(remainder);
+    static BigDecimal truncatedRemainder(BigDecimal balance, BigDecimal savingUnit) {
+        if (balance == null || savingUnit == null || balance.signum() <= 0 || savingUnit.signum() <= 0) {
+            return BigDecimal.ZERO;
+        }
+        return balance.remainder(savingUnit);
     }
 
     private Map<String, Object> getOrCreatePotForUpdate(String memberId) {
@@ -88,6 +113,31 @@ public class DonationRoundUpExecutor {
         created.put("balance", BigDecimal.ZERO);
         donationMapper.insertPot(created);
         return donationMapper.findPotByMemberId(memberId);
+    }
+
+    private static boolean alreadyTrimmedOn(Map<String, Object> settings, LocalDate today) {
+        LocalDate last = localDate(value(settings, "lastSpareTrimmedOn", "last_spare_trimmed_on"));
+        return last != null && !last.isBefore(today);
+    }
+
+    private static boolean bool(Map<String, Object> map, String... keys) {
+        Object value = value(map, keys);
+        return value instanceof Boolean ? (Boolean) value
+                : value instanceof Number ? ((Number) value).intValue() == 1
+                : "Y".equalsIgnoreCase(String.valueOf(value)) || "true".equalsIgnoreCase(String.valueOf(value));
+    }
+
+    private static LocalDate localDate(Object value) {
+        if (value instanceof LocalDate) return (LocalDate) value;
+        if (value instanceof java.util.Date) {
+            return new Date(((java.util.Date) value).getTime()).toLocalDate();
+        }
+        if (value == null) return null;
+        String text = String.valueOf(value);
+        if (text.length() >= 10) {
+            return LocalDate.parse(text.substring(0, 10));
+        }
+        return null;
     }
 
     private static Object value(Map<String, Object> map, String... keys) {

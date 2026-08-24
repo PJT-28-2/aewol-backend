@@ -32,7 +32,9 @@ public class DonationServiceImpl implements DonationService {
         memberId = requireMemberId(memberId);
         Map<String, Object> pot = getOrCreatePot(memberId);
         Map<String, Object> settings = getOrCreateSettings(memberId);
+        Map<String, Object> mainWallet = donationMapper.findMainWalletByMemberId(memberId);
         BigDecimal balance = decimal(pot, "balance");
+        BigDecimal walletBalance = decimal(mainWallet, "balance");
         BigDecimal monthlySaved = Optional.ofNullable(
                 donationMapper.findMonthlySaved(text(pot, "wallet_id", "walletId")))
                 .orElse(BigDecimal.ZERO);
@@ -43,6 +45,7 @@ public class DonationServiceImpl implements DonationService {
 
         return DonationOverviewResponse.builder()
                 .balance(balance)
+                .walletBalance(walletBalance)
                 .monthlySaved(monthlySaved)
                 .impactMessage(buildImpactMessage(balance))
                 .campaigns(campaigns)
@@ -108,10 +111,47 @@ public class DonationServiceImpl implements DonationService {
 
     @Override
     @Transactional
+    public DonationBalanceResponse deposit(String memberId, DonationDepositRequest request) {
+        memberId = requireMemberId(memberId);
+        String idempotencyKey = requireIdempotencyKey(request.getIdempotencyKey());
+        Map<String, Object> wallet = requireMainWalletForUpdate(memberId);
+        Map<String, Object> pot = getOrCreatePotForUpdate(memberId);
+        String walletId = text(wallet, "wallet_id", "walletId");
+        String donationWalletId = text(pot, "wallet_id", "walletId");
+
+        Map<String, Object> existing = donationMapper.findDepositByIdempotencyKey(memberId, idempotencyKey);
+        if (existing != null) {
+            if (decimal(existing, "price").compareTo(request.getAmount()) != 0) {
+                throw BusinessException.conflict("동일한 중복 요청 방지 키에 다른 넣기 금액을 사용할 수 없습니다.");
+            }
+            return DonationBalanceResponse.builder()
+                    .balance(decimal(pot, "balance"))
+                    .build();
+        }
+
+        if (donationMapper.decreaseMainWalletBalance(walletId, request.getAmount()) != 1) {
+            throw new BusinessException("지갑 잔액이 부족합니다.");
+        }
+        if (donationMapper.increasePotBalance(donationWalletId, request.getAmount()) != 1) {
+            throw BusinessException.conflict("저금통 잔액을 반영하지 못했습니다.");
+        }
+        insertInternalTransfer(walletId, donationWalletId, request.getAmount(),
+                "짜투리 저금통 넣기", idempotencyKey);
+
+        Map<String, Object> updatedPot = donationMapper.findPotByMemberId(memberId);
+        return DonationBalanceResponse.builder()
+                .balance(decimal(updatedPot, "balance"))
+                .build();
+    }
+
+    @Override
+    @Transactional
     public DonationBalanceResponse withdraw(String memberId, DonationWithdrawRequest request) {
         memberId = requireMemberId(memberId);
         String idempotencyKey = requireIdempotencyKey(request.getIdempotencyKey());
+        Map<String, Object> wallet = requireMainWalletForUpdate(memberId);
         Map<String, Object> pot = getOrCreatePotForUpdate(memberId);
+        String walletId = text(wallet, "wallet_id", "walletId");
         String donationWalletId = text(pot, "wallet_id", "walletId");
 
         Map<String, Object> existing = donationMapper.findWithdrawalByIdempotencyKey(memberId, idempotencyKey);
@@ -124,28 +164,36 @@ public class DonationServiceImpl implements DonationService {
                     .build();
         }
 
-        Map<String, Object> wallet = donationMapper.findMainWalletByMemberId(memberId);
-        if (wallet == null) throw BusinessException.notFound("지갑을 찾을 수 없습니다.");
         if (donationMapper.decreasePotBalance(donationWalletId, request.getAmount()) != 1) {
             throw new BusinessException("저금통 잔액이 부족합니다.");
         }
-
-        String walletId = text(wallet, "wallet_id", "walletId");
         if (donationMapper.increaseWalletBalance(walletId, request.getAmount()) != 1) {
             throw BusinessException.conflict("지갑 잔액을 반영하지 못했습니다.");
         }
-        // 저금통(DONATION) -> 실지갑(MAIN) 내부 이체 원장 기록
-        Map<String, Object> transaction = new HashMap<>();
-        transaction.put("donationWalletId", donationWalletId);
-        transaction.put("walletId", walletId);
-        transaction.put("amount", request.getAmount());
-        transaction.put("idempotencyKey", idempotencyKey);
-        donationMapper.insertWalletTransaction(transaction);
+        insertInternalTransfer(donationWalletId, walletId, request.getAmount(),
+                "짜투리 저금통 출금", idempotencyKey);
 
         Map<String, Object> updatedPot = donationMapper.findPotByMemberId(memberId);
         return DonationBalanceResponse.builder()
                 .balance(decimal(updatedPot, "balance"))
                 .build();
+    }
+
+    private Map<String, Object> requireMainWalletForUpdate(String memberId) {
+        Map<String, Object> wallet = donationMapper.findMainWalletForUpdate(memberId);
+        if (wallet == null) throw BusinessException.notFound("지갑을 찾을 수 없습니다.");
+        return wallet;
+    }
+
+    private void insertInternalTransfer(String sourceWalletId, String counterWalletId,
+                                        BigDecimal amount, String memo, String idempotencyKey) {
+        Map<String, Object> transaction = new HashMap<>();
+        transaction.put("sourceWalletId", sourceWalletId);
+        transaction.put("counterWalletId", counterWalletId);
+        transaction.put("amount", amount);
+        transaction.put("memo", memo);
+        transaction.put("idempotencyKey", idempotencyKey);
+        donationMapper.insertWalletTransaction(transaction);
     }
 
     @Override

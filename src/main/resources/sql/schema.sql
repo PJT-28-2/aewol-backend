@@ -355,6 +355,7 @@ CREATE TABLE IF NOT EXISTS `donation_setting` (
     `auto_donate_organization_id`  VARCHAR(36)    NULL,
     `auto_donate_campaign_id`      VARCHAR(36)    NULL,
     `last_auto_donated_year_month` CHAR(7)        NULL COMMENT 'YYYY-MM',
+    `last_spare_trimmed_on`        DATE           NULL COMMENT 'YYYY-MM-DD. 일 1회 잔액 절삭 이체 멱등성',
     `created_at`                   DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP,
     `updated_at`                   DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     PRIMARY KEY (`member_id`),
