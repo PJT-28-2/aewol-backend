@@ -54,15 +54,16 @@ public class DonationServiceImpl implements DonationService {
     @Transactional
     public DonationBalanceResponse donate(String memberId, DonationRequest request) {
         memberId = requireMemberId(memberId);
-        String idempotencyKey = request.getIdempotencyKey();
-        if (idempotencyKey == null || idempotencyKey.isBlank()) {
-            idempotencyKey = UUID.randomUUID().toString();
-        } else if (idempotencyKey.length() > 64) {
-            throw new BusinessException("중복 요청 방지 키는 64자 이하여야 합니다.");
-        }
+        String idempotencyKey = requireIdempotencyKey(request.getIdempotencyKey());
 
         Map<String, Object> existing = donationMapper.findHistoryByIdempotencyKey(memberId, idempotencyKey);
         if (existing != null) {
+            if (decimal(existing, "amount").compareTo(request.getAmount()) != 0
+                    || !Objects.equals(text(existing, "campaign_id", "campaignId"),
+                    request.getCampaignId())) {
+                throw BusinessException.conflict(
+                        "동일한 중복 요청 방지 키에 다른 기부 금액이나 캠페인을 사용할 수 없습니다.");
+            }
             Map<String, Object> currentPot = getOrCreatePot(memberId);
             return DonationBalanceResponse.builder()
                     .donationId(text(existing, "donation_id", "donationId"))
