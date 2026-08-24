@@ -14,6 +14,7 @@ import com.aewol.domain.share.dto.ShareContributionResponse;
 import com.aewol.domain.share.mapper.ShareMapper;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -104,8 +105,8 @@ class ShareServiceImplTest {
     }
 
     @Test
-    @DisplayName("공동육아 기여율은 반올림 오차가 있어도 합계가 100%를 넘지 않는다")
-    void should_keepContributionPercentageTotalAt100_when_roundingWouldDrift() {
+    @DisplayName("기여 금액이 동률이면 앞 구성원부터 남은 1%를 배정한다")
+    void should_assignRemainingPercentageToEarlierMember_when_remaindersTie() {
         ShareServiceImpl service = service();
         when(petMapper.findById("pet-1")).thenReturn(map("pet_id", "pet-1", "member_id", "owner-1"));
         when(shareMapper.findMonthlyContributions("pet-1")).thenReturn(List.of(
@@ -121,6 +122,31 @@ class ShareServiceImplTest {
         assertEquals(100, result.stream()
                 .mapToInt(ShareContributionResponse::getPercentage)
                 .sum());
+    }
+
+    @Test
+    @DisplayName("102명이 1원씩 기여해도 기여율 합계는 100%다")
+    void should_keepContributionPercentageTotalAt100_when_moreMembersThanPercentPoints() {
+        ShareServiceImpl service = service();
+        List<Map<String, Object>> rows = new ArrayList<>();
+        for (int index = 1; index <= 102; index++) {
+            rows.add(map("id", "member-" + index, "name", "M" + index, "amount", BigDecimal.ONE));
+        }
+        when(petMapper.findById("pet-1")).thenReturn(map("pet_id", "pet-1", "member_id", "owner-1"));
+        when(shareMapper.findMonthlyContributions("pet-1")).thenReturn(rows);
+
+        List<ShareContributionResponse> result = service.getContributions("owner-1", "pet-1");
+
+        assertEquals(102, result.size());
+        assertEquals(100, result.stream()
+                .mapToInt(ShareContributionResponse::getPercentage)
+                .sum());
+        assertEquals(100, result.stream()
+                .filter(response -> response.getPercentage() == 1)
+                .count());
+        assertEquals(2, result.stream()
+                .filter(response -> response.getPercentage() == 0)
+                .count());
     }
 
     @Test
