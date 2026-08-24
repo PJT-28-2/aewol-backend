@@ -745,8 +745,17 @@ public class GroupPurchaseServiceImpl implements GroupPurchaseService {
         return value instanceof BigDecimal ? (BigDecimal) value : new BigDecimal(String.valueOf(value));
     }
 
+    /**
+     * MySQL Connector/J는 TINYINT(1) 컬럼(is_urgent_active)을 기본 설정(tinyInt1isBit=true)에서
+     * Number가 아니라 Boolean으로 반환한다 — resultType="map"이라 별도 TypeHandler가 끼어들지
+     * 않고 드라이버가 돌려준 타입 그대로 Map에 담긴다. Boolean 분기가 없으면 String.valueOf(false)
+     * = "false"가 Integer.parseInt에 들어가 NumberFormatException이 나고, hasNext=true일 때마다
+     * (글이 페이지 크기보다 많아지는 순간부터) toCursor에서 목록 조회 전체가 500으로 죽는다 —
+     * H2(GroupPurchaseMapperTest)는 이 드라이버 특이 동작이 없어 재현하지 못한다.
+     */
     private static Integer toInt(Object value) {
         if (value == null) return null;
+        if (value instanceof Boolean) return (Boolean) value ? 1 : 0;
         return value instanceof Number ? ((Number) value).intValue() : Integer.parseInt(String.valueOf(value));
     }
 
