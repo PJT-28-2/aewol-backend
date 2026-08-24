@@ -1061,6 +1061,7 @@ class GroupPurchaseServiceImplTest {
         assertEquals("PAYMENT", txnCaptor.getValue().get("txnType"));
         assertEquals(new BigDecimal("50000"), txnCaptor.getValue().get("price"));
         assertEquals("FOOD", txnCaptor.getValue().get("category"));
+        assertEquals("공동구매 결제", txnCaptor.getValue().get("merchantName"));
         String txnMemo = (String) txnCaptor.getValue().get("memo");
         assertTrue(txnMemo.contains("공동구매 참여"));
         assertFalse(txnMemo.contains("gpId"));
@@ -1384,6 +1385,7 @@ class GroupPurchaseServiceImplTest {
         verify(transactionMapper).insert(txnCaptor.capture());
         assertEquals("REFUND", txnCaptor.getValue().get("txnType"));
         assertEquals(new BigDecimal("50000"), txnCaptor.getValue().get("price"));
+        assertEquals("공동구매 환불", txnCaptor.getValue().get("merchantName"));
         String txnMemo = (String) txnCaptor.getValue().get("memo");
         assertTrue(txnMemo.contains("참여 취소 환불"));
         assertFalse(txnMemo.contains("gpId"));
@@ -1541,6 +1543,8 @@ class GroupPurchaseServiceImplTest {
         ArgumentCaptor<Map<String, Object>> txnCaptor = ArgumentCaptor.forClass(Map.class);
         verify(transactionMapper, times(2)).insert(txnCaptor.capture());
         assertTrue(txnCaptor.getAllValues().stream().allMatch(txn -> "REFUND".equals(txn.get("txnType"))));
+        assertTrue(txnCaptor.getAllValues().stream()
+                .allMatch(txn -> "공동구매 환불".equals(txn.get("merchantName"))));
         assertTrue(txnCaptor.getAllValues().stream()
                 .allMatch(txn -> ((String) txn.get("memo")).contains("작성자 취소로 인한 환불")));
         assertTrue(txnCaptor.getAllValues().stream()
