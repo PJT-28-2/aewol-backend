@@ -1507,7 +1507,7 @@ class GroupPurchaseServiceImplTest {
         Map<String, Object> gpRow = savedRow();
         gpRow.put("deadline", LocalDateTime.now().plusDays(5));
         when(groupPurchaseMapper.findById("1")).thenReturn(gpRow);
-        when(groupPurchaseMapper.cancelGroupPurchase("1")).thenReturn(1);
+        when(groupPurchaseMapper.cancelGroupPurchase("1", "member-1")).thenReturn(1);
 
         Map<String, Object> participant1 = participantRow(10523L, "1", "member-1", 2);
         participant1.put("paid_amount", new BigDecimal("50000"));
@@ -1527,9 +1527,9 @@ class GroupPurchaseServiceImplTest {
         when(walletMapper.findByMemberId("member-2")).thenReturn(wallet2);
         when(walletMapper.addBalance("wallet-1", new BigDecimal("50000"))).thenReturn(1);
         when(walletMapper.addBalance("wallet-2", new BigDecimal("25000"))).thenReturn(1);
-        when(simplePasswordVerificationService.verify("admin-1", PASSWORD)).thenReturn(true);
+        when(simplePasswordVerificationService.verify("member-1", PASSWORD)).thenReturn(true);
 
-        GroupPurchaseCancelResponse result = service.cancel("admin-1", "1", PASSWORD);
+        GroupPurchaseCancelResponse result = service.cancel("member-1", "1", PASSWORD);
 
         assertEquals("1", result.getGpId());
         assertEquals("CANCELLED", result.getStatus());
@@ -1558,7 +1558,7 @@ class GroupPurchaseServiceImplTest {
         Map<String, Object> gpRow = savedRow();
         gpRow.put("deadline", LocalDateTime.now().plusDays(5));
         when(groupPurchaseMapper.findById("1")).thenReturn(gpRow);
-        when(groupPurchaseMapper.cancelGroupPurchase("1")).thenReturn(1);
+        when(groupPurchaseMapper.cancelGroupPurchase("1", "member-1")).thenReturn(1);
 
         Map<String, Object> paidParticipant = participantRow(10523L, "1", "member-1", 2);
         paidParticipant.put("paid_amount", new BigDecimal("50000"));
@@ -1573,9 +1573,9 @@ class GroupPurchaseServiceImplTest {
         wallet1.put("wallet_id", "wallet-1");
         when(walletMapper.findByMemberId("member-1")).thenReturn(wallet1);
         when(walletMapper.addBalance("wallet-1", new BigDecimal("50000"))).thenReturn(1);
-        when(simplePasswordVerificationService.verify("admin-1", PASSWORD)).thenReturn(true);
+        when(simplePasswordVerificationService.verify("member-1", PASSWORD)).thenReturn(true);
 
-        GroupPurchaseCancelResponse result = service.cancel("admin-1", "1", PASSWORD);
+        GroupPurchaseCancelResponse result = service.cancel("member-1", "1", PASSWORD);
 
         assertEquals(1, result.getRefundedParticipants().size());
         assertEquals("member-1", result.getRefundedParticipants().get(0).getMemberId());
@@ -1592,7 +1592,7 @@ class GroupPurchaseServiceImplTest {
         Map<String, Object> gpRow = savedRow();
         gpRow.put("deadline", LocalDateTime.now().plusDays(5));
         when(groupPurchaseMapper.findById("1")).thenReturn(gpRow);
-        when(groupPurchaseMapper.cancelGroupPurchase("1")).thenReturn(1);
+        when(groupPurchaseMapper.cancelGroupPurchase("1", "member-1")).thenReturn(1);
 
         Map<String, Object> participant1 = participantRow(10523L, "1", "member-1", 2);
         participant1.put("paid_amount", new BigDecimal("50000"));
@@ -1600,9 +1600,9 @@ class GroupPurchaseServiceImplTest {
         when(groupPurchaseMapper.findActiveParticipants("1")).thenReturn(List.of(participant1));
         // member-1이 이 배치 조회 이후, 환불 처리 직전에 leave()로 먼저 취소를 완료한 상황을 재현한다.
         when(groupPurchaseMapper.cancelParticipant(eq("1"), eq("member-1"), any())).thenReturn(0);
-        when(simplePasswordVerificationService.verify("admin-1", PASSWORD)).thenReturn(true);
+        when(simplePasswordVerificationService.verify("member-1", PASSWORD)).thenReturn(true);
 
-        GroupPurchaseCancelResponse result = service.cancel("admin-1", "1", PASSWORD);
+        GroupPurchaseCancelResponse result = service.cancel("member-1", "1", PASSWORD);
 
         assertTrue(result.getRefundedParticipants().isEmpty());
         verifyNoInteractions(walletMapper);
@@ -1619,8 +1619,24 @@ class GroupPurchaseServiceImplTest {
                 () -> service.cancel("admin-1", "999", PASSWORD));
 
         assertEquals("공동구매를 찾을 수 없습니다.", exception.getMessage());
-        verify(groupPurchaseMapper, never()).cancelGroupPurchase(any());
+        verify(groupPurchaseMapper, never()).cancelGroupPurchase(any(), any());
         verifyNoInteractions(simplePasswordVerificationService);
+    }
+
+    @Test
+    @DisplayName("작성자가 아닌 관리자는 공동구매를 취소할 수 없고 PIN을 검증하지 않는다")
+    void should_throwForbidden_when_nonAuthorAdminCancels() {
+        GroupPurchaseServiceImpl service = service();
+        when(groupPurchaseMapper.findById("1")).thenReturn(savedRow());
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.cancel("admin-2", "1", PASSWORD));
+
+        assertEquals(org.springframework.http.HttpStatus.FORBIDDEN, exception.getStatus());
+        assertEquals("작성자만 공동구매를 취소할 수 있습니다.", exception.getMessage());
+        verifyNoInteractions(simplePasswordVerificationService);
+        verify(groupPurchaseMapper, never()).cancelGroupPurchase(any(), any());
+        verifyNoInteractions(walletMapper);
     }
 
     @Test
@@ -1628,13 +1644,13 @@ class GroupPurchaseServiceImplTest {
     void should_throwException_when_passwordMismatch_onCancel() {
         GroupPurchaseServiceImpl service = service();
         when(groupPurchaseMapper.findById("1")).thenReturn(savedRow());
-        when(simplePasswordVerificationService.verify("admin-1", "000000")).thenReturn(false);
+        when(simplePasswordVerificationService.verify("member-1", "000000")).thenReturn(false);
 
         BusinessException exception = assertThrows(BusinessException.class,
-                () -> service.cancel("admin-1", "1", "000000"));
+                () -> service.cancel("member-1", "1", "000000"));
 
         assertEquals("간편 비밀번호가 일치하지 않습니다.", exception.getMessage());
-        verify(groupPurchaseMapper, never()).cancelGroupPurchase(any());
+        verify(groupPurchaseMapper, never()).cancelGroupPurchase(any(), any());
         verifyNoInteractions(walletMapper);
     }
 
@@ -1643,11 +1659,11 @@ class GroupPurchaseServiceImplTest {
     void should_throwConflict_when_cancelGroupPurchaseAffectsNoRows() {
         GroupPurchaseServiceImpl service = service();
         when(groupPurchaseMapper.findById("1")).thenReturn(savedRow());
-        when(groupPurchaseMapper.cancelGroupPurchase("1")).thenReturn(0);
-        when(simplePasswordVerificationService.verify("admin-1", PASSWORD)).thenReturn(true);
+        when(groupPurchaseMapper.cancelGroupPurchase("1", "member-1")).thenReturn(0);
+        when(simplePasswordVerificationService.verify("member-1", PASSWORD)).thenReturn(true);
 
         BusinessException exception = assertThrows(BusinessException.class,
-                () -> service.cancel("admin-1", "1", PASSWORD));
+                () -> service.cancel("member-1", "1", PASSWORD));
 
         assertEquals(org.springframework.http.HttpStatus.CONFLICT, exception.getStatus());
         assertEquals("목표 수량 달성 또는 마감 후에는 취소할 수 없습니다.", exception.getMessage());
@@ -1660,11 +1676,11 @@ class GroupPurchaseServiceImplTest {
     void should_cancelWithoutRefund_when_noPaidParticipants() {
         GroupPurchaseServiceImpl service = service();
         when(groupPurchaseMapper.findById("1")).thenReturn(savedRow());
-        when(groupPurchaseMapper.cancelGroupPurchase("1")).thenReturn(1);
+        when(groupPurchaseMapper.cancelGroupPurchase("1", "member-1")).thenReturn(1);
         when(groupPurchaseMapper.findActiveParticipants("1")).thenReturn(List.of());
-        when(simplePasswordVerificationService.verify("admin-1", PASSWORD)).thenReturn(true);
+        when(simplePasswordVerificationService.verify("member-1", PASSWORD)).thenReturn(true);
 
-        GroupPurchaseCancelResponse result = service.cancel("admin-1", "1", PASSWORD);
+        GroupPurchaseCancelResponse result = service.cancel("member-1", "1", PASSWORD);
 
         assertTrue(result.getRefundedParticipants().isEmpty());
         verifyNoInteractions(walletMapper);
