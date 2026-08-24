@@ -22,6 +22,11 @@ public interface DonationMapper {
     BigDecimal findMonthlySaved(@Param("walletId") String walletId);
     List<Map<String, Object>> findActiveCampaigns(@Param("memberId") String memberId);
     Map<String, Object> findCampaignById(@Param("campaignId") String campaignId);
+    Map<String, Object> findActiveOrganizationById(@Param("organizationId") String organizationId);
+    int insertPreference(@Param("memberId") String memberId,
+                         @Param("organizationId") String organizationId);
+    int deletePreference(@Param("memberId") String memberId,
+                         @Param("organizationId") String organizationId);
     Map<String, Object> findSettings(@Param("memberId") String memberId);
     void insertSettings(@Param("memberId") String memberId);
     int updateSettings(Map<String, Object> settings);

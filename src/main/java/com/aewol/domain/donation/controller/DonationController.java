@@ -52,6 +52,24 @@ public class DonationController {
         return ResponseEntity.ok(ApiResponse.success(donationService.saveSettings(memberId, request)));
     }
 
+    @Operation(summary = "선호 기부처 등록")
+    @PutMapping("/preferences/{organizationId}")
+    public ResponseEntity<ApiResponse<DonationPreferenceResponse>> addPreference(
+            @AuthenticationPrincipal String memberId,
+            @PathVariable String organizationId) {
+        return ResponseEntity.ok(ApiResponse.success(
+                donationService.setPreference(memberId, organizationId, true)));
+    }
+
+    @Operation(summary = "선호 기부처 해제")
+    @DeleteMapping("/preferences/{organizationId}")
+    public ResponseEntity<ApiResponse<DonationPreferenceResponse>> removePreference(
+            @AuthenticationPrincipal String memberId,
+            @PathVariable String organizationId) {
+        return ResponseEntity.ok(ApiResponse.success(
+                donationService.setPreference(memberId, organizationId, false)));
+    }
+
     @Operation(summary = "기부 내역")
     @GetMapping("/history")
     public ResponseEntity<ApiResponse<List<DonationHistoryResponse>>> getHistory(

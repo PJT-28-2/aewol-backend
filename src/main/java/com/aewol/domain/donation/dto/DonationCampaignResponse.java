@@ -8,6 +8,7 @@ import lombok.Getter;
 @Builder
 public class DonationCampaignResponse {
     private final String id;
+    private final String organizationId;
     private final String organization;
     private final String title;
     private final String category;
