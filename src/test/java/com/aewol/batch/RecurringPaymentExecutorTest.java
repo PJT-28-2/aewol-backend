@@ -11,6 +11,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.aewol.domain.notification.service.InboxNotifier;
 import com.aewol.domain.recurring.mapper.RecurringMapper;
 import com.aewol.domain.recurring.service.RecurringServiceImpl;
 import com.aewol.domain.transaction.mapper.TransactionMapper;
@@ -31,9 +32,10 @@ class RecurringPaymentExecutorTest {
     @Mock WalletMapper walletMapper;
     @Mock TransactionMapper transactionMapper;
     @Mock RecurringMapper recurringMapper;
+    @Mock InboxNotifier inboxNotifier;
 
     private RecurringPaymentExecutor executor() {
-        return new RecurringPaymentExecutor(walletMapper, transactionMapper, recurringMapper);
+        return new RecurringPaymentExecutor(walletMapper, transactionMapper, recurringMapper, inboxNotifier);
     }
 
     private Map<String, Object> due(int paymentDay) {
@@ -55,6 +57,7 @@ class RecurringPaymentExecutorTest {
         Map<String, Object> due = due(15);
         when(recurringMapper.findByIdForUpdate("1")).thenReturn(due);
         when(walletMapper.deductBalance(eq("wallet-1"), any(BigDecimal.class))).thenReturn(1);
+        when(walletMapper.findById("wallet-1")).thenReturn(Map.of("member_id", "member-1"));
         int paymentDay = 15;
 
         boolean result = executor().execute(due);
@@ -72,6 +75,13 @@ class RecurringPaymentExecutorTest {
         verify(recurringMapper).updateNextPaymentDate(eq("1"), dateCaptor.capture());
         assertEquals(RecurringServiceImpl.nextPaymentDate(paymentDay, LocalDate.now()),
                 dateCaptor.getValue());
+        verify(inboxNotifier).notifyAfterCommit(
+                eq("member-1"),
+                eq(InboxNotifier.Channel.PAYMENT),
+                eq("PAYMENT"),
+                anyString(),
+                anyString(),
+                eq("/payment/recurring"));
     }
 
     @Test
@@ -85,6 +95,7 @@ class RecurringPaymentExecutorTest {
         assertFalse(result);
         verify(transactionMapper, never()).insert(anyMap());
         verify(recurringMapper, never()).updateNextPaymentDate(anyString(), any(LocalDate.class));
+        verify(inboxNotifier, never()).notifyAfterCommit(any(), any(), any(), any(), any(), any());
     }
 
     @Test

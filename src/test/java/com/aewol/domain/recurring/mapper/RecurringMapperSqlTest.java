@@ -32,4 +32,17 @@ class RecurringMapperSqlTest {
 
         assertTrue(select.contains("NEXT_PAYMENT_DATE <= #{DATE}"));
     }
+
+    @Test
+    void should_matchExactPaymentDate_when_selectingThreeDayReminders() throws Exception {
+        String sql = Files.readString(
+                Path.of("src/main/resources/mapper/recurring/RecurringMapper.xml"),
+                StandardCharsets.UTF_8);
+        int start = sql.indexOf("<select id=\"findUpcomingPayments\"");
+        int end = sql.indexOf("</select>", start);
+        String select = sql.substring(start, end).toUpperCase();
+
+        assertTrue(select.contains("NEXT_PAYMENT_DATE = #{DATE}"));
+        assertTrue(select.contains("MEMBER_ID"));
+    }
 }
