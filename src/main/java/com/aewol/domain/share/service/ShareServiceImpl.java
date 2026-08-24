@@ -160,30 +160,79 @@ public class ShareServiceImpl implements ShareService {
                 .map(row -> decimal(row, "amount"))
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
 
+        List<Integer> percentages = calculatePercentages(rows, total);
         List<ShareContributionResponse> result = new ArrayList<>();
-        int assigned = 0;
         for (int index = 0; index < rows.size(); index++) {
             Map<String, Object> row = rows.get(index);
-            int percentage;
-            if (total.signum() == 0) {
-                percentage = 0;
-            } else if (index == rows.size() - 1) {
-                percentage = Math.max(100 - assigned, 0);
-            } else {
-                percentage = decimal(row, "amount")
-                        .multiply(BigDecimal.valueOf(100))
-                        .divide(total, 0, RoundingMode.HALF_UP)
-                        .intValue();
-                assigned += percentage;
-            }
             result.add(ShareContributionResponse.builder()
                     .id(text(row, "id"))
                     .name(text(row, "name"))
                     .amount(decimal(row, "amount"))
-                    .percentage(percentage)
+                    .percentage(percentages.get(index))
                     .build());
         }
         return result;
+    }
+
+    private List<Integer> calculatePercentages(List<Map<String, Object>> rows, BigDecimal total) {
+        if (rows.isEmpty()) {
+            return List.of();
+        }
+        if (total.signum() == 0) {
+            return rows.stream().map(row -> 0).collect(Collectors.toList());
+        }
+
+        List<ContributionShare> shares = new ArrayList<>();
+        int assigned = 0;
+        for (int index = 0; index < rows.size(); index++) {
+            BigDecimal exact = decimal(rows.get(index), "amount")
+                    .multiply(BigDecimal.valueOf(100))
+                    .divide(total, 8, RoundingMode.HALF_UP);
+            int floor = exact.setScale(0, RoundingMode.DOWN).intValue();
+            BigDecimal remainder = exact.subtract(BigDecimal.valueOf(floor));
+            shares.add(new ContributionShare(index, floor, remainder));
+            assigned += floor;
+        }
+
+        int remaining = Math.max(0, 100 - assigned);
+        shares.stream()
+                .sorted(Comparator
+                        .comparing(ContributionShare::remainder).reversed()
+                        .thenComparingInt(ContributionShare::index))
+                .limit(remaining)
+                .forEach(ContributionShare::increment);
+
+        List<Integer> percentages = new ArrayList<>(Collections.nCopies(rows.size(), 0));
+        shares.forEach(share -> percentages.set(share.index(), share.percentage()));
+        return percentages;
+    }
+
+    private static final class ContributionShare {
+        private final int index;
+        private int percentage;
+        private final BigDecimal remainder;
+
+        private ContributionShare(int index, int percentage, BigDecimal remainder) {
+            this.index = index;
+            this.percentage = percentage;
+            this.remainder = remainder;
+        }
+
+        private int index() {
+            return index;
+        }
+
+        private int percentage() {
+            return percentage;
+        }
+
+        private BigDecimal remainder() {
+            return remainder;
+        }
+
+        private void increment() {
+            percentage++;
+        }
     }
 
     @Override
