@@ -24,7 +24,6 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
-import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.util.Collections;
 
@@ -126,17 +125,49 @@ class InsuranceControllerTest {
     @Test
     @DisplayName("POST /api/insurance/claims/{claimId}/confirm은 body가 있으면 200을 반환한다")
     void should_return200_whenConfirmingWithBody() throws Exception {
-        ClaimResponse corrected = ClaimResponse.builder()
-                .hospitalName("애월동물병원")
-                .treatmentDate("2026-01-01")
-                .totalAmount(new BigDecimal("15000"))
-                .build();
         when(claimService.confirmClaim(eq("100"), eq("1"), any())).thenReturn(sampleClaim("1"));
 
         mockMvc.perform(post("/api/insurance/claims/1/confirm")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(corrected)))
+                        .content("{\"hospitalName\":\"애월동물병원\","
+                                + "\"treatmentDate\":\"2026-01-01\",\"totalAmount\":15000}"))
                 .andExpect(status().isOk());
+    }
+
+    @Test
+    @DisplayName("confirm 요청의 병원명이 비어 있으면 서비스 호출 전에 400을 반환한다")
+    void should_return400_whenConfirmHospitalNameIsBlank() throws Exception {
+        mockMvc.perform(post("/api/insurance/claims/1/confirm")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"hospitalName\":\"  \","
+                                + "\"treatmentDate\":\"2026-01-01\",\"totalAmount\":15000}"))
+                .andExpect(status().isBadRequest());
+
+        org.mockito.Mockito.verifyNoInteractions(claimService);
+    }
+
+    @Test
+    @DisplayName("confirm 요청의 진료일이 미래면 서비스 호출 전에 400을 반환한다")
+    void should_return400_whenConfirmTreatmentDateIsFuture() throws Exception {
+        mockMvc.perform(post("/api/insurance/claims/1/confirm")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"hospitalName\":\"애월동물병원\","
+                                + "\"treatmentDate\":\"2999-01-01\",\"totalAmount\":15000}"))
+                .andExpect(status().isBadRequest());
+
+        org.mockito.Mockito.verifyNoInteractions(claimService);
+    }
+
+    @Test
+    @DisplayName("confirm 요청의 청구 금액이 0 이하면 서비스 호출 전에 400을 반환한다")
+    void should_return400_whenConfirmAmountIsNotPositive() throws Exception {
+        mockMvc.perform(post("/api/insurance/claims/1/confirm")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"hospitalName\":\"애월동물병원\","
+                                + "\"treatmentDate\":\"2026-01-01\",\"totalAmount\":0}"))
+                .andExpect(status().isBadRequest());
+
+        org.mockito.Mockito.verifyNoInteractions(claimService);
     }
 
     @Test

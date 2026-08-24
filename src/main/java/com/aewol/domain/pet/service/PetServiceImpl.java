@@ -355,7 +355,7 @@ public class PetServiceImpl implements PetService {
         try {
             fileStorage.delete(fileUrl);
         } catch (RuntimeException e) {
-            log.warn("반려동물 문서 파일 삭제 실패 - fileUrl: {}", fileUrl, e);
+            log.warn("반려동물 문서 파일 삭제 실패 - cause: {}", e.getClass().getSimpleName());
         }
     }
 

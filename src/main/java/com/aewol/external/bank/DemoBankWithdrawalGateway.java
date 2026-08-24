@@ -14,14 +14,6 @@ public class DemoBankWithdrawalGateway implements BankWithdrawalGateway {
 
     @Override
     public void withdraw(String bankCode, String accountNumber, BigDecimal amount) {
-        log.info("[DEMO] 외부 계좌 출금 처리 - bankCode: {}, account: {}, amount: {}",
-                bankCode, maskAccountNumber(accountNumber), amount);
-    }
-
-    private String maskAccountNumber(String accountNumber) {
-        if (accountNumber == null || accountNumber.length() <= 4) {
-            return "****";
-        }
-        return "*".repeat(accountNumber.length() - 4) + accountNumber.substring(accountNumber.length() - 4);
+        log.info("[DEMO] 외부 계좌 출금 처리 완료 - bankCode: {}", bankCode);
     }
 }

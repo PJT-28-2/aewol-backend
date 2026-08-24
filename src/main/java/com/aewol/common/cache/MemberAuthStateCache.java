@@ -77,7 +77,7 @@ public class MemberAuthStateCache {
             // 형식이 깨진 값을 "회원 없음"으로 읽으면 멀쩡한 회원이 인증에 실패한다.
             // 배포 중 인코딩이 바뀌거나 이전 버전 값이 남은 경우가 여기 걸리므로,
             // 캐시 미스와 똑같이 취급해 DB를 정답으로 삼는다.
-            log.warn("[AUTH_CACHE_CORRUPT] 인증 캐시 형식이 올바르지 않습니다 — DB로 넘어갑니다. memberId={}", memberId);
+            log.warn("[AUTH_CACHE_CORRUPT] 인증 캐시 형식이 올바르지 않습니다 — DB로 넘어갑니다.");
         }
 
         Map<String, Object> authState = memberMapper.findAuthStateById(memberId);
@@ -128,7 +128,8 @@ public class MemberAuthStateCache {
         } catch (RuntimeException e) {
             // 지우지 못하면 TTL 만료까지 예전 상태가 남는다. 최대 60초라 감수하되,
             // 조사할 수 있게 남긴다.
-            log.warn("[AUTH_CACHE_EVICT_FAILED] 인증 캐시를 지우지 못했습니다. memberId={}", memberId, e);
+            log.warn("[AUTH_CACHE_EVICT_FAILED] 인증 캐시를 지우지 못했습니다. cause={}",
+                    e.getClass().getSimpleName());
         }
     }
 

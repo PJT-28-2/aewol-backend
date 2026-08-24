@@ -38,7 +38,7 @@ public class DonationInsightCollector implements InsightCardCollector {
         try {
             overview = donationService.getOverview(memberId);
         } catch (RuntimeException e) {
-            log.debug("[Insight] 짜투리지갑 조회 실패 - memberId: {}, reason: {}", memberId, e.getMessage());
+            log.debug("[Insight] 짜투리지갑 조회 실패 - cause: {}", e.getClass().getSimpleName());
             return null;
         }
         if (overview == null) {

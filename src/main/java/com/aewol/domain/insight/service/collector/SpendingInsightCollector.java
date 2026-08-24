@@ -62,7 +62,7 @@ public class SpendingInsightCollector implements InsightCardCollector {
             summary = dashboardService.getMonthlySummary(memberId, month);
             breakdown = dashboardService.getCategoryBreakdown(memberId, "CATEGORY", month);
         } catch (RuntimeException e) {
-            log.debug("[Insight] 지출 조회 실패 - memberId: {}, reason: {}", memberId, e.getMessage());
+            log.debug("[Insight] 지출 조회 실패 - cause: {}", e.getClass().getSimpleName());
             return null;
         }
         if (summary == null || breakdown == null) {
@@ -224,8 +224,7 @@ public class SpendingInsightCollector implements InsightCardCollector {
                     .list(memberId, GroupPurchaseStatus.OPEN, null, topCategoryLabel, null, RECOMMENDATION_LIMIT, "DEADLINE_ASC")
                     .getItems();
         } catch (RuntimeException e) {
-            log.debug("[Insight] 공동구매 추천 조회 실패 - memberId: {}, category: {}, reason: {}",
-                    memberId, topCategoryLabel, e.getMessage());
+            log.debug("[Insight] 공동구매 추천 조회 실패 - cause: {}", e.getClass().getSimpleName());
             return List.of();
         }
     }
