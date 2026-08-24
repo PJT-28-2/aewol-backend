@@ -271,6 +271,26 @@ class TransactionServiceImplTest {
         verify(transactionMapper).updateTag("txn-1", "FOOD", "pet-2");
     }
 
+    // 공동육아 구성원은 펫 소유자가 아니어도 자기 결제를 공유 펫에 태깅할 수 있어야
+    // 기여도 집계(share/contributions)에 지출이 반영된다.
+    @Test
+    void should_updateTag_when_memberHasSharedAccessToPet() {
+        TransactionServiceImpl service = service();
+        TransactionTagUpdateRequest request = new TransactionTagUpdateRequest();
+        ReflectionTestUtils.setField(request, "category", "FOOD");
+        ReflectionTestUtils.setField(request, "petId", "pet-2");
+        when(transactionMapper.findById("txn-1"))
+                .thenReturn(transaction("wallet-1", "pet-1"), transaction("wallet-1", "pet-2"));
+        when(walletMapper.findById("wallet-1")).thenReturn(map("member_id", "member-1"));
+        when(petMapper.findByIdAndMemberId("pet-2", "member-1")).thenReturn(null);
+        when(petMapper.hasSharedAccess("pet-2", "member-1")).thenReturn(true);
+        when(transactionMapper.updateTag("txn-1", "FOOD", "pet-2")).thenReturn(1);
+
+        service.updateTag("member-1", "txn-1", request);
+
+        verify(transactionMapper).updateTag("txn-1", "FOOD", "pet-2");
+    }
+
     @Test
     void should_returnCursorPage_when_moreTransactionsExist() {
         TransactionServiceImpl service = service();

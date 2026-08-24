@@ -27,11 +27,14 @@
         ORDER BY p.created_at
     </select>
 
-    <!-- 공동육아 구성원(수락 완료) 여부 — 조회 권한 판정용 -->
+    <!-- 공동육아 구성원(수락 완료) 여부 — 조회/태깅 권한 판정용.
+         비활성화된 펫에도 shared_access 행은 남으므로(등록해제 시 공동 데이터 보존 정책),
+         pet.is_active를 함께 확인해야 삭제된 펫에 대한 권한이 살아있는 것으로 오판하지 않는다. -->
     <select id="hasSharedAccess" resultType="boolean">
         SELECT EXISTS (
-            SELECT 1 FROM shared_access
-            WHERE pet_id = #{petId} AND member_id = #{memberId} AND status = 'ACCEPTED'
+            SELECT 1 FROM shared_access sa
+            JOIN pet p ON p.pet_id = sa.pet_id AND p.is_active = 1
+            WHERE sa.pet_id = #{petId} AND sa.member_id = #{memberId} AND sa.status = 'ACCEPTED'
         )
     </select>
 
