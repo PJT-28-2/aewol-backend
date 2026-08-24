@@ -38,6 +38,27 @@ class DashboardServiceImplTest {
     }
 
     @Test
+    void should_mergeNullCategoryIntoEtcWithoutDuplicatingPet() {
+        DashboardServiceImpl service = new DashboardServiceImpl(dashboardMapper, walletMapper);
+        when(walletMapper.findByMemberId("member-1")).thenReturn(map("wallet_id", "wallet-1"));
+        when(dashboardMapper.getSpendingBreakdown("wallet-1", "2026-08"))
+                .thenReturn(List.of(
+                        map("category", "ETC", "pet_id", 1L, "pet_name", "포리", "amount", new BigDecimal("2000")),
+                        map("category", null, "pet_id", 1L, "pet_name", "포리", "amount", new BigDecimal("24000"))));
+
+        Map<String, Object> result = service.getCategoryBreakdown("member-1", "CATEGORY", "2026-08");
+
+        List<?> items = (List<?>) result.get("items");
+        assertEquals(1, items.size());
+        Map<?, ?> etc = (Map<?, ?>) items.get(0);
+        assertEquals("ETC", etc.get("category"));
+        assertEquals(new BigDecimal("26000"), etc.get("amount"));
+        List<?> pets = (List<?>) etc.get("petBreakdown");
+        assertEquals(1, pets.size());
+        assertEquals(new BigDecimal("26000"), ((Map<?, ?>) pets.get(0)).get("amount"));
+    }
+
+    @Test
     void should_buildHomeSummaryWithWalletAndPetSpending() {
         DashboardServiceImpl service = new DashboardServiceImpl(dashboardMapper, walletMapper);
         when(walletMapper.findByMemberId("member-1")).thenReturn(

@@ -52,10 +52,10 @@ class PetDocumentUploadServiceTest {
                 LocalDate.of(2026, 8, 1));
 
         assertEquals("VACCINATION", response.getDocType());
-        assertEquals("certificate.jpeg", response.getDocName());
+        assertEquals("접종증명서_2026-08-01", response.getDocName());
         assertEquals("signed:pet-documents/new.jpg", response.getFileUrl());
         verify(petDocumentMapper).insert(argThat(row ->
-                "certificate.jpeg".equals(row.get("docName"))));
+                "접종증명서_2026-08-01".equals(row.get("docName"))));
     }
 
     @Test
@@ -70,7 +70,7 @@ class PetDocumentUploadServiceTest {
         // 같은 반려동물+타입이라도 이전 문서를 덮어쓰지 않고 매번 새 문서를 쌓는다 —
         // update는 한 번도 호출되지 않고, insert가 두 번(누적) 호출돼야 한다.
         verify(petDocumentMapper, times(2)).insert(argThat(row ->
-                "certificate.jpeg".equals(row.get("docName"))));
+                String.valueOf(row.get("docName")).startsWith("접종증명서_")));
         verify(petDocumentMapper, never()).update(anyMap());
         verify(fileStorage, never()).delete(anyString());
     }
@@ -190,35 +190,34 @@ class PetDocumentUploadServiceTest {
                 "member-1", "pet-1", "MEDICAL_CONFIRMATION", file, LocalDate.of(2026, 8, 10));
 
         assertEquals("MEDICAL_CONFIRMATION", response.getDocType());
-        assertEquals("medical-confirmation.png", response.getDocName());
+        assertEquals("진료확인서_2026-08-10", response.getDocName());
         verify(petDocumentMapper).insert(anyMap());
     }
 
     @Test
-    void should_storeFilenameOnly_when_originalFilenameContainsPath() throws IOException {
+    void should_useDocumentTypeNameInsteadOfOriginalFilename_when_uploaded() throws IOException {
+        // 휴대폰 촬영본은 파일명이 "1000012345.png" 같은 숫자 나열이라, 원본 파일명 대신
+        // 문서 유형 + 발급일로 만든 이름을 저장해야 목록에서 구분할 수 있다.
         givenOwner();
-        MockMultipartFile file = png("C:\\fakepath\\몽이_접종증명서.png", "image/png");
+        MockMultipartFile file = png("1000012345.png", "image/png");
+        when(fileStorage.store(any(), eq("pet-documents"), eq("png"))).thenReturn("pet-documents/new.png");
+
+        PetDocumentResponse response = service.uploadPetDocument(
+                "member-1", "pet-1", "VACCINATION", file, LocalDate.of(2026, 8, 24));
+
+        assertEquals("접종증명서_2026-08-24", response.getDocName());
+    }
+
+    @Test
+    void should_fallBackToUploadDate_when_issuedDateIsMissing() throws IOException {
+        givenOwner();
+        MockMultipartFile file = png("1000012345.png", "image/png");
         when(fileStorage.store(any(), eq("pet-documents"), eq("png"))).thenReturn("pet-documents/new.png");
 
         PetDocumentResponse response = service.uploadPetDocument(
                 "member-1", "pet-1", "VACCINATION", file, null);
 
-        assertEquals("몽이_접종증명서.png", response.getDocName());
-        verify(petDocumentMapper).insert(argThat(row ->
-                "몽이_접종증명서.png".equals(row.get("docName"))));
-    }
-
-    @Test
-    void should_throwBadRequest_when_originalFilenameExceedsDatabaseLimit() {
-        givenOwner();
-        String filename = "a".repeat(97) + ".png";
-        MockMultipartFile file = png(filename, "image/png");
-
-        BusinessException exception = assertThrows(BusinessException.class,
-                () -> service.uploadPetDocument("member-1", "pet-1", "VACCINATION", file, null));
-
-        assertEquals(HttpStatus.BAD_REQUEST, exception.getStatus());
-        verifyNoInteractions(petDocumentMapper, fileStorage);
+        assertEquals("접종증명서_" + LocalDate.now(), response.getDocName());
     }
 
     @Test
