@@ -12,6 +12,13 @@ class NotificationMapperSqlTest {
     private final String xml = readMapper();
 
     @Test
+    void insertStoresOptionalEventKey() {
+        String sql = statement("<insert id=\"insert\"", "</insert>");
+        assertTrue(sql.contains("event_key"));
+        assertTrue(sql.contains("#{eventKey}"));
+    }
+
+    @Test
     void listIsScopedToMemberAndOrderedNewestFirst() {
         String sql = statement("<select id=\"findByMemberId\"", "</select>");
         assertTrue(sql.contains("WHERE member_id = #{memberId}"));

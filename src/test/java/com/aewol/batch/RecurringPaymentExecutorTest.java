@@ -77,8 +77,8 @@ class RecurringPaymentExecutorTest {
                 dateCaptor.getValue());
         verify(inboxNotifier).notifyAfterCommit(
                 eq("member-1"),
-                eq(InboxNotifier.Channel.PAYMENT),
-                eq("PAYMENT"),
+                eq(InboxNotifier.Channel.RECURRING),
+                eq("RECURRING"),
                 anyString(),
                 anyString(),
                 eq("/payment/recurring"));
