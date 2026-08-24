@@ -7,6 +7,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
@@ -21,6 +22,7 @@ public class AutoTaggingServiceImpl implements AutoTaggingService {
     private final Clock clock;
     private final ConcurrentHashMap<String, CacheEntry> categoryByMerchant = new ConcurrentHashMap<>();
 
+    @Autowired
     public AutoTaggingServiceImpl(KakaoLocalClient kakaoLocalClient) {
         this(kakaoLocalClient, Clock.systemUTC());
     }
