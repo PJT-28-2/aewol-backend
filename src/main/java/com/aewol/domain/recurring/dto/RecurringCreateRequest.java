@@ -39,4 +39,12 @@ public class RecurringCreateRequest {
 
     @NotBlank(message = "반려동물을 선택해 주세요.")
     private String petId;
+
+    @Size(max = 64, message = "중복 요청 방지 키는 64자 이하여야 합니다.")
+    private String idempotencyKey;
+
+    public RecurringCreateRequest(String itemName, BigDecimal price, Integer cycleDay,
+                                  String category, String petId) {
+        this(itemName, price, cycleDay, category, petId, null);
+    }
 }

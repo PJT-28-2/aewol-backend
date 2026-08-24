@@ -17,6 +17,19 @@
         AND d.hidden_by_report_at IS NULL
     </sql>
 
+    <!--
+        공개 사본이 없는 글은 그리드에 빈 칸이 된다. 페이지를 자른 뒤에 걸러내면
+        첫 장이 비고 nextCursor만 남는 경우가 생긴다. 조회 단계에서 빼 둔다.
+    -->
+    <sql id="hasPublicImage">
+        EXISTS (
+            SELECT 1 FROM care_diary_image i
+            WHERE i.diary_id = d.diary_id
+              AND i.public_image_key IS NOT NULL
+              AND i.public_image_key != ''
+        )
+    </sql>
+
     <!-- 커서는 거래내역 목록과 같은 규약이다: 정렬 키가 같을 때 id로 한 번 더 가른다. -->
     <sql id="cursorCondition">
         <if test="cursorCreatedAt != null and cursorDiaryId != null">
@@ -35,6 +48,7 @@
         FROM care_diary d
         JOIN pet p ON p.pet_id = d.pet_id
         WHERE <include refid="publicOnly"/>
+          AND <include refid="hasPublicImage"/>
         <include refid="cursorCondition"/>
         ORDER BY d.created_at DESC, d.diary_id DESC
         LIMIT #{limit}
@@ -51,6 +65,7 @@
         JOIN pet p ON p.pet_id = d.pet_id
         WHERE <include refid="publicOnly"/>
           AND d.pet_id = #{petId}
+          AND <include refid="hasPublicImage"/>
         <include refid="cursorCondition"/>
         ORDER BY d.created_at DESC, d.diary_id DESC
         LIMIT #{limit}
@@ -68,6 +83,7 @@
         JOIN pet p ON p.pet_id = d.pet_id
         WHERE <include refid="publicOnly"/>
           AND d.diary_id = #{diaryId}
+          AND <include refid="hasPublicImage"/>
     </select>
 
     <!-- 게시물 수도 공개분만 센다. 비공개 개수가 드러나면 그 자체가 정보다. -->
@@ -82,7 +98,8 @@
                (SELECT COUNT(*)
                   FROM care_diary d
                  WHERE d.pet_id = p.pet_id
-                   AND <include refid="publicOnly"/>) AS postCount
+                   AND <include refid="publicOnly"/>
+                   AND <include refid="hasPublicImage"/>) AS postCount
         FROM pet p
         WHERE p.pet_id = #{petId}
           AND p.is_active = 1

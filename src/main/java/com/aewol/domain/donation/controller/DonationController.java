@@ -6,7 +6,6 @@ import com.aewol.domain.donation.service.DonationService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import java.util.List;
-import java.util.Map;
 import javax.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
@@ -34,6 +33,14 @@ public class DonationController {
             @AuthenticationPrincipal String memberId,
             @Valid @RequestBody DonationRequest request) {
         return ResponseEntity.ok(ApiResponse.success(donationService.donate(memberId, request)));
+    }
+
+    @Operation(summary = "애월지갑에서 저금통으로 넣기")
+    @PostMapping("/pot/deposit")
+    public ResponseEntity<ApiResponse<DonationBalanceResponse>> deposit(
+            @AuthenticationPrincipal String memberId,
+            @Valid @RequestBody DonationDepositRequest request) {
+        return ResponseEntity.ok(ApiResponse.success(donationService.deposit(memberId, request)));
     }
 
     @Operation(summary = "저금통 잔액을 내 지갑으로 출금")

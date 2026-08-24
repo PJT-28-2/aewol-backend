@@ -113,6 +113,25 @@ class NotificationServiceImplTest {
         verify(mapper).insert(captor.capture());
         assertEquals("member-1", captor.getValue().get("memberId"));
         assertEquals("/group-purchase/7", captor.getValue().get("targetPath"));
+        assertNull(captor.getValue().get("eventKey"));
+    }
+
+    @Test
+    void storesOptionalEventKeyForIdempotentInsert() {
+        doAnswer(invocation -> {
+            Map<String, Object> values = invocation.getArgument(0);
+            values.put("notificationId", 7L);
+            return 1;
+        }).when(mapper).insert(any());
+
+        String id = service.createNotification(
+                "member-1", "RECURRING", "정기결제가 3일 뒤예요", "예정되어 있어요.",
+                "/payment/recurring", "recurring:1:2026-08-28:RECURRING");
+
+        assertEquals("7", id);
+        ArgumentCaptor<Map<String, Object>> captor = ArgumentCaptor.forClass(Map.class);
+        verify(mapper).insert(captor.capture());
+        assertEquals("recurring:1:2026-08-28:RECURRING", captor.getValue().get("eventKey"));
     }
 
     @Test

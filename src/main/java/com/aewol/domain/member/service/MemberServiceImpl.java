@@ -345,7 +345,9 @@ public class MemberServiceImpl implements MemberService {
             throw new BusinessException(WEAK_PIN_MESSAGE);
         }
 
-        memberMapper.updateSimplePassword(memberId, passwordEncoder.encode(password));
+        if (memberMapper.updateSimplePassword(memberId, passwordEncoder.encode(password)) != 1) {
+            throw BusinessException.conflict("비밀번호를 변경할 수 없는 회원 상태입니다.");
+        }
     }
 
     private static final int MIN_SEQUENTIAL_RUN = 3;

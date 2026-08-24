@@ -6,6 +6,7 @@ import static org.mockito.Mockito.*;
 
 import com.aewol.common.exception.BusinessException;
 import com.aewol.domain.member.mapper.MemberMapper;
+import com.aewol.domain.notification.service.InboxNotifier;
 import com.aewol.domain.pet.mapper.PetMapper;
 import com.aewol.domain.share.dto.ShareInviteRequest;
 import com.aewol.domain.share.dto.ShareInviteResponse;
@@ -30,6 +31,7 @@ class ShareServiceImplTest {
     @Mock ShareMapper shareMapper;
     @Mock PetMapper petMapper;
     @Mock MemberMapper memberMapper;
+    @Mock InboxNotifier inboxNotifier;
 
     @Test
     @DisplayName("접근 가능한 반려동물 목록을 화면 형식으로 반환한다")
@@ -56,7 +58,7 @@ class ShareServiceImplTest {
         when(petMapper.findById("pet-1")).thenReturn(map("pet_id", "pet-1", "member_id", "owner-1"));
         when(shareMapper.findMainWalletByMemberId("owner-1"))
                 .thenReturn(map("wallet_id", "wallet-1", "balance", BigDecimal.ZERO));
-        when(memberMapper.findByEmail("family@example.com")).thenReturn(null);
+        when(memberMapper.findActiveByEmail("family@example.com")).thenReturn(null);
         when(shareMapper.findActiveInvite("pet-1", "family@example.com", null)).thenReturn(null);
 
         ShareInviteResponse result = service.invite("owner-1", request);
@@ -87,6 +89,13 @@ class ShareServiceImplTest {
         service.acceptInvite("member-2", "code-1");
 
         verify(shareMapper).acceptInvite("access-1", "member-2");
+        verify(inboxNotifier).notifyAfterCommit(
+                eq("owner-1"),
+                eq(InboxNotifier.Channel.FAMILY),
+                eq("FAMILY_SHARE"),
+                anyString(),
+                anyString(),
+                eq("/share"));
     }
 
     @Test
@@ -164,7 +173,7 @@ class ShareServiceImplTest {
         ReflectionTestUtils.setField(request, "recipient", "family@example.com");
         ReflectionTestUtils.setField(request, "role", "VIEWER");
         givenOwnedPetWithWallet();
-        when(memberMapper.findByEmail("family@example.com")).thenReturn(null);
+        when(memberMapper.findActiveByEmail("family@example.com")).thenReturn(null);
         when(shareMapper.findActiveInvite("pet-1", "family@example.com", null)).thenReturn(null);
         LocalDateTime before = LocalDateTime.now();
 
@@ -173,8 +182,28 @@ class ShareServiceImplTest {
         assertTrue(capturedExpiry().isAfter(before.plusDays(6)));
     }
 
+    @Test
+    @DisplayName("탈퇴 회원 이메일로는 초대 대상 계정을 연결하지 않는다")
+    void should_notBindInvite_when_emailBelongsToInactiveMember() {
+        ShareServiceImpl service = service();
+        ShareInviteRequest request = new ShareInviteRequest();
+        ReflectionTestUtils.setField(request, "petId", "pet-1");
+        ReflectionTestUtils.setField(request, "recipient", "gone@example.com");
+        ReflectionTestUtils.setField(request, "role", "VIEWER");
+        givenOwnedPetWithWallet();
+        when(memberMapper.findActiveByEmail("gone@example.com")).thenReturn(null);
+        when(shareMapper.findActiveInvite("pet-1", "gone@example.com", null)).thenReturn(null);
+
+        service.invite("owner-1", request);
+
+        ArgumentCaptor<Map<String, Object>> captor = ArgumentCaptor.forClass(Map.class);
+        verify(shareMapper).insert(captor.capture());
+        assertNull(captor.getValue().get("memberId"));
+        verify(memberMapper, never()).findByEmail(any());
+    }
+
     private ShareServiceImpl service() {
-        return new ShareServiceImpl(shareMapper, petMapper, memberMapper);
+        return new ShareServiceImpl(shareMapper, petMapper, memberMapper, inboxNotifier);
     }
 
     private static Map<String, Object> map(Object... values) {

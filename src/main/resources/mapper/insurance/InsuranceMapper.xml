@@ -28,7 +28,7 @@
             total_amount = #{totalAmount}, claim_status = #{claimStatus},
             claim_document_url = #{claimDocumentUrl}, extracted_data = #{extractedData},
             updated_at = NOW()
-        WHERE claim_id = #{claimId}
+        WHERE claim_id = #{claimId} AND claim_status = 'DRAFT'
     </update>
 
     <select id="findClaimById" resultType="map">

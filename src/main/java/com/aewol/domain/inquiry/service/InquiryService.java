@@ -13,5 +13,5 @@ public interface InquiryService {
     InquiryDetailResponse getInquiry(String memberId, String inquiryId);
     InquiryListResponse getAdminInquiries(String status, int page, int size);
     InquiryDetailResponse getAdminInquiry(String inquiryId);
-    InquiryDetailResponse answerInquiry(String inquiryId, String answer);
+    InquiryDetailResponse answerInquiry(String adminId, String inquiryId, String answer);
 }

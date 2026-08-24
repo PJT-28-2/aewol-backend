@@ -1,6 +1,7 @@
 package com.aewol.common.cache;
 
 import com.aewol.domain.member.mapper.MemberMapper;
+import java.util.Date;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
 import lombok.extern.slf4j.Slf4j;
@@ -83,6 +84,29 @@ public class MemberAuthStateCache {
         Map<String, Object> authState = memberMapper.findAuthStateById(memberId);
         writeQuietly(memberId, authState);
         return authState;
+    }
+
+    /**
+     * HTTP 필터와 WebSocket CONNECT가 같은 기준으로 활성 회원을 가린다.
+     * 탈퇴·비활성 계정은 토큰이 아직 살아 있어도 인증하지 않는다.
+     */
+    public static boolean canAuthenticate(Map<String, Object> authState, Date issuedAt) {
+        if (authState == null || !isActive(authState.get("is_active")) || issuedAt == null) {
+            return false;
+        }
+        Object withdrawnAtEpoch = authState.get("withdrawn_at_epoch");
+        if (withdrawnAtEpoch == null) {
+            return true;
+        }
+        // 마지막 탈퇴 시각과 같거나 이전에 발급된 토큰은 복구 후에도 다시 사용할 수 없다.
+        return issuedAt.getTime() / 1000L > ((Number) withdrawnAtEpoch).longValue();
+    }
+
+    private static boolean isActive(Object value) {
+        if (value instanceof Boolean) {
+            return (Boolean) value;
+        }
+        return value instanceof Number && ((Number) value).intValue() == 1;
     }
 
     /**

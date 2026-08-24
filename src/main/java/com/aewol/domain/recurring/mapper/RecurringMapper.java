@@ -8,6 +8,8 @@ import java.util.Map;
 @Mapper
 public interface RecurringMapper {
     Map<String, Object> findByIdForUpdate(@Param("recurringId") String recurringId);
+    Map<String, Object> findByWalletIdAndIdempotencyKey(@Param("walletId") String walletId,
+                                                        @Param("idempotencyKey") String idempotencyKey);
     List<Map<String, Object>> findByWalletId(@Param("walletId") String walletId);
     void insert(Map<String, Object> recurring);
     int update(Map<String, Object> recurring);
@@ -24,4 +26,7 @@ public interface RecurringMapper {
     int deactivateByPetId(@Param("petId") String petId);
 
     List<Map<String, Object>> findDuePayments(@Param("date") String date);
+
+    /** 결제일 3일 전 미리 알림용. next_payment_date가 그날인 활성 정기결제만 본다. */
+    List<Map<String, Object>> findUpcomingPayments(@Param("date") String date);
 }

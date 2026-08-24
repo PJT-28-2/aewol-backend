@@ -672,6 +672,15 @@ class GroupPurchaseMapperTest {
     }
 
     @Test
+    @DisplayName("작성자가 아니면 cancelGroupPurchase는 취소하지 않는다")
+    void should_notCancelGroupPurchase_when_memberIdDoesNotMatchAuthor() {
+        long gpId = insertGroupPurchase(99L, "OPEN", 3, 10, LocalDateTime.now().plusDays(5));
+
+        assertEquals(0, cancelGroupPurchase(gpId, 88L));
+        assertEquals("OPEN", findStatus(gpId));
+    }
+
+    @Test
     @DisplayName("findActiveParticipants는 PAID/PENDING을 반환하고 CANCELLED는 제외한다")
     void should_returnActiveParticipants_excludingCancelled() {
         long gpId = insertGroupPurchase(99L, "OPEN", 3, 10, LocalDateTime.now().plusDays(5));
@@ -708,8 +717,13 @@ class GroupPurchaseMapperTest {
     }
 
     private int cancelGroupPurchase(long gpId) {
+        return cancelGroupPurchase(gpId, 99L);
+    }
+
+    private int cancelGroupPurchase(long gpId, long memberId) {
         try (SqlSession session = sqlSessionFactory.openSession(true)) {
-            return session.getMapper(GroupPurchaseMapper.class).cancelGroupPurchase(String.valueOf(gpId));
+            return session.getMapper(GroupPurchaseMapper.class)
+                    .cancelGroupPurchase(String.valueOf(gpId), String.valueOf(memberId));
         }
     }
 

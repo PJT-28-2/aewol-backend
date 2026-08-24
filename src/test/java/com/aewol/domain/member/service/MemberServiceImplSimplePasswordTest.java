@@ -51,6 +51,7 @@ class MemberServiceImplSimplePasswordTest {
     void should_hashAndSavePin_when_pinIsStrongAndMemberHasNoExistingPin() {
         when(memberMapper.findById("member-1")).thenReturn(memberWithoutPin());
         when(passwordEncoder.encode("482913")).thenReturn("encoded-pin");
+        when(memberMapper.updateSimplePassword("member-1", "encoded-pin")).thenReturn(1);
 
         service.setSimplePassword("member-1", request("482913", null));
 
@@ -100,6 +101,7 @@ class MemberServiceImplSimplePasswordTest {
         // 112233(순차 상승)과 달리 115533은 짝은 반복되지만 오름/내림차순이 아니라서 통과해야 함.
         when(memberMapper.findById("member-1")).thenReturn(memberWithoutPin());
         when(passwordEncoder.encode("115533")).thenReturn("encoded-pin");
+        when(memberMapper.updateSimplePassword("member-1", "encoded-pin")).thenReturn(1);
 
         service.setSimplePassword("member-1", request("115533", null));
 
@@ -150,10 +152,24 @@ class MemberServiceImplSimplePasswordTest {
         when(memberMapper.findById("member-1")).thenReturn(memberWithPin("encoded-old-pin"));
         when(passwordEncoder.matches("112358", "encoded-old-pin")).thenReturn(true);
         when(passwordEncoder.encode("482913")).thenReturn("encoded-new-pin");
+        when(memberMapper.updateSimplePassword("member-1", "encoded-new-pin")).thenReturn(1);
 
         service.setSimplePassword("member-1", request("482913", "112358"));
 
         verify(memberMapper).updateSimplePassword("member-1", "encoded-new-pin");
+    }
+
+    @Test
+    void should_throwConflict_when_updateAffectsNoActiveMember() {
+        when(memberMapper.findById("member-1")).thenReturn(memberWithoutPin());
+        when(passwordEncoder.encode("482913")).thenReturn("encoded-pin");
+        when(memberMapper.updateSimplePassword("member-1", "encoded-pin")).thenReturn(0);
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.setSimplePassword("member-1", request("482913", null)));
+
+        assertEquals(409, exception.getStatus().value());
+        assertEquals("비밀번호를 변경할 수 없는 회원 상태입니다.", exception.getMessage());
     }
 
     private Map<String, Object> memberWithoutPin() {
