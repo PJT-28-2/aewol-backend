@@ -226,6 +226,7 @@ class InquiryServiceImplTest {
                 () -> service.getInquiries(MEMBER_ID, null, Integer.MAX_VALUE, 100));
 
         assertEquals(org.springframework.http.HttpStatus.BAD_REQUEST, ex.getStatus());
+        assertEquals("페이지 값이 너무 큽니다.", ex.getMessage());
         verify(inquiryMapper, never()).findByMemberId(any(), any(), anyInt(), anyInt());
     }
 
@@ -287,6 +288,17 @@ class InquiryServiceImplTest {
         assertEquals("AEW-20260824-0001", result.getInquiries().get(0).getInquiryNumber());
         assertEquals("보험", result.getInquiries().get(0).getCategory());
         assertTrue(result.isHasNext());
+    }
+
+    @Test
+    @DisplayName("관리자 문의 목록 size가 너무 크면 최대 100개로 제한한다")
+    void should_capAdminInquiryPageSize() {
+        when(inquiryMapper.findAll(null, 101, 0))
+                .thenReturn(List.of());
+
+        service.getAdminInquiries(null, 0, 1000);
+
+        verify(inquiryMapper).findAll(null, 101, 0);
     }
 
     @Test
