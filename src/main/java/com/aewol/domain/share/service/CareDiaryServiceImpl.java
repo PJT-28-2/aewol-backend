@@ -37,7 +37,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
-import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
@@ -193,7 +192,6 @@ public class CareDiaryServiceImpl implements CareDiaryService {
      * <p>신고로 내려간 글은 작성자도 다시 공개하지 못한다. 되돌리는 것은 관리자 몫이다.
      */
     @Override
-    @Transactional
     public CareDiaryResponse changeVisibility(String memberId, String diaryId,
                                               CareDiaryVisibilityRequest request) {
         memberId = requireMemberId(memberId);
@@ -230,39 +228,35 @@ public class CareDiaryServiceImpl implements CareDiaryService {
         }
 
         if (PUBLIC.equals(visibility)) {
-            publishPublicImagesAfterCommit(diaryId, images,
-                    "사진을 공개하지 못했어요. 잠시 후 다시 시도해 주세요.", true);
+            publishPublicImagesAndChangeVisibility(diaryId, images);
             return getDetail(memberId, diaryId);
         }
-        if (careDiaryMapper.updateVisibility(diaryId, visibility) != 1) {
-            throw BusinessException.notFound("공개 여부를 바꿀 일기를 찾을 수 없습니다.");
-        }
-        unpublishPublicImagesAfterCommit(images);
+
+        runInTransaction(() -> {
+            if (careDiaryMapper.updateVisibility(diaryId, visibility) != 1) {
+                throw BusinessException.notFound("공개 여부를 바꿀 일기를 찾을 수 없습니다.");
+            }
+            unpublishPublicImagesAfterCommit(images);
+        });
         return getDetail(memberId, diaryId);
     }
 
-    /**
-     * 공개 전환에 맞춰 사진 사본을 맞춘다.
-     *
-     * <p>비공개로 되돌리면 CDN 사본을 지운다. 원본은 손대지 않는다. 사본 삭제가 실패해도
-     * 예외를 던지지 않는다 — 노출을 멈추는 쪽이 먼저다.
-     *
-     * <p>공개로 올릴 때는 {@link #publishPublicImagesOrThrow}를 쓴다. 사본 없이 PUBLIC이 되면
-     * 피드에 빈 칸이 생긴다.
-     */
-    private void syncPublicImages(List<Map<String, Object>> images, boolean publishing) {
-        if (publishing) {
-            publishPublicImagesAfterCommit(null, images,
-                    "사진을 공개하지 못했어요. 잠시 후 다시 시도해 주세요.", false);
-            return;
-        }
-        unpublishPublicImagesAfterCommit(images);
-    }
-
     /** 사본을 모두 만든 뒤에만 호출부가 PUBLIC으로 바꾼다. 하나라도 실패하면 공개하지 않는다. */
-    private void publishPublicImagesOrThrow(List<Map<String, Object>> images) {
-        publishPublicImagesAfterCommit(null, images,
-                "사진을 공개하지 못했어요. 잠시 후 다시 시도해 주세요.", false);
+    private void publishPublicImagesAndChangeVisibility(
+            String diaryId, List<Map<String, Object>> images) {
+        Map<String, String> createdByImageId = publishMissingPublicCopies(
+                images, "사진을 공개하지 못했어요. 잠시 후 다시 시도해 주세요.");
+        try {
+            runInTransaction(() -> {
+                createdByImageId.forEach(careDiaryMapper::updatePublicImageKey);
+                if (careDiaryMapper.updateVisibility(diaryId, PUBLIC) != 1) {
+                    throw BusinessException.notFound("공개 여부를 바꿀 일기를 찾을 수 없습니다.");
+                }
+            });
+        } catch (RuntimeException e) {
+            createdByImageId.values().forEach(this::unpublishQuietly);
+            throw e;
+        }
     }
 
     /**
@@ -314,7 +308,7 @@ public class CareDiaryServiceImpl implements CareDiaryService {
             if (hidden) {
                 // 피드에서 빼는 것만으로는 부족하다. CDN 주소를 이미 아는 사람에게는 사진이
                 // 계속 보인다. 오탐이면 원본이 남아 있으니 사본을 다시 만들면 된다.
-                syncPublicImages(careDiaryMapper.findImagesForPublish(diaryId), false);
+                unpublishPublicImagesAfterCommit(careDiaryMapper.findImagesForPublish(diaryId));
             }
         }
         String inquiryNumber = createReportInquiry(memberId, diaryId, request.getReason(), reportId);
@@ -354,10 +348,10 @@ public class CareDiaryServiceImpl implements CareDiaryService {
     }
 
     @Override
-    @Transactional
     public AdminDiaryReportDetailResponse resolveAdminReport(
             String adminId, String reportId, AdminDiaryReportResolutionRequest request) {
         adminId = requireMemberId(adminId);
+        String resolvedBy = adminId;
         Map<String, Object> report = findAdminReport(reportId);
         if (!"PENDING".equals(text(report, "status"))) {
             throw BusinessException.conflict("이미 처리된 신고입니다.");
@@ -365,23 +359,20 @@ public class CareDiaryServiceImpl implements CareDiaryService {
 
         String diaryId = text(report, "diaryId");
         String resolution = request.getResolution();
+        String adminNote = normalizeAdminNote(request.getAdminNote());
         if ("RESTORE".equals(resolution)) {
             if (value(report, "deletedAt") != null) {
                 throw BusinessException.conflict("이미 삭제된 게시물은 복원할 수 없습니다.");
             }
-            if (careDiaryMapper.restoreByReport(diaryId) != 1) {
-                throw BusinessException.conflict("게시물을 복원할 수 없습니다.");
-            }
-            restorePublicImages(diaryId, careDiaryMapper.findImagesForPublish(diaryId));
+            restoreReportedDiary(diaryId, resolution, adminNote, resolvedBy);
+            return toAdminReportDetail(findAdminReport(reportId));
         }
 
-        String adminNote = normalizeAdminNote(request.getAdminNote());
-        if (careDiaryMapper.resolvePendingReportsByDiary(
-                diaryId, resolution, adminNote, adminId) == 0) {
-            throw BusinessException.conflict("처리할 신고가 없습니다.");
-        }
-        String inquiryAnswer = adminNote != null ? adminNote : "신고가 처리되었습니다.";
-        inquiryMapper.answerWaitingLinkedToDiary(diaryId, inquiryAnswer);
+        runInTransaction(() -> {
+            resolvePendingReports(diaryId, resolution, adminNote, resolvedBy);
+            String inquiryAnswer = adminNote != null ? adminNote : "신고가 처리되었습니다.";
+            inquiryMapper.answerWaitingLinkedToDiary(diaryId, inquiryAnswer);
+        });
         return toAdminReportDetail(findAdminReport(reportId));
     }
 
@@ -408,38 +399,30 @@ public class CareDiaryServiceImpl implements CareDiaryService {
         return adminNote.trim();
     }
 
-    private void restorePublicImages(String diaryId, List<Map<String, Object>> images) {
+    private void restoreReportedDiary(
+            String diaryId, String resolution, String adminNote, String adminId) {
+        List<Map<String, Object>> images = careDiaryMapper.findImagesForPublish(diaryId);
         if (images.isEmpty()) {
             throw BusinessException.conflict("복원할 게시물 사진을 찾을 수 없습니다.");
         }
-        publishPublicImagesAfterCommit(diaryId, images,
-                "게시물 사진을 복원하지 못했습니다. 잠시 후 다시 시도해 주세요.", false);
-    }
-
-    /**
-     * 없는 공개 사본만 만들고, 만든 키를 추적한다. 중간 실패나 이후 DB 롤백 때
-     * 이미 만든 사본을 지우지 않으면 공개 URL을 가진 고아 파일이 남는다.
-     */
-    private void publishPublicImagesAfterCommit(
-            String diaryId, List<Map<String, Object>> images, String conflictMessage,
-            boolean updateVisibility) {
-        Runnable task = () -> publishMissingPublicCopiesOrThrow(
-                diaryId, images, conflictMessage, updateVisibility);
-        if (TransactionSynchronizationManager.isSynchronizationActive()) {
-            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
-                @Override
-                public void afterCommit() {
-                    task.run();
+        Map<String, String> createdByImageId = publishMissingPublicCopies(
+                images, "게시물 사진을 복원하지 못했습니다. 잠시 후 다시 시도해 주세요.");
+        try {
+            runInTransaction(() -> {
+                createdByImageId.forEach(careDiaryMapper::updatePublicImageKey);
+                if (careDiaryMapper.restoreByReport(diaryId) != 1) {
+                    throw BusinessException.conflict("게시물을 복원할 수 없습니다.");
                 }
+                resolvePendingReports(diaryId, resolution, adminNote, adminId);
             });
-            return;
+        } catch (RuntimeException e) {
+            createdByImageId.values().forEach(this::unpublishQuietly);
+            throw e;
         }
-        task.run();
     }
 
-    private void publishMissingPublicCopiesOrThrow(
-            String diaryId, List<Map<String, Object>> images, String conflictMessage,
-            boolean updateVisibility) {
+    private Map<String, String> publishMissingPublicCopies(
+            List<Map<String, Object>> images, String conflictMessage) {
         Map<String, String> createdByImageId = new LinkedHashMap<>();
         try {
             for (Map<String, Object> image : images) {
@@ -450,20 +433,11 @@ public class CareDiaryServiceImpl implements CareDiaryService {
                 if (created == null) {
                     throw BusinessException.conflict(conflictMessage);
                 }
-                String imageId = text(image, "imageId");
-                createdByImageId.put(imageId, created);
+                createdByImageId.put(text(image, "imageId"), created);
             }
-            runInNewTransaction(() -> {
-                createdByImageId.forEach(careDiaryMapper::updatePublicImageKey);
-                if (updateVisibility && careDiaryMapper.updateVisibility(diaryId, PUBLIC) != 1) {
-                    throw BusinessException.conflict(conflictMessage);
-                }
-            });
+            return createdByImageId;
         } catch (RuntimeException e) {
             createdByImageId.values().forEach(this::unpublishQuietly);
-            if (!updateVisibility && diaryId != null) {
-                runInNewTransaction(() -> careDiaryMapper.hideByReport(diaryId));
-            }
             throw e;
         }
     }
@@ -481,10 +455,16 @@ public class CareDiaryServiceImpl implements CareDiaryService {
         arrangeCommittedPublicCleanup(publicKeys);
     }
 
-    private void runInNewTransaction(Runnable task) {
-        TransactionTemplate template = new TransactionTemplate(transactionManager);
-        template.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
-        template.executeWithoutResult(status -> task.run());
+    private void resolvePendingReports(
+            String diaryId, String resolution, String adminNote, String adminId) {
+        if (careDiaryMapper.resolvePendingReportsByDiary(
+                diaryId, resolution, adminNote, adminId) == 0) {
+            throw BusinessException.conflict("처리할 신고가 없습니다.");
+        }
+    }
+
+    private void runInTransaction(Runnable task) {
+        new TransactionTemplate(transactionManager).executeWithoutResult(status -> task.run());
     }
 
     private AdminDiaryReportListItemResponse toAdminReportListItem(Map<String, Object> row) {
@@ -674,21 +654,6 @@ public class CareDiaryServiceImpl implements CareDiaryService {
             @Override
             public void afterCompletion(int status) {
                 if (status != STATUS_COMMITTED) deleteQuietly(key);
-            }
-        });
-    }
-
-    /** DB가 롤백되면 방금 만든 공개 사본은 참조가 없으므로 지운다. */
-    private void arrangeRollbackPublicCleanup(List<String> publicKeys) {
-        if (publicKeys.isEmpty() || !TransactionSynchronizationManager.isSynchronizationActive()) {
-            return;
-        }
-        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
-            @Override
-            public void afterCompletion(int status) {
-                if (status != STATUS_COMMITTED) {
-                    publicKeys.forEach(CareDiaryServiceImpl.this::unpublishQuietly);
-                }
             }
         });
     }
