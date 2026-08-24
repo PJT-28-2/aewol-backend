@@ -45,6 +45,11 @@ insight:
 swagger:
   enabled: ${SWAGGER_ENABLED:true}
 
+# 시드 캠페인은 [시연] 접두어와 허수 모금액이 있다. 목록에는 항상 보여 주고,
+# 실제 기부·자동기부는 이 플래그가 true일 때만 허용한다(운영 기본값 false).
+donation:
+  allow-demo-donations: ${DONATION_ALLOW_DEMO_DONATIONS:true}
+
 cookie:
   secure: ${COOKIE_SECURE:false}
 

@@ -58,6 +58,9 @@ insight:
 swagger:
   enabled: false
 
+donation:
+  allow-demo-donations: false
+
 cookie:
   secure: true
 
