@@ -175,7 +175,7 @@ public class InquiryServiceImpl implements InquiryService {
     @Override
     public InquiryListResponse getInquiries(String memberId, String status, int page, int size) {
         validateStatus(status);
-        PageRequest pageRequest = normalizePageRequest(page, size);
+        NormalizedPage pageRequest = normalizePageRequest(page, size);
 
         List<Map<String, Object>> rows =
                 inquiryMapper.findByMemberId(memberId, status, pageRequest.limitWithLookahead(), pageRequest.offset());
@@ -202,7 +202,7 @@ public class InquiryServiceImpl implements InquiryService {
     @Override
     public InquiryListResponse getAdminInquiries(String status, int page, int size) {
         validateStatus(status);
-        PageRequest pageRequest = normalizePageRequest(page, size);
+        NormalizedPage pageRequest = normalizePageRequest(page, size);
 
         List<Map<String, Object>> rows = inquiryMapper.findAll(
                 status, pageRequest.limitWithLookahead(), pageRequest.offset());
@@ -267,17 +267,17 @@ public class InquiryServiceImpl implements InquiryService {
                 .collect(Collectors.toList());
     }
 
-    private PageRequest normalizePageRequest(int page, int size) {
+    private NormalizedPage normalizePageRequest(int page, int size) {
         int safePage = Math.max(page, 0);
         int safeSize = size <= 0 ? DEFAULT_PAGE_SIZE : Math.min(size, MAX_PAGE_SIZE);
         long offset = (long) safePage * safeSize;
         if (offset > Integer.MAX_VALUE) {
-            throw new BusinessException("page is too large.");
+            throw new BusinessException("페이지 값이 너무 큽니다.");
         }
-        return new PageRequest(safeSize, (int) offset);
+        return new NormalizedPage(safeSize, (int) offset);
     }
 
-    private record PageRequest(int size, int offset) {
+    private record NormalizedPage(int size, int offset) {
         private int limitWithLookahead() {
             return size + 1;
         }
