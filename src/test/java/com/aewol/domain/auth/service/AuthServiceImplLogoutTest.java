@@ -1,6 +1,7 @@
 package com.aewol.domain.auth.service;
 
 import com.aewol.common.cache.MemberAuthStateCache;
+import com.aewol.common.exception.BusinessException;
 import com.aewol.common.util.JwtUtil;
 import com.aewol.common.util.RedisRateLimiter;
 import com.aewol.domain.member.mapper.MemberMapper;
@@ -18,6 +19,9 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.transaction.support.TransactionOperations;
 
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.doThrow;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 @ExtendWith(MockitoExtension.class)
 class AuthServiceImplLogoutTest {
@@ -50,6 +54,19 @@ class AuthServiceImplLogoutTest {
     void logoutDeletesRefreshTokenForAuthenticatedMember() {
         service.logout("member-1");
 
-        verify(redisTemplate).delete("refresh:member-1");
+        verify(authCredentialStore).deleteRefresh("member-1");
+    }
+
+    @Test
+    void logoutReturnsServiceUnavailableWhenRefreshDeleteFails() {
+        doThrow(new BusinessException(org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE,
+                "인증 서비스를 일시적으로 사용할 수 없습니다."))
+                .when(authCredentialStore).deleteRefresh("member-1");
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.logout("member-1"));
+
+        assertEquals(503, exception.getStatus().value());
+        assertEquals(null, exception.getErrorCode());
     }
 }

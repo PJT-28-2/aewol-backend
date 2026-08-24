@@ -1,6 +1,7 @@
 package com.aewol.common.util;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.eq;
@@ -15,6 +16,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.data.redis.core.RedisTemplate;
+import org.springframework.data.redis.RedisConnectionFailureException;
 import org.springframework.data.redis.core.script.RedisScript;
 import org.springframework.http.HttpStatus;
 
@@ -64,5 +66,31 @@ class RedisRateLimiterTest {
         BusinessException ex = assertThrows(BusinessException.class,
                 () -> limiter.incrementWithExpiry("another-key", 60));
         assertEquals(HttpStatus.SERVICE_UNAVAILABLE, ex.getStatus());
+    }
+
+    @Test
+    void should_convertRedisRuntimeFailureToServiceUnavailable() {
+        when(redisTemplate.execute(
+                (RedisScript<Long>) org.mockito.ArgumentMatchers.any(),
+                anyList(), eq("60")))
+                .thenThrow(new RedisConnectionFailureException("connection failed"));
+
+        BusinessException ex = assertThrows(BusinessException.class,
+                () -> new RedisRateLimiter(redisTemplate)
+                        .incrementWithExpiry("another-key", 60));
+
+        assertEquals(HttpStatus.SERVICE_UNAVAILABLE, ex.getStatus());
+        assertEquals(null, ex.getErrorCode());
+    }
+
+    @Test
+    void rollbackFailureDoesNotEscape() {
+        when(redisTemplate.execute(
+                (RedisScript<Long>) org.mockito.ArgumentMatchers.any(), anyList()))
+                .thenThrow(new RedisConnectionFailureException("connection failed"));
+
+        RedisRateLimiter limiter = new RedisRateLimiter(redisTemplate);
+
+        assertDoesNotThrow(() -> limiter.rollback("some-key"));
     }
 }

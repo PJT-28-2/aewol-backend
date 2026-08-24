@@ -37,6 +37,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.doThrow;
 
 @ExtendWith(MockitoExtension.class)
 class AuthServiceImplInactiveMemberTest {
@@ -296,6 +297,31 @@ class AuthServiceImplInactiveMemberTest {
     }
 
     @Test
+    void localLoginReturnsServiceUnavailableWhenRefreshStoreFails() {
+        LoginRequest request = new LoginRequest();
+        ReflectionTestUtils.setField(request, "email", "member@example.com");
+        ReflectionTestUtils.setField(request, "password", "password");
+        Map<String, Object> active = member(1);
+        active.put("member_id", 7L);
+        active.put("password", "encoded");
+        active.put("email_verified", "Y");
+        active.put("role", "USER");
+        when(memberMapper.findActiveByEmail("member@example.com")).thenReturn(active);
+        when(passwordEncoder.matches("password", "encoded")).thenReturn(true);
+        when(jwtUtil.generateAccessToken("7", "USER")).thenReturn("access-token");
+        when(jwtUtil.generateRefreshToken("7")).thenReturn("refresh-token");
+        doThrow(new BusinessException(org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE,
+                "인증 서비스를 일시적으로 사용할 수 없습니다."))
+                .when(authCredentialStore).storeRefresh("7", "refresh-token");
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.login(request));
+
+        assertEquals(503, exception.getStatus().value());
+        assertEquals(null, exception.getErrorCode());
+    }
+
+    @Test
     void localReloginIssuesNewTokenPair() {
         LoginRequest request = new LoginRequest();
         ReflectionTestUtils.setField(request, "email", "member@example.com");
@@ -346,6 +372,29 @@ class AuthServiceImplInactiveMemberTest {
         service.refresh("r1");
 
         verify(authCredentialStore).rotateRefreshAtomically("member-1", "r1", "r2");
+    }
+
+    @Test
+    void refreshRedisFailureReturnsServiceUnavailableWhileMismatchRemainsUnauthorized() {
+        when(jwtUtil.isTokenValid("r1")).thenReturn(true);
+        Claims claims = refreshClaims(new Date(1_001_000L));
+        when(jwtUtil.parseClaims("r1")).thenReturn(claims);
+        when(memberMapper.findAuthStateById("member-1")).thenReturn(member(1, 1_000L));
+        when(jwtUtil.generateAccessToken("member-1", "USER")).thenReturn("a2");
+        when(jwtUtil.generateRefreshToken("member-1")).thenReturn("r2");
+        when(authCredentialStore.rotateRefreshAtomically("member-1", "r1", "r2"))
+                .thenThrow(new BusinessException(org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE,
+                        "인증 서비스를 일시적으로 사용할 수 없습니다."))
+                .thenReturn(false);
+
+        BusinessException redisFailure = assertThrows(BusinessException.class,
+                () -> service.refresh("r1"));
+        BusinessException mismatch = assertThrows(BusinessException.class,
+                () -> service.refresh("r1"));
+
+        assertEquals(503, redisFailure.getStatus().value());
+        assertEquals(null, redisFailure.getErrorCode());
+        assertEquals(401, mismatch.getStatus().value());
     }
 
     @Test
