@@ -16,6 +16,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.HttpStatus;
 import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.test.util.ReflectionTestUtils;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -33,6 +34,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -83,9 +85,7 @@ class ClaimServiceImplTest {
         when(insuranceMapper.findClaimById("1")).thenReturn(
                 claimRow(1L, 100L, 10L, null, null, null, "{\"hospital_name\":\"애월동물병원\"}", "DRAFT"));
 
-        MockMultipartFile receipt = new MockMultipartFile("receipt", "receipt.jpg", "image/jpeg", "img".getBytes());
-
-        ClaimResponse result = service.createClaim("100", "10", receipt);
+        ClaimResponse result = service.createClaim("100", "10", jpegReceipt());
 
         assertEquals("1", result.getClaimId());
         assertEquals("DRAFT", result.getClaimStatus());
@@ -105,9 +105,7 @@ class ClaimServiceImplTest {
         when(paddleOcrClient.extractReceiptData(any(), anyString())).thenReturn("{}");
         doThrow(new RuntimeException("db")).when(insuranceMapper).insertClaim(any());
 
-        MockMultipartFile receipt = new MockMultipartFile("receipt", "receipt.jpg", "image/jpeg", "img".getBytes());
-
-        assertThrows(RuntimeException.class, () -> service.createClaim("100", "10", receipt));
+        assertThrows(RuntimeException.class, () -> service.createClaim("100", "10", jpegReceipt()));
         verify(fileStorage).delete("receipts/x.jpg");
     }
 
@@ -130,9 +128,7 @@ class ClaimServiceImplTest {
         // 저장은 끝났는데 되돌려줄 값을 읽는 데서 넘어진 상황
         when(insuranceMapper.findClaimById("1")).thenThrow(new RuntimeException("조회 실패"));
 
-        MockMultipartFile receipt = new MockMultipartFile("receipt", "receipt.jpg", "image/jpeg", "img".getBytes());
-
-        assertThrows(RuntimeException.class, () -> service.createClaim("100", "10", receipt));
+        assertThrows(RuntimeException.class, () -> service.createClaim("100", "10", jpegReceipt()));
 
         verify(insuranceMapper).insertClaim(any());
         verify(fileStorage, never()).delete(anyString());
@@ -144,14 +140,91 @@ class ClaimServiceImplTest {
         service = new ClaimServiceImpl(insuranceMapper, petMapper, paddleOcrClient, fileStorage);
         when(petMapper.findByIdAndMemberId("10", "100")).thenReturn(null);
 
-        MockMultipartFile receipt = new MockMultipartFile("receipt", "receipt.jpg", "image/jpeg", "img".getBytes());
-
         BusinessException ex = assertThrows(BusinessException.class,
-                () -> service.createClaim("100", "10", receipt));
+                () -> service.createClaim("100", "10", jpegReceipt()));
         assertEquals(HttpStatus.NOT_FOUND, ex.getStatus());
         verify(fileStorage, never()).store(any(), anyString(), anyString());
         verify(paddleOcrClient, never()).extractReceiptData(any(), anyString());
         verify(insuranceMapper, never()).insertClaim(any());
+    }
+
+    @Test
+    @DisplayName("createClaim은 빈 영수증을 저장하지 않는다")
+    void should_rejectCreateClaim_whenReceiptIsEmpty() {
+        service = new ClaimServiceImpl(insuranceMapper, petMapper, paddleOcrClient, fileStorage);
+        when(petMapper.findByIdAndMemberId("10", "100")).thenReturn(Map.of("pet_id", "10"));
+        MockMultipartFile empty = new MockMultipartFile("receipt", "receipt.jpg", "image/jpeg", new byte[0]);
+
+        BusinessException ex = assertThrows(BusinessException.class,
+                () -> service.createClaim("100", "10", empty));
+        assertEquals(HttpStatus.BAD_REQUEST, ex.getStatus());
+        verify(fileStorage, never()).store(any(), anyString(), anyString());
+        verify(paddleOcrClient, never()).extractReceiptData(any(), anyString());
+    }
+
+    @Test
+    @DisplayName("createClaim은 10MB를 넘는 영수증을 저장하지 않는다")
+    void should_rejectCreateClaim_whenReceiptExceedsMaxSize() {
+        service = new ClaimServiceImpl(insuranceMapper, petMapper, paddleOcrClient, fileStorage);
+        when(petMapper.findByIdAndMemberId("10", "100")).thenReturn(Map.of("pet_id", "10"));
+        MultipartFile huge = mock(MultipartFile.class);
+        when(huge.isEmpty()).thenReturn(false);
+        when(huge.getSize()).thenReturn(10L * 1024 * 1024 + 1);
+
+        BusinessException ex = assertThrows(BusinessException.class,
+                () -> service.createClaim("100", "10", huge));
+        assertEquals(HttpStatus.BAD_REQUEST, ex.getStatus());
+        verify(fileStorage, never()).store(any(), anyString(), anyString());
+    }
+
+    @Test
+    @DisplayName("createClaim은 허용하지 않는 MIME 타입을 거절한다")
+    void should_rejectCreateClaim_whenContentTypeIsNotAllowed() {
+        service = new ClaimServiceImpl(insuranceMapper, petMapper, paddleOcrClient, fileStorage);
+        when(petMapper.findByIdAndMemberId("10", "100")).thenReturn(Map.of("pet_id", "10"));
+        MockMultipartFile svg = new MockMultipartFile("receipt", "a.svg", "image/svg+xml", jpegBytes());
+
+        BusinessException ex = assertThrows(BusinessException.class,
+                () -> service.createClaim("100", "10", svg));
+        assertEquals(HttpStatus.BAD_REQUEST, ex.getStatus());
+        verify(fileStorage, never()).store(any(), anyString(), anyString());
+    }
+
+    @Test
+    @DisplayName("createClaim은 확장자를 속인 비이미지 파일을 저장하지 않는다")
+    void should_rejectCreateClaim_whenFileSignatureIsNotImage() {
+        service = new ClaimServiceImpl(insuranceMapper, petMapper, paddleOcrClient, fileStorage);
+        when(petMapper.findByIdAndMemberId("10", "100")).thenReturn(Map.of("pet_id", "10"));
+        MockMultipartFile fake = new MockMultipartFile("receipt", "receipt.jpg", "image/jpeg",
+                "<svg xmlns=\"http://www.w3.org/2000/svg\"><script/></svg>".getBytes());
+
+        BusinessException ex = assertThrows(BusinessException.class,
+                () -> service.createClaim("100", "10", fake));
+        assertEquals(HttpStatus.BAD_REQUEST, ex.getStatus());
+        verify(fileStorage, never()).store(any(), anyString(), anyString());
+        verify(paddleOcrClient, never()).extractReceiptData(any(), anyString());
+    }
+
+    @Test
+    @DisplayName("createClaim은 확장자를 파일명이 아니라 실제 내용에서 정한다")
+    void should_storeReceiptExtensionFromContent_notFilename() {
+        service = new ClaimServiceImpl(insuranceMapper, petMapper, paddleOcrClient, fileStorage);
+        when(petMapper.findByIdAndMemberId("10", "100")).thenReturn(Map.of("pet_id", "10"));
+        when(fileStorage.store(any(), eq("receipts"), eq("png"))).thenReturn("receipts/x.png");
+        when(paddleOcrClient.extractReceiptData(any(), anyString())).thenReturn("{}");
+        doAnswer(invocation -> {
+            Map<String, Object> claim = invocation.getArgument(0);
+            claim.put("claimId", 1L);
+            return null;
+        }).when(insuranceMapper).insertClaim(any());
+        when(insuranceMapper.findClaimById("1")).thenReturn(
+                claimRow(1L, 100L, 10L, null, null, null, "{}", "DRAFT"));
+        MockMultipartFile mislabeled = new MockMultipartFile(
+                "receipt", "receipt.jpg", "image/jpeg", pngBytes());
+
+        service.createClaim("100", "10", mislabeled);
+
+        verify(fileStorage).store(any(), eq("receipts"), eq("png"));
     }
 
     // ---------- confirmClaim ----------
@@ -233,6 +306,24 @@ class ClaimServiceImplTest {
         assertThrows(BusinessException.class, () -> service.confirmClaim("100", "999", null));
     }
 
+    @Test
+    @DisplayName("confirmClaim은 DRAFT가 아니면 재제출하지 않는다")
+    void should_rejectConfirmClaim_whenStatusIsNotDraft() {
+        service = new ClaimServiceImpl(insuranceMapper, petMapper, paddleOcrClient, fileStorage);
+        when(insuranceMapper.findClaimById("1")).thenReturn(
+                claimRow(1L, 100L, 10L, "애월동물병원", "2026-01-01", new BigDecimal("15000"), "{}", "SUBMITTED"));
+
+        BusinessException ex = assertThrows(BusinessException.class,
+                () -> service.confirmClaim("100", "1", ClaimConfirmRequest.builder()
+                        .hospitalName("다른병원")
+                        .treatmentDate(LocalDate.of(2026, 1, 2))
+                        .totalAmount(new BigDecimal("1"))
+                        .build()));
+
+        assertEquals(HttpStatus.CONFLICT, ex.getStatus());
+        verify(insuranceMapper, never()).updateClaim(any());
+    }
+
     // ---------- getClaims ----------
 
     @Test
@@ -284,5 +375,17 @@ class ClaimServiceImplTest {
         when(insuranceMapper.findClaimById("999")).thenReturn(null);
 
         assertThrows(BusinessException.class, () -> service.getClaim("100", "999"));
+    }
+
+    private static MockMultipartFile jpegReceipt() {
+        return new MockMultipartFile("receipt", "receipt.jpg", "image/jpeg", jpegBytes());
+    }
+
+    private static byte[] jpegBytes() {
+        return new byte[] {(byte) 0xFF, (byte) 0xD8, (byte) 0xFF, 0, 1, 2};
+    }
+
+    private static byte[] pngBytes() {
+        return new byte[] {(byte) 0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A, 0, 0, 0, 0};
     }
 }
