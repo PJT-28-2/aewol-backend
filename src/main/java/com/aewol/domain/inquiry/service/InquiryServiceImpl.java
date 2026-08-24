@@ -2,6 +2,7 @@ package com.aewol.domain.inquiry.service;
 
 import com.aewol.common.exception.BusinessException;
 import com.aewol.common.storage.FileStorage;
+import com.aewol.common.util.RedisRateLimiter;
 import com.aewol.domain.inquiry.dto.InquiryCreateResponse;
 import com.aewol.domain.inquiry.dto.InquiryDetailResponse;
 import com.aewol.domain.inquiry.dto.InquiryListItemResponse;
@@ -18,6 +19,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -38,6 +40,13 @@ public class InquiryServiceImpl implements InquiryService {
     private static final int MAX_ATTACHMENTS = 3;
     private static final long MAX_ATTACHMENT_SIZE_BYTES = 10L * 1024 * 1024;
     private static final int MAX_ANSWER_LENGTH = 5000;
+    private static final int MAX_TITLE_LENGTH = 200;
+    private static final int MAX_CONTENT_LENGTH = 5000;
+    private static final int MAX_REPLY_EMAIL_LENGTH = 100;
+    private static final Pattern EMAIL_PATTERN = Pattern.compile("^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$");
+    private static final int CREATE_RATE_LIMIT_MAX = 5;
+    private static final long CREATE_RATE_LIMIT_WINDOW_SECONDS = 15 * 60;
+    private static final String CREATE_RATE_LIMIT_KEY_PREFIX = "rate:inquiry-create:";
     private static final String ATTACHMENT_SUB_DIR = "inquiries";
     private static final Map<String, Set<String>> ALLOWED_FILE_TYPES = Map.of(
             "image/jpeg", Set.of("jpg", "jpeg"),
@@ -48,20 +57,35 @@ public class InquiryServiceImpl implements InquiryService {
 
     private final InquiryMapper inquiryMapper;
     private final FileStorage fileStorage;
+    private final RedisRateLimiter redisRateLimiter;
 
     @Override
     @Transactional
     public InquiryCreateResponse createInquiry(String memberId, String category, String title, String content,
                                                 String replyEmail, List<MultipartFile> attachments) {
         validateCategory(category);
-        if (title == null || title.isBlank()) {
-            throw new BusinessException("제목을 입력해주세요");
+        String normalizedTitle = requireText(title, "제목을 입력해주세요");
+        if (normalizedTitle.length() > MAX_TITLE_LENGTH) {
+            throw new BusinessException("제목은 200자 이하로 입력해주세요");
         }
-        if (content == null || content.isBlank()) {
-            throw new BusinessException("내용을 입력해주세요");
+        String normalizedContent = requireText(content, "내용을 입력해주세요");
+        if (normalizedContent.length() > MAX_CONTENT_LENGTH) {
+            throw new BusinessException("내용은 5000자 이하로 입력해주세요");
         }
-        if (replyEmail == null || replyEmail.isBlank()) {
-            throw new BusinessException("답변받을 이메일을 입력해주세요");
+        String normalizedEmail = requireText(replyEmail, "답변받을 이메일을 입력해주세요");
+        if (normalizedEmail.length() > MAX_REPLY_EMAIL_LENGTH) {
+            throw new BusinessException("답변받을 이메일은 100자 이하로 입력해주세요");
+        }
+        if (!EMAIL_PATTERN.matcher(normalizedEmail).matches()) {
+            throw new BusinessException("답변받을 이메일 형식이 올바르지 않아요");
+        }
+
+        String rateLimitKey = CREATE_RATE_LIMIT_KEY_PREFIX + memberId;
+        long requestCount = redisRateLimiter.incrementWithExpiry(
+                rateLimitKey, CREATE_RATE_LIMIT_WINDOW_SECONDS);
+        if (requestCount > CREATE_RATE_LIMIT_MAX) {
+            throw new BusinessException(HttpStatus.TOO_MANY_REQUESTS,
+                    "문의 요청이 너무 많아요. 15분 후 다시 시도해 주세요.");
         }
 
         // 빈 파일 파트(파일을 선택 안 했을 때 브라우저가 빈 MultipartFile을 같이 보내는 경우)는
@@ -79,9 +103,9 @@ public class InquiryServiceImpl implements InquiryService {
         Map<String, Object> inquiry = new HashMap<>();
         inquiry.put("memberId", memberId);
         inquiry.put("category", category);
-        inquiry.put("title", title);
-        inquiry.put("content", content);
-        inquiry.put("replyEmail", replyEmail);
+        inquiry.put("title", normalizedTitle);
+        inquiry.put("content", normalizedContent);
+        inquiry.put("replyEmail", normalizedEmail);
         inquiryMapper.insert(inquiry); // inquiry_id AUTO_INCREMENT로 채워짐
 
         if (inquiry.get("inquiryId") == null) {
@@ -231,6 +255,13 @@ public class InquiryServiceImpl implements InquiryService {
         if (category == null || !ALLOWED_CATEGORIES.contains(category)) {
             throw new BusinessException("category는 " + String.join(", ", ALLOWED_CATEGORIES) + " 중 하나여야 해요");
         }
+    }
+
+    private static String requireText(String value, String message) {
+        if (value == null || value.isBlank()) {
+            throw new BusinessException(message);
+        }
+        return value.trim();
     }
 
     private String validateAttachment(MultipartFile file) {
