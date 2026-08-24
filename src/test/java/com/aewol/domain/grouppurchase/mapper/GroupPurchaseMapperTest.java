@@ -9,9 +9,12 @@ import java.io.InputStream;
 import java.sql.PreparedStatement;
 import java.sql.Statement;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.stream.Collectors;
 import org.apache.ibatis.builder.xml.XMLMapperBuilder;
 import org.apache.ibatis.io.Resources;
 import org.apache.ibatis.mapping.Environment;
@@ -162,6 +165,46 @@ class GroupPurchaseMapperTest {
         insertGroupPurchase(99L, "OPEN", 0, 0, LocalDateTime.now().plusDays(5));
 
         assertEquals(0, findList("OPEN", null, null, 10).size());
+    }
+
+    @Test
+    @DisplayName("deadline이 NULL인 비정상 데이터는 status 필터 없이도 findList 결과에서 제외된다")
+    void should_excludeNullDeadline_fromFindList_regardlessOfStatusFilter() {
+        long corruptedGpId = insertGroupPurchase(99L, "OPEN", 3, 10, null);
+        long normalGpId = insertGroupPurchase(99L, "OPEN", 3, 10, LocalDateTime.now().plusDays(5));
+
+        List<Map<String, Object>> result = findList(null, null, null, 10);
+
+        assertEquals(1, result.size());
+        assertEquals(normalGpId, ((Number) result.get(0).get("gp_id")).longValue());
+        assertTrue(result.stream().noneMatch(row -> ((Number) row.get("gp_id")).longValue() == corruptedGpId));
+    }
+
+    @Test
+    @DisplayName("deadline이 NULL인 비정상 데이터는 OPEN 필터에서도 제외된다")
+    void should_excludeNullDeadline_fromFindList_underOpenFilter() {
+        insertGroupPurchase(99L, "OPEN", 3, 10, null);
+
+        assertEquals(0, findList("OPEN", null, null, 10).size());
+    }
+
+    @Test
+    @DisplayName("deadline이 NULL인 글이 섞여 있어도 전체 글 수가 페이지 크기를 넘으면 정상 글만 페이지 크기만큼 반환된다"
+            + " — 회귀 재현: 이 필터가 없으면 NULL 행이 커서 경계로 뽑힐 때 GroupPurchaseServiceImpl#toCursor가 NPE로 500을 던졌다")
+    void should_returnOnlyNormalRows_when_totalRowCountExceedsPageSize_withNullDeadlineMixedIn() {
+        LocalDateTime now = LocalDateTime.now();
+        List<Long> normalIds = new ArrayList<>();
+        for (int i = 0; i < 10; i++) {
+            normalIds.add(insertGroupPurchase(99L, "OPEN", 3, 10, now.plusDays(i + 1)));
+        }
+        long corruptedGpId = insertGroupPurchase(99L, "OPEN", 3, 10, null);
+
+        List<Map<String, Object>> result = findList(null, null, null, 10);
+
+        assertEquals(10, result.size());
+        assertTrue(result.stream().noneMatch(row -> ((Number) row.get("gp_id")).longValue() == corruptedGpId));
+        assertEquals(new HashSet<>(normalIds),
+                result.stream().map(row -> ((Number) row.get("gp_id")).longValue()).collect(Collectors.toSet()));
     }
 
     @Test
