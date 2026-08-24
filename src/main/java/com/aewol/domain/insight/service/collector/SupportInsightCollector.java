@@ -65,16 +65,17 @@ public class SupportInsightCollector implements InsightCardCollector {
                 .collect(Collectors.joining("\n"));
 
         SupportProgramResponse first = eligible.get(0);
+        String subject = petName + subjectParticle(petName);
         return InsightCard.builder()
                 .type(type())
-                .headline("%s가 받을 수 있는 지원 %d건".formatted(petName, eligible.size()))
+                .headline("%s 받을 수 있는 지원 %d건".formatted(subject, eligible.size()))
                 .facts("""
                         반려동물: %s
                         지금 신청 조건을 충족하는 지원사업 %d건(전체 %d건 중):
                         %s"""
                         .formatted(petName, eligible.size(), matched.getPrograms().size(), facts))
-                .fallbackBody("%s가 지금 신청할 수 있는 지원사업이 %d건 있어요. '%s'부터 확인해 보세요."
-                        .formatted(petName, eligible.size(), first.getTitle()))
+                .fallbackBody("%s 지금 신청할 수 있는 지원사업이 %d건 있어요. '%s'부터 확인해 보세요."
+                        .formatted(subject, eligible.size(), first.getTitle()))
                 .ctaLabel("전체 보기")
                 .ctaPath("/support-programs")
                 .digest(eligible.size() + ":" + first.getId())
@@ -83,5 +84,17 @@ public class SupportInsightCollector implements InsightCardCollector {
 
     private static String nullToDash(String value) {
         return value == null || value.isBlank() ? "-" : value;
+    }
+
+    /** 한글 음절의 종성 유무에 따라 주격 조사 '이/가'를 고른다. */
+    private static String subjectParticle(String word) {
+        if (word == null || word.isBlank()) {
+            return "가";
+        }
+        char last = word.charAt(word.length() - 1);
+        if (last < '\uAC00' || last > '\uD7A3') {
+            return "가";
+        }
+        return (last - '\uAC00') % 28 == 0 ? "가" : "이";
     }
 }
