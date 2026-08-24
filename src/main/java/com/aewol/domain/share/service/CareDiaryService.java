@@ -2,6 +2,9 @@ package com.aewol.domain.share.service;
 
 import com.aewol.domain.share.dto.CareDiaryReportRequest;
 import com.aewol.domain.share.dto.CareDiaryReportResponse;
+import com.aewol.domain.share.dto.AdminDiaryReportDetailResponse;
+import com.aewol.domain.share.dto.AdminDiaryReportListResponse;
+import com.aewol.domain.share.dto.AdminDiaryReportResolutionRequest;
 import com.aewol.domain.share.dto.CareDiaryResponse;
 import com.aewol.domain.share.dto.CareDiaryUpdateRequest;
 import com.aewol.domain.share.dto.CareDiaryVisibilityRequest;
@@ -23,6 +26,13 @@ public interface CareDiaryService {
                                        CareDiaryVisibilityRequest request);
 
     CareDiaryReportResponse report(String memberId, String diaryId, CareDiaryReportRequest request);
+
+    AdminDiaryReportListResponse getAdminReports(String status, int page, int size);
+
+    AdminDiaryReportDetailResponse getAdminReport(String reportId);
+
+    AdminDiaryReportDetailResponse resolveAdminReport(String adminId, String reportId,
+                                                       AdminDiaryReportResolutionRequest request);
 
     void delete(String memberId, String diaryId);
 }
