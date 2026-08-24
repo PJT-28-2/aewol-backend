@@ -2,9 +2,11 @@ package com.aewol.domain.member.service;
 
 import com.aewol.common.cache.MemberAuthStateCache;
 import com.aewol.common.exception.BusinessException;
+import com.aewol.common.util.RedisRateLimiter;
 import com.aewol.domain.auth.service.AuthCredentialStore;
 import com.aewol.domain.member.dto.MemberWithdrawRequest;
 import com.aewol.domain.member.mapper.MemberMapper;
+import com.aewol.external.sms.SmsSender;
 import java.util.HashMap;
 import java.util.Map;
 import org.junit.jupiter.api.AfterEach;
@@ -13,6 +15,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
@@ -32,13 +35,18 @@ class MemberServiceImplWithdrawalTest {
     @Mock MemberMapper memberMapper;
     @Mock PasswordEncoder passwordEncoder;
     @Mock AuthCredentialStore authCredentialStore;
+    @Mock RedisRateLimiter redisRateLimiter;
+    @Mock RedisTemplate<String, String> redisTemplate;
+    @Mock SmsSender smsSender;
+    @Mock ProfilePhoneVerificationStore phoneVerificationStore;
 
     private MemberServiceImpl service;
 
     @BeforeEach
     void setUp() {
         service = new MemberServiceImpl(memberMapper, passwordEncoder, authCredentialStore,
-                MemberAuthStateCache.withoutCache(memberMapper));
+                MemberAuthStateCache.withoutCache(memberMapper),
+                redisRateLimiter, redisTemplate, smsSender, phoneVerificationStore);
         TransactionSynchronizationManager.initSynchronization();
     }
 
