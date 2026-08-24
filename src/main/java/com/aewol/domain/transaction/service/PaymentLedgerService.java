@@ -1,6 +1,7 @@
 package com.aewol.domain.transaction.service;
 
 import com.aewol.common.exception.BusinessException;
+import com.aewol.domain.notification.service.InboxNotifier;
 import com.aewol.domain.transaction.dto.PaymentRecordCommand;
 import com.aewol.domain.transaction.mapper.TransactionMapper;
 import com.aewol.domain.wallet.mapper.WalletMapper;
@@ -29,6 +30,7 @@ public class PaymentLedgerService {
 
     private final TransactionMapper transactionMapper;
     private final WalletMapper walletMapper;
+    private final InboxNotifier inboxNotifier;
 
     /**
      * 잔액을 차감하고 거래를 기록한 뒤, 방금 기록한 행을 돌려준다.
@@ -84,6 +86,14 @@ public class PaymentLedgerService {
             // 방금 넣은 행을 못 읽는다면 원장을 신뢰할 수 없는 상태다. 롤백시킨다.
             throw new IllegalStateException("방금 기록한 거래를 읽지 못했습니다. txnId=" + txnId);
         }
+        inboxNotifier.notifyAfterCommit(
+                command.getMemberId(),
+                InboxNotifier.Channel.PAYMENT,
+                "PAYMENT",
+                "결제가 완료됐어요",
+                InboxNotifier.text(command.getMerchantName(), "가맹점")
+                        + "에서 " + InboxNotifier.won(command.getAmount()) + "이 결제됐어요.",
+                "/wallet/history");
         return saved;
     }
 }

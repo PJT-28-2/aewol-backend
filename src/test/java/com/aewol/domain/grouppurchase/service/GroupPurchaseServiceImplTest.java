@@ -18,6 +18,7 @@ import com.aewol.domain.grouppurchase.dto.GroupPurchaseResponse;
 import com.aewol.domain.grouppurchase.dto.GroupPurchaseStatusResponse;
 import com.aewol.domain.grouppurchase.mapper.GroupPurchaseMapper;
 import com.aewol.domain.member.service.SimplePasswordVerificationService;
+import com.aewol.domain.notification.service.InboxNotifier;
 import com.aewol.domain.transaction.mapper.TransactionMapper;
 import com.aewol.domain.wallet.mapper.WalletMapper;
 import java.io.IOException;
@@ -46,6 +47,7 @@ class GroupPurchaseServiceImplTest {
     @Mock WalletMapper walletMapper;
     @Mock TransactionMapper transactionMapper;
     @Mock SimplePasswordVerificationService simplePasswordVerificationService;
+    @Mock InboxNotifier inboxNotifier;
 
     private static final String PASSWORD = "123456";
 
@@ -1772,6 +1774,6 @@ class GroupPurchaseServiceImplTest {
         // 돌려주어 각 테스트가 저장값 자체를 검증하도록 둔다.
         lenient().when(fileStorage.signedUrl(anyString())).thenAnswer(i -> i.getArgument(0));
         return new GroupPurchaseServiceImpl(groupPurchaseMapper, fileStorage, walletMapper, transactionMapper,
-                simplePasswordVerificationService);
+                simplePasswordVerificationService, inboxNotifier);
     }
 }

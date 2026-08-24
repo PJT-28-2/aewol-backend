@@ -6,6 +6,7 @@ import static org.mockito.Mockito.*;
 
 import com.aewol.common.exception.BusinessException;
 import com.aewol.domain.member.mapper.MemberMapper;
+import com.aewol.domain.notification.service.InboxNotifier;
 import com.aewol.domain.pet.mapper.PetMapper;
 import com.aewol.domain.share.dto.ShareInviteRequest;
 import com.aewol.domain.share.dto.ShareInviteResponse;
@@ -30,6 +31,7 @@ class ShareServiceImplTest {
     @Mock ShareMapper shareMapper;
     @Mock PetMapper petMapper;
     @Mock MemberMapper memberMapper;
+    @Mock InboxNotifier inboxNotifier;
 
     @Test
     @DisplayName("접근 가능한 반려동물 목록을 화면 형식으로 반환한다")
@@ -87,6 +89,13 @@ class ShareServiceImplTest {
         service.acceptInvite("member-2", "code-1");
 
         verify(shareMapper).acceptInvite("access-1", "member-2");
+        verify(inboxNotifier).notifyAfterCommit(
+                eq("owner-1"),
+                eq(InboxNotifier.Channel.FAMILY),
+                eq("FAMILY_SHARE"),
+                anyString(),
+                anyString(),
+                eq("/share"));
     }
 
     @Test
@@ -174,7 +183,7 @@ class ShareServiceImplTest {
     }
 
     private ShareServiceImpl service() {
-        return new ShareServiceImpl(shareMapper, petMapper, memberMapper);
+        return new ShareServiceImpl(shareMapper, petMapper, memberMapper, inboxNotifier);
     }
 
     private static Map<String, Object> map(Object... values) {

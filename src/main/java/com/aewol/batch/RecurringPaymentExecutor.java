@@ -1,5 +1,6 @@
 package com.aewol.batch;
 
+import com.aewol.domain.notification.service.InboxNotifier;
 import com.aewol.domain.recurring.mapper.RecurringMapper;
 import com.aewol.domain.recurring.service.RecurringServiceImpl;
 import com.aewol.domain.transaction.mapper.TransactionMapper;
@@ -25,6 +26,7 @@ public class RecurringPaymentExecutor {
     private final WalletMapper walletMapper;
     private final TransactionMapper transactionMapper;
     private final RecurringMapper recurringMapper;
+    private final InboxNotifier inboxNotifier;
 
     /**
      * @return 결제 성공 시 true, 이미 처리/해지됐거나 잔액 부족으로 스킵 시 false
@@ -69,7 +71,21 @@ public class RecurringPaymentExecutor {
         // 다음 주기 결제일로 갱신
         LocalDate next = RecurringServiceImpl.nextPaymentDate(paymentDay, today);
         recurringMapper.updateNextPaymentDate(recurringId, next);
+        notifyPayment(walletId, locked, price);
         return true;
+    }
+
+    private void notifyPayment(String walletId, Map<String, Object> recurring, BigDecimal price) {
+        Map<String, Object> wallet = walletMapper.findById(walletId);
+        if (wallet == null || wallet.get("member_id") == null) return;
+        inboxNotifier.notifyAfterCommit(
+                String.valueOf(wallet.get("member_id")),
+                InboxNotifier.Channel.RECURRING,
+                "RECURRING",
+                "정기결제가 실행됐어요",
+                InboxNotifier.text(recurring.get("product_name"), "정기결제")
+                        + " " + InboxNotifier.won(price) + "이 결제됐어요.",
+                "/payment/recurring");
     }
 
     private static boolean isDueAndActive(Map<String, Object> recurring, LocalDate today) {

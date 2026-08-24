@@ -10,6 +10,7 @@ import com.aewol.domain.transaction.dto.PaymentRequest;
 import com.aewol.domain.transaction.mapper.TransactionMapper;
 import com.aewol.domain.transaction.dto.TransactionTagUpdateRequest;
 import com.aewol.common.exception.BusinessException;
+import com.aewol.domain.notification.service.InboxNotifier;
 import com.aewol.domain.wallet.mapper.WalletMapper;
 import com.aewol.domain.pet.mapper.PetMapper;
 import java.math.BigDecimal;
@@ -33,6 +34,7 @@ class TransactionServiceImplTest {
     @Mock WalletMapper walletMapper;
     @Mock AutoTaggingService autoTaggingService;
     @Mock PetMapper petMapper;
+    @Mock InboxNotifier inboxNotifier;
 
     @Test
     @DisplayName("음수 결제 금액은 지갑 조회 전에 거절한다")
@@ -449,7 +451,7 @@ class TransactionServiceImplTest {
         // 원장 기록은 진짜 객체를 넣는다. 매퍼가 모의 객체라 검증은 그대로 되고,
         // 트랜잭션 경계가 어디인지는 구조 자체로 드러난다.
         return new TransactionServiceImpl(transactionMapper, walletMapper, autoTaggingService, petMapper,
-                new PaymentLedgerService(transactionMapper, walletMapper));
+                new PaymentLedgerService(transactionMapper, walletMapper, inboxNotifier));
     }
 
     private static PaymentRequest paymentRequest(String merchantName, BigDecimal amount) {

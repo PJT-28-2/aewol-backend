@@ -26,4 +26,7 @@ public interface RecurringMapper {
     int deactivateByPetId(@Param("petId") String petId);
 
     List<Map<String, Object>> findDuePayments(@Param("date") String date);
+
+    /** 결제일 3일 전 미리 알림용. next_payment_date가 그날인 활성 정기결제만 본다. */
+    List<Map<String, Object>> findUpcomingPayments(@Param("date") String date);
 }
