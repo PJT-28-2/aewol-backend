@@ -209,6 +209,28 @@ class InquiryServiceImplTest {
     }
 
     @Test
+    @DisplayName("문의 목록 size가 너무 크면 최대 100개로 제한한다")
+    void should_capUserInquiryPageSize() {
+        when(inquiryMapper.findByMemberId(MEMBER_ID, null, 101, 0))
+                .thenReturn(List.of());
+
+        service.getInquiries(MEMBER_ID, null, 0, 1000);
+
+        verify(inquiryMapper).findByMemberId(MEMBER_ID, null, 101, 0);
+    }
+
+    @Test
+    @DisplayName("문의 목록 offset이 int 범위를 넘으면 400 예외를 던진다")
+    void should_throwBadRequest_when_userInquiryOffsetOverflows() {
+        BusinessException ex = assertThrows(BusinessException.class,
+                () -> service.getInquiries(MEMBER_ID, null, Integer.MAX_VALUE, 100));
+
+        assertEquals(org.springframework.http.HttpStatus.BAD_REQUEST, ex.getStatus());
+        assertEquals("페이지 값이 너무 큽니다.", ex.getMessage());
+        verify(inquiryMapper, never()).findByMemberId(any(), any(), anyInt(), anyInt());
+    }
+
+    @Test
     @DisplayName("허용되지 않은 status로 목록을 조회하면 400 예외를 던진다")
     void should_throwBadRequest_when_statusInvalid() {
         BusinessException ex = assertThrows(BusinessException.class,
@@ -266,6 +288,17 @@ class InquiryServiceImplTest {
         assertEquals("AEW-20260824-0001", result.getInquiries().get(0).getInquiryNumber());
         assertEquals("보험", result.getInquiries().get(0).getCategory());
         assertTrue(result.isHasNext());
+    }
+
+    @Test
+    @DisplayName("관리자 문의 목록 size가 너무 크면 최대 100개로 제한한다")
+    void should_capAdminInquiryPageSize() {
+        when(inquiryMapper.findAll(null, 101, 0))
+                .thenReturn(List.of());
+
+        service.getAdminInquiries(null, 0, 1000);
+
+        verify(inquiryMapper).findAll(null, 101, 0);
     }
 
     @Test
@@ -357,6 +390,16 @@ class InquiryServiceImplTest {
         assertEquals(org.springframework.http.HttpStatus.BAD_REQUEST, ex.getStatus());
         verify(inquiryMapper, never()).updateAnswer(any(), any());
         verify(careDiaryMapper, never()).resolvePendingReportsByInquiryId(any(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("관리자 문의 목록도 offset overflow를 막는다")
+    void should_throwBadRequest_when_adminInquiryOffsetOverflows() {
+        BusinessException ex = assertThrows(BusinessException.class,
+                () -> service.getAdminInquiries(null, Integer.MAX_VALUE, 100));
+
+        assertEquals(org.springframework.http.HttpStatus.BAD_REQUEST, ex.getStatus());
+        verify(inquiryMapper, never()).findAll(any(), anyInt(), anyInt());
     }
 
     private Map<String, Object> inquiryDetailRow(String status, String answer) {

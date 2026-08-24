@@ -50,6 +50,8 @@ public class InquiryServiceImpl implements InquiryService {
     private static final int CREATE_RATE_LIMIT_MAX = 5;
     private static final long CREATE_RATE_LIMIT_WINDOW_SECONDS = 15 * 60;
     private static final String CREATE_RATE_LIMIT_KEY_PREFIX = "rate:inquiry-create:";
+    private static final int DEFAULT_PAGE_SIZE = 10;
+    private static final int MAX_PAGE_SIZE = 100;
     private static final String ATTACHMENT_SUB_DIR = "inquiries";
     private static final Map<String, Set<String>> ALLOWED_FILE_TYPES = Map.of(
             "image/jpeg", Set.of("jpg", "jpeg"),
@@ -173,13 +175,12 @@ public class InquiryServiceImpl implements InquiryService {
     @Override
     public InquiryListResponse getInquiries(String memberId, String status, int page, int size) {
         validateStatus(status);
-        int safePage = Math.max(page, 0);
-        int safeSize = size <= 0 ? 10 : size;
+        NormalizedPage pageRequest = normalizePageRequest(page, size);
 
         List<Map<String, Object>> rows =
-                inquiryMapper.findByMemberId(memberId, status, safeSize + 1, safePage * safeSize);
-        boolean hasNext = rows.size() > safeSize;
-        List<Map<String, Object>> pageRows = hasNext ? rows.subList(0, safeSize) : rows;
+                inquiryMapper.findByMemberId(memberId, status, pageRequest.limitWithLookahead(), pageRequest.offset());
+        boolean hasNext = rows.size() > pageRequest.size();
+        List<Map<String, Object>> pageRows = hasNext ? rows.subList(0, pageRequest.size()) : rows;
 
         List<InquiryListItemResponse> items = pageRows.stream()
                 .map(this::toListItemResponse)
@@ -201,12 +202,12 @@ public class InquiryServiceImpl implements InquiryService {
     @Override
     public InquiryListResponse getAdminInquiries(String status, int page, int size) {
         validateStatus(status);
-        int safePage = Math.max(page, 0);
-        int safeSize = size <= 0 ? 10 : Math.min(size, 100);
+        NormalizedPage pageRequest = normalizePageRequest(page, size);
 
-        List<Map<String, Object>> rows = inquiryMapper.findAll(status, safeSize + 1, safePage * safeSize);
-        boolean hasNext = rows.size() > safeSize;
-        List<Map<String, Object>> pageRows = hasNext ? rows.subList(0, safeSize) : rows;
+        List<Map<String, Object>> rows = inquiryMapper.findAll(
+                status, pageRequest.limitWithLookahead(), pageRequest.offset());
+        boolean hasNext = rows.size() > pageRequest.size();
+        List<Map<String, Object>> pageRows = hasNext ? rows.subList(0, pageRequest.size()) : rows;
         List<InquiryListItemResponse> items = pageRows.stream()
                 .map(this::toListItemResponse)
                 .collect(Collectors.toList());
@@ -264,6 +265,22 @@ public class InquiryServiceImpl implements InquiryService {
                 .map(a -> (String) a.get("file_url"))
                 .map(fileStorage::signedUrl)
                 .collect(Collectors.toList());
+    }
+
+    private NormalizedPage normalizePageRequest(int page, int size) {
+        int safePage = Math.max(page, 0);
+        int safeSize = size <= 0 ? DEFAULT_PAGE_SIZE : Math.min(size, MAX_PAGE_SIZE);
+        long offset = (long) safePage * safeSize;
+        if (offset > Integer.MAX_VALUE) {
+            throw new BusinessException("페이지 값이 너무 큽니다.");
+        }
+        return new NormalizedPage(safeSize, (int) offset);
+    }
+
+    private record NormalizedPage(int size, int offset) {
+        private int limitWithLookahead() {
+            return size + 1;
+        }
     }
 
     private void validateStatus(String status) {
