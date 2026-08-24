@@ -89,6 +89,24 @@ class ExploreServiceImplTest {
 
         assertEquals(1, page.getPosts().size());
         assertEquals("d-1", page.getPosts().get(0).getDiaryId());
+        // 필터로 한 칸이 비어도 커서는 조회한 마지막 행 기준이다. 화면이 sentinel을 유지해야
+        // 다음 장을 이어서 부를 수 있다.
+        assertNull(page.getNextCursor());
+    }
+
+    @Test
+    @DisplayName("공개 사진이 없어 목록이 비어도 nextCursor는 남긴다")
+    void should_keepNextCursor_when_filteredPostsAreEmpty() {
+        when(exploreMapper.findPublicPosts(isNull(), isNull(), anyInt())).thenReturn(List.of(
+                postRow("d-3", "2026-08-21 12:00:00"),
+                postRow("d-2", "2026-08-21 11:00:00"),
+                postRow("d-1", "2026-08-21 10:00:00")));
+        when(exploreMapper.findImagesByDiaryIds(anyList())).thenReturn(List.of());
+
+        ExplorePageResponse page = service().getExploreFeed(null, 2);
+
+        assertTrue(page.getPosts().isEmpty());
+        assertEquals("2026-08-21 11:00:00|d-2", page.getNextCursor());
     }
 
     @Test
