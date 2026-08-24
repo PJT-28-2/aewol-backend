@@ -30,6 +30,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -48,6 +49,7 @@ public class CareDiaryServiceImpl implements CareDiaryService {
     private static final String PUBLIC = "PUBLIC";
     private static final int MAX_CONTENT_LENGTH = 500;
     private static final String UPLOAD_SUB_DIR = "diary";
+    private static final Set<String> DIARY_WRITE_ROLES = Set.of("MANAGER", "ADMIN");
     /** 서로 다른 신고가 이 수에 닿아야 글을 내린다. 1건으로 내리면 오탐에도 바로 사라진다. */
     private static final int REPORT_HIDE_THRESHOLD = 3;
     private static final int REPORT_RATE_LIMIT_MAX = 5;
@@ -73,7 +75,7 @@ public class CareDiaryServiceImpl implements CareDiaryService {
     public CareDiaryResponse create(String memberId, String petId, String diaryDate,
                                     String content, MultipartFile image) {
         memberId = requireMemberId(memberId);
-        Map<String, Object> pet = assertCanAccess(memberId, petId);
+        Map<String, Object> pet = assertCanWrite(memberId, petId);
 
         LocalDate date = parseDate(diaryDate);
         String normalizedContent = normalizeContent(content);
@@ -150,7 +152,7 @@ public class CareDiaryServiceImpl implements CareDiaryService {
     public CareDiaryResponse update(String memberId, String diaryId, CareDiaryUpdateRequest request) {
         memberId = requireMemberId(memberId);
         Map<String, Object> row = findDiary(diaryId);
-        assertCanAccess(memberId, text(row, "petId"));
+        assertCanWrite(memberId, text(row, "petId"));
 
         if (!memberId.equals(text(row, "authorMemberId"))) {
             throw BusinessException.forbidden("작성자만 일기를 수정할 수 있습니다.");
@@ -550,7 +552,7 @@ public class CareDiaryServiceImpl implements CareDiaryService {
 
     /**
      * 반려동물 소유자이거나 초대를 수락한 공동육아 구성원이면 통과한다.
-     * 일기는 참여를 늘리기 위한 기능이라 VIEWER도 작성할 수 있게 조회와 같은 기준을 쓴다.
+     * 조회·신고는 VIEWER도 할 수 있다.
      */
     private Map<String, Object> assertCanAccess(String memberId, String petId) {
         Map<String, Object> pet = petMapper.findById(petId);
@@ -560,6 +562,23 @@ public class CareDiaryServiceImpl implements CareDiaryService {
             throw BusinessException.forbidden("공동육아 일기를 볼 권한이 없습니다.");
         }
         return pet;
+    }
+
+    /**
+     * 일기를 쓰거나 고치는 권한. 대표 보호자와 MANAGER/ADMIN만 허용한다.
+     * VIEWER는 역할이 조회용이므로 작성을 막는다.
+     */
+    private Map<String, Object> assertCanWrite(String memberId, String petId) {
+        Map<String, Object> pet = assertCanAccess(memberId, petId);
+        if (memberId.equals(text(pet, "member_id", "memberId"))) {
+            return pet;
+        }
+        Map<String, Object> access = shareMapper.findAcceptedAccess(petId, memberId);
+        String role = access == null ? null : text(access, "role");
+        if (role != null && DIARY_WRITE_ROLES.contains(role.toUpperCase(Locale.ROOT))) {
+            return pet;
+        }
+        throw BusinessException.forbidden("일기를 작성할 권한이 없습니다.");
     }
 
     private Map<String, Object> findDiary(String diaryId) {

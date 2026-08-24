@@ -66,11 +66,12 @@ class CareDiaryServiceImplTest {
     }
 
     @Test
-    @DisplayName("공동육아 구성원도 사진과 글로 일기를 남길 수 있다")
+    @DisplayName("MANAGER 공동육아 구성원은 사진과 글로 일기를 남길 수 있다")
     void should_createDiary_when_acceptedMemberWrites() throws IOException {
         CareDiaryServiceImpl service = service();
         givenPetOwnedBy("pet-1", "owner-1");
-        when(shareMapper.findAcceptedAccess("pet-1", "member-2")).thenReturn(map("access_id", "access-1"));
+        when(shareMapper.findAcceptedAccess("pet-1", "member-2"))
+                .thenReturn(map("access_id", "access-1", "role", "MANAGER"));
         when(fileStorage.store(any(), eq("diary"), anyString())).thenReturn("diary/a.png");
         when(shareMapper.findMainWalletByMemberId("owner-1")).thenReturn(map("wallet_id", "wallet-1"));
         givenInsertAssignsDiaryId("diary-1");
@@ -82,6 +83,22 @@ class CareDiaryServiceImplTest {
         ArgumentCaptor<Map<String, Object>> imageCaptor = mapCaptor();
         verify(careDiaryMapper).insertImage(imageCaptor.capture());
         assertEquals("diary/a.png", imageCaptor.getValue().get("imageUrl"));
+    }
+
+    @Test
+    @DisplayName("VIEWER는 일기를 작성할 수 없다")
+    void should_forbidCreateDiary_whenViewerMemberWrites() {
+        CareDiaryServiceImpl service = service();
+        givenPetOwnedBy("pet-1", "owner-1");
+        when(shareMapper.findAcceptedAccess("pet-1", "member-2"))
+                .thenReturn(map("access_id", "access-1", "role", "VIEWER"));
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.create("member-2", "pet-1", "2026-08-10", "밥 줬어요", image()));
+
+        assertEquals(403, exception.getStatus().value());
+        verify(careDiaryMapper, never()).insert(anyMap());
+        verify(fileStorage, never()).store(any(), anyString(), anyString());
     }
 
     @Test
