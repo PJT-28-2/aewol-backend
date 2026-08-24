@@ -13,6 +13,7 @@ import com.aewol.domain.auth.dto.KakaoSignupCompleteRequest;
 import com.aewol.domain.member.mapper.MemberMapper;
 import com.aewol.domain.notification.mapper.NotificationSettingMapper;
 import com.aewol.domain.wallet.mapper.WalletMapper;
+import com.aewol.external.sms.SmsFailureReason;
 import com.aewol.external.sms.SmsSendException;
 import com.aewol.external.sms.SmsSender;
 import java.util.Map;
@@ -195,7 +196,7 @@ class KakaoSignupServiceImplTest {
                 org.mockito.ArgumentMatchers.eq(1800L))).thenReturn(1L);
         when(phoneVerificationStore.issue(anyString(), anyString(), anyString()))
                 .thenReturn(issued);
-        doThrow(new SmsSendException("raw provider response"))
+        doThrow(new SmsSendException("raw provider response", SmsFailureReason.NOT_CONFIGURED))
                 .when(smsSender).send(anyString(), anyString());
 
         BusinessException exception = assertThrows(BusinessException.class,
