@@ -42,6 +42,8 @@ public interface CareDiaryMapper {
 
     int hideByReport(@Param("diaryId") String diaryId);
 
+    int countReportsByDiary(@Param("diaryId") String diaryId);
+
     List<Map<String, Object>> findAdminReports(@Param("status") String status,
                                                @Param("limit") int limit,
                                                @Param("offset") int offset);

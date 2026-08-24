@@ -90,13 +90,15 @@ public class ExploreServiceImpl implements ExploreService {
         List<Map<String, Object>> pageRows = hasNext ? rows.subList(0, limit) : rows;
         Map<String, List<String>> imagesByDiaryId = loadImages(pageRows);
 
-        // 사진이 없으면 그리드에 빈 칸이 생긴다. 공개 사본이 아직 없는 글(#309 배포 전이거나
-        // 복사가 실패한 글)도 여기로 걸러져, 깨진 피드가 나가지 않는다.
+        // 사진이 없으면 그리드에 빈 칸이 생긴다. 조회 SQL이 공개 사본 있는 글만 주지만,
+        // publicUrl이 비는 경우까지 여기서 한 번 더 걸러 깨진 피드가 나가지 않게 한다.
         List<ExplorePostResponse> posts = pageRows.stream()
                 .map(row -> toPost(row, imagesByDiaryId))
                 .filter(post -> post.getImageUrl() != null)
                 .collect(Collectors.toList());
 
+        // 커서는 조회한 마지막 행 기준이다. 필터로 목록이 비어도 nextCursor는 남긴다.
+        // 화면이 sentinel을 유지해야 다음 장을 이어서 부를 수 있다.
         String nextCursor = null;
         if (hasNext && !pageRows.isEmpty()) {
             Map<String, Object> last = pageRows.get(pageRows.size() - 1);
