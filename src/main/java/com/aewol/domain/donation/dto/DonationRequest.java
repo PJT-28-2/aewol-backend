@@ -4,6 +4,7 @@ import java.math.BigDecimal;
 import javax.validation.constraints.DecimalMin;
 import javax.validation.constraints.NotBlank;
 import javax.validation.constraints.NotNull;
+import javax.validation.constraints.Size;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 
@@ -18,5 +19,7 @@ public class DonationRequest {
     @NotBlank(message = "기부 캠페인을 선택해 주세요.")
     private String campaignId;
 
+    @NotBlank(message = "중복 요청 방지 키를 입력해 주세요.")
+    @Size(max = 64, message = "중복 요청 방지 키는 64자 이하여야 합니다.")
     private String idempotencyKey;
 }

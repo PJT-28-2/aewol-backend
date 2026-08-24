@@ -17,13 +17,24 @@ import java.io.IOException;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.format.DateTimeParseException;
-import java.util.*;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
 import java.util.stream.Collectors;
 
 @Slf4j
 @Service
 @RequiredArgsConstructor
 public class ClaimServiceImpl implements ClaimService {
+
+    private static final long MAX_RECEIPT_SIZE_BYTES = 10L * 1024 * 1024;
+    /** 업로드 경로로 공개되므로 스크립트가 실행될 수 있는 형식(svg, html 등)은 받지 않는다. */
+    private static final Map<String, String> ALLOWED_IMAGE_TYPES = Map.of(
+            "image/jpeg", "jpg",
+            "image/jpg", "jpg",
+            "image/png", "png",
+            "image/webp", "webp");
 
     private final InsuranceMapper insuranceMapper;
     private final PetMapper petMapper;
@@ -44,9 +55,9 @@ public class ClaimServiceImpl implements ClaimService {
             // 저장 위치는 FileStorage가 정한다. 예전에는 여기서 디스크에 직접 쓰고
             // "/uploads/receipts/..." 형태의 URL을 DB에 넣었는데, 조회는 이미
             // fileStorage.signedUrl로 하고 있어 저장소를 옮기면 읽기와 어긋났다.
-            byte[] receiptBytes = receipt.getBytes();
+            byte[] receiptBytes = readValidatedReceipt(receipt);
             receiptKey = fileStorage.store(receiptBytes, "receipts",
-                    extensionOf(receipt.getOriginalFilename()));
+                    detectImageExtension(receiptBytes));
 
             // PaddleOCR (트랜잭션 밖에서 호출 - 응답 지연이 DB 커넥션을 점유하지 않도록)
             String extractedJson = paddleOcrClient.extractReceiptData(receiptBytes, receipt.getContentType());
@@ -84,6 +95,9 @@ public class ClaimServiceImpl implements ClaimService {
         if (existing == null || !String.valueOf(existing.get("member_id")).equals(memberId)) {
             throw BusinessException.notFound("청구 정보를 찾을 수 없습니다.");
         }
+        if (!"DRAFT".equals(existing.get("claim_status"))) {
+            throw BusinessException.conflict("이미 제출된 청구입니다.");
+        }
 
         Map<String, Object> update = new HashMap<>();
         update.put("claimId", claimId);
@@ -101,7 +115,9 @@ public class ClaimServiceImpl implements ClaimService {
         update.put("extractedData", existing.get("extracted_data"));
         update.put("claimStatus", "SUBMITTED");
         update.put("claimDocumentUrl", null);
-        insuranceMapper.updateClaim(update);
+        if (insuranceMapper.updateClaim(update) != 1) {
+            throw BusinessException.conflict("이미 제출된 청구입니다.");
+        }
 
         return toResponse(insuranceMapper.findClaimById(claimId));
     }
@@ -176,15 +192,53 @@ public class ClaimServiceImpl implements ClaimService {
     }
 
     /**
-     * 저장 키에 붙일 확장자를 뽑는다.
+     * 영수증이 실제 이미지인지 확인한 뒤 바이트를 돌려준다.
      *
-     * <p>S3는 업로드 시 지정한 Content-Type을 그대로 응답에 실어 주고, 그 판정은 키의
-     * 확장자로 한다. 확장자를 잃으면 브라우저가 영수증 이미지를 표시하지 않고 내려받는다.
+     * <p>원본 확장자를 그대로 쓰면 {@code .svg}나 {@code .html}이 업로드 경로로 공개돼
+     * 스크립트가 실행될 수 있다. 그래서 (1) 빈 파일과 크기를 막고, (2) MIME 타입을
+     * 허용 목록으로 제한하고, (3) 파일 앞머리 시그니처로 실제 이미지인지 확인한다.
+     *
+     * <p>저장 확장자는 파일명이 아니라 {@link #detectImageExtension(byte[])}가 정한다.
      */
-    private String extensionOf(String originalFilename) {
-        if (originalFilename == null || !originalFilename.contains(".")) {
+    private byte[] readValidatedReceipt(MultipartFile receipt) throws IOException {
+        if (receipt == null || receipt.isEmpty()) {
+            throw new BusinessException("영수증 파일이 비어 있습니다.");
+        }
+        if (receipt.getSize() > MAX_RECEIPT_SIZE_BYTES) {
+            throw new BusinessException("영수증은 10MB 이하만 업로드할 수 있습니다.");
+        }
+        String contentType = receipt.getContentType();
+        String declaredExtension = contentType == null
+                ? null
+                : ALLOWED_IMAGE_TYPES.get(contentType.toLowerCase(Locale.ROOT));
+        if (declaredExtension == null) {
+            throw new BusinessException("JPG, PNG, WEBP 이미지만 올릴 수 있습니다.");
+        }
+
+        byte[] bytes = receipt.getBytes();
+        if (detectImageExtension(bytes) == null) {
+            throw new BusinessException("이미지 파일이 아니거나 손상된 파일입니다.");
+        }
+        return bytes;
+    }
+
+    /** 파일 앞머리 시그니처로 이미지 형식을 판별한다. 아니면 null. */
+    private static String detectImageExtension(byte[] bytes) {
+        if (bytes.length >= 8
+                && (bytes[0] & 0xFF) == 0x89 && bytes[1] == 'P' && bytes[2] == 'N' && bytes[3] == 'G'
+                && (bytes[4] & 0xFF) == 0x0D && (bytes[5] & 0xFF) == 0x0A
+                && (bytes[6] & 0xFF) == 0x1A && (bytes[7] & 0xFF) == 0x0A) {
+            return "png";
+        }
+        if (bytes.length >= 3
+                && (bytes[0] & 0xFF) == 0xFF && (bytes[1] & 0xFF) == 0xD8 && (bytes[2] & 0xFF) == 0xFF) {
             return "jpg";
         }
-        return originalFilename.substring(originalFilename.lastIndexOf('.') + 1).toLowerCase();
+        if (bytes.length >= 12
+                && bytes[0] == 'R' && bytes[1] == 'I' && bytes[2] == 'F' && bytes[3] == 'F'
+                && bytes[8] == 'W' && bytes[9] == 'E' && bytes[10] == 'B' && bytes[11] == 'P') {
+            return "webp";
+        }
+        return null;
     }
 }

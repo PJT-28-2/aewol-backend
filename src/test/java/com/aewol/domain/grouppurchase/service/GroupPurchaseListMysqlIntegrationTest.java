@@ -74,7 +74,7 @@ class GroupPurchaseListMysqlIntegrationTest {
         // list()는 walletMapper/transactionMapper/simplePasswordVerificationService를 쓰지
         // 않으므로 null로 둬도 안전하다. fileStorage는 signedUrl(image)만 호출되는데 이 값은
         // 이 테스트가 검증하는 범위(hasNext/nextCursor)가 아니므로 스텁 없는 mock으로 충분하다.
-        service = new GroupPurchaseServiceImpl(mapper, org.mockito.Mockito.mock(FileStorage.class), null, null, null);
+        service = new GroupPurchaseServiceImpl(mapper, org.mockito.Mockito.mock(FileStorage.class), null, null, null, null);
     }
 
     @AfterEach

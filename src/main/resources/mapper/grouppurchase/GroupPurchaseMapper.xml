@@ -291,14 +291,17 @@
     <!-- 작성자(관리자) 전체 취소(순서18). join()의 updateQuantity와 동일한 원자적 조건부 UPDATE 패턴 —
          이미 취소됐거나(status='CANCELLED'), 목표 수량을 채웠거나(현재수량 >= 목표수량), 마감이 지난
          공동구매는 취소할 수 없다. 영향받은 행이 0이면 호출부에서 취소를 거절해야 한다.
-         target_quantity &lt;= 0(정상 생성 경로로는 나올 수 없는 레거시/비정상 데이터)인 행은 findList와
-         달리 여기서는 제외하지 않는다 — findExpiredUnfulfilledPaidParticipants/findMyGroupPurchases와
-         동일하게 "목표 미달" 취급해 관리자가 계속 취소할 수 있게 한다(그렇지 않으면 이 행은 자동 환불
-         배치의 deadline 통과 전까지 영구히 취소 불가 상태로 남는다). -->
+         member_id도 WHERE에 넣어 작성자 본인 행만 갱신한다 — ADMIN 역할만으로는 다른 관리자의
+         게시글을 취소할 수 없다. target_quantity &lt;= 0(정상 생성 경로로는 나올 수 없는
+         레거시/비정상 데이터)인 행은 findList와 달리 여기서는 제외하지 않는다 —
+         findExpiredUnfulfilledPaidParticipants/findMyGroupPurchases와 동일하게 "목표 미달" 취급해
+         작성자가 계속 취소할 수 있게 한다(그렇지 않으면 이 행은 자동 환불 배치의 deadline 통과
+         전까지 영구히 취소 불가 상태로 남는다). -->
     <update id="cancelGroupPurchase">
         UPDATE group_purchase
         SET status = 'CANCELLED', is_urgent_active = 0
         WHERE gp_id = #{gpId}
+          AND member_id = #{memberId}
           AND status != 'CANCELLED'
           AND (target_quantity &lt;= 0 OR current_quantity &lt; target_quantity)
           AND deadline &gt;= NOW()

@@ -18,6 +18,7 @@ import com.aewol.domain.grouppurchase.dto.GroupPurchaseStatusParticipantResponse
 import com.aewol.domain.grouppurchase.dto.GroupPurchaseStatusResponse;
 import com.aewol.domain.grouppurchase.mapper.GroupPurchaseMapper;
 import com.aewol.domain.member.service.SimplePasswordVerificationService;
+import com.aewol.domain.notification.service.InboxNotifier;
 import com.aewol.domain.transaction.mapper.TransactionMapper;
 import com.aewol.domain.wallet.mapper.WalletMapper;
 import lombok.RequiredArgsConstructor;
@@ -52,6 +53,7 @@ public class GroupPurchaseServiceImpl implements GroupPurchaseService {
     private final WalletMapper walletMapper;
     private final TransactionMapper transactionMapper;
     private final SimplePasswordVerificationService simplePasswordVerificationService;
+    private final InboxNotifier inboxNotifier;
 
     /**
      * 목록 API의 status 쿼리 파라미터를 검증한다. 다른 3개 조회 API(getDetail/getStatus/getMyList)와
@@ -338,6 +340,18 @@ public class GroupPurchaseServiceImpl implements GroupPurchaseService {
             groupPurchaseMapper.updateDeliveryDate(gpId, LocalDate.now().plusDays(estimateDays));
         }
 
+        Object authorId = gp.get("member_id");
+        if (authorId != null && !String.valueOf(authorId).equals(memberId)) {
+            inboxNotifier.notifyAfterCommit(
+                    String.valueOf(authorId),
+                    InboxNotifier.Channel.COMMUNITY,
+                    "GROUP_PURCHASE",
+                    "공동구매에 참여가 들어왔어요",
+                    InboxNotifier.text(gp.get("product_name"), "공동구매")
+                            + "에 새 참여가 있어요.",
+                    "/group-purchase/" + gpId + "/status");
+        }
+
         return GroupPurchaseJoinResponse.builder()
                 .gpId(gpId)
                 .participantId(toLong(savedParticipant.get("participant_id")))
@@ -422,7 +436,9 @@ public class GroupPurchaseServiceImpl implements GroupPurchaseService {
      * 단일 액션이라 전체를 하나의 트랜잭션으로 묶는다 — 일부만 환불된 상태로 남는 것을 막기 위해서다.
      * cancelGroupPurchase의 원자적 WHERE절이 join()의 updateQuantity와 동일한 패턴으로 목표 수량 달성
      * (COMPLETED) 또는 마감(FAILED) 이후에는 취소를 거절한다.
-     * leave()와 동일하게, 호출한 관리자 본인의 간편 비밀번호를 처리 직전에 다시 검증한다.
+     * 작성자(gp.member_id)만 취소할 수 있다. ADMIN 역할만으로는 다른 관리자의 게시글을 취소하지
+     * 못하며, 이 검사는 PIN 검증보다 먼저 해서 남의 게시글에 비밀번호 실패 횟수를 쓰지 않는다.
+     * leave()와 동일하게, 호출한 작성자 본인의 간편 비밀번호를 처리 직전에 다시 검증한다.
      * findActiveParticipants는 FOR UPDATE로 조회한다(GroupPurchaseMapper.xml 참고) — 일반 SELECT였다면
      * REPEATABLE READ 스냅샷이 findById 시점에 고정돼, cancelGroupPurchase 실행 후 그 사이 동시에 커밋된
      * join() 참여가 이 목록에서 누락되어 결제는 됐는데 환불은 안 되는 경우가 생길 수 있었다.
@@ -434,10 +450,13 @@ public class GroupPurchaseServiceImpl implements GroupPurchaseService {
         if (gp == null) {
             throw BusinessException.notFound("공동구매를 찾을 수 없습니다.");
         }
+        if (!memberId.equals(String.valueOf(gp.get("member_id")))) {
+            throw BusinessException.forbidden("작성자만 공동구매를 취소할 수 있습니다.");
+        }
         if (!simplePasswordVerificationService.verify(memberId, password)) {
             throw new BusinessException("간편 비밀번호가 일치하지 않습니다.");
         }
-        if (groupPurchaseMapper.cancelGroupPurchase(gpId) == 0) {
+        if (groupPurchaseMapper.cancelGroupPurchase(gpId, memberId) == 0) {
             throw BusinessException.conflict("목표 수량 달성 또는 마감 후에는 취소할 수 없습니다.");
         }
 
@@ -546,6 +565,13 @@ public class GroupPurchaseServiceImpl implements GroupPurchaseService {
         txn.put("autoTagged", "N");
         txn.put("txnDate", LocalDateTime.now());
         transactionMapper.insert(txn);
+        inboxNotifier.notifyAfterCommit(
+                memberId,
+                InboxNotifier.Channel.PAYMENT,
+                "PAYMENT",
+                "결제가 완료됐어요",
+                "공동구매 결제에서 " + InboxNotifier.won(amount) + "이 결제됐어요.",
+                "/group-purchase/" + gp.get("gp_id") + "/status");
         return toLong(txn.get("txnId"));
     }
 

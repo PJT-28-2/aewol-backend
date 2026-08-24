@@ -9,7 +9,7 @@ import org.springframework.scheduling.concurrent.ThreadPoolTaskScheduler;
  * 스케줄 배치가 쓰는 스레드 풀.
  *
  * <p>빈을 두지 않으면 Spring은 <b>스레드 1개짜리</b> 스케줄러를 기본으로 쓴다. 지금 배치가
- * 스케줄 메서드가 8개라 하나가 길어지면 나머지가 전부 그 뒤에 줄을 선다.
+ * 스케줄 메서드가 9개라 하나가 길어지면 나머지가 전부 그 뒤에 줄을 선다.
  *
  * <p>실제로 겹칠 수 있는 조합이 있다. 홈 인사이트 예열(04:30)은 전 회원을 순회하며 회원당
  * LLM을 1~2초씩 호출하므로, 회원이 만 명이면 서너 시간이 걸린다. 그동안 09시 정기결제가
@@ -36,7 +36,7 @@ public class SchedulingConfig {
      * <p>잡을 추가하면 이 값도 같이 올려야 한다. 주석으로만 남기면 놓치기 쉬워
      * {@code SchedulingConfigTest}가 실제 {@code @Scheduled} 개수를 세어 확인한다.
      */
-    private static final int POOL_SIZE = 8;
+    private static final int POOL_SIZE = 9;
 
     @Bean
     public TaskScheduler taskScheduler() {

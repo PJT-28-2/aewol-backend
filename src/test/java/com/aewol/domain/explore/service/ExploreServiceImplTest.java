@@ -73,24 +73,22 @@ class ExploreServiceImplTest {
                         || field.getName().toLowerCase().contains("member")));
     }
 
-    // 공개 사본이 아직 없는 글이 섞이면 그리드에 빈 칸이 생긴다. #309 배포 전이나 복사
-    // 실패 시에도 깨진 피드가 나가지 않아야 한다.
     @Test
-    @DisplayName("공개 사진이 없는 글은 피드에서 뺀다")
-    void should_excludePosts_when_publicImageMissing() {
+    @DisplayName("공개 사본이 없는 글은 원본 서명 URL로 피드에 노출한다")
+    void should_useSignedUrl_when_publicImageMissing() {
         when(exploreMapper.findPublicPosts(isNull(), isNull(), anyInt())).thenReturn(List.of(
                 postRow("d-1", "2026-08-21 10:00:00"),
                 postRow("d-2", "2026-08-21 09:00:00")));
         when(exploreMapper.findImagesByDiaryIds(anyList())).thenReturn(List.of(
-                Map.of("diaryId", "d-1", "imageUrl", "diary/a.png", "publicImageKey", "public/x.png")));
+                Map.of("diaryId", "d-1", "imageUrl", "diary/a.png", "publicImageKey", "public/x.png"),
+                Map.of("diaryId", "d-2", "imageUrl", "diary/b.png")));
         when(fileStorage.publicUrl("public/x.png")).thenReturn("https://cdn.test/public/x.png");
 
         ExplorePageResponse page = service().getExploreFeed(null, 10);
 
-        assertEquals(1, page.getPosts().size());
+        assertEquals(2, page.getPosts().size());
         assertEquals("d-1", page.getPosts().get(0).getDiaryId());
-        // 필터로 한 칸이 비어도 커서는 조회한 마지막 행 기준이다. 화면이 sentinel을 유지해야
-        // 다음 장을 이어서 부를 수 있다.
+        assertEquals("signed:diary/b.png", page.getPosts().get(1).getImageUrl());
         assertNull(page.getNextCursor());
     }
 
@@ -107,6 +105,21 @@ class ExploreServiceImplTest {
 
         assertTrue(page.getPosts().isEmpty());
         assertEquals("2026-08-21 11:00:00|d-2", page.getNextCursor());
+    }
+
+    @Test
+    @DisplayName("공개 사본 URL을 만들 수 없으면 원본 서명 URL을 사용한다")
+    void should_useSignedUrl_when_publicUrlUnavailable() {
+        when(exploreMapper.findPublicPosts(isNull(), isNull(), anyInt()))
+                .thenReturn(List.of(postRow("d-1", "2026-08-21 10:00:00")));
+        when(exploreMapper.findImagesByDiaryIds(List.of("d-1"))).thenReturn(List.of(
+                Map.of("diaryId", "d-1", "imageUrl", "diary/a.png",
+                        "publicImageKey", "public/x.png")));
+        when(fileStorage.publicUrl("public/x.png")).thenReturn(null);
+
+        ExplorePageResponse page = service().getExploreFeed(null, 10);
+
+        assertEquals("signed:diary/a.png", page.getPosts().get(0).getImageUrl());
     }
 
     @Test

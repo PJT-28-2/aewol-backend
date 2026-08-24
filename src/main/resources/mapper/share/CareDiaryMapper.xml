@@ -199,6 +199,15 @@
         WHERE r.report_id = #{reportId}
     </select>
 
+    <select id="findLinkedReportDiaryByInquiryId" resultType="map">
+        SELECT r.diary_id AS diaryId,
+               d.hidden_by_report_at AS hiddenByReportAt
+        FROM diary_report r
+        JOIN care_diary d ON d.diary_id = r.diary_id
+        WHERE r.inquiry_id = #{inquiryId}
+        LIMIT 1
+    </select>
+
     <update id="resolvePendingReportsByDiary">
         UPDATE diary_report
            SET status = 'RESOLVED',
@@ -207,6 +216,17 @@
                resolved_by = #{resolvedBy},
                resolved_at = NOW()
         WHERE diary_id = #{diaryId}
+          AND status = 'PENDING'
+    </update>
+
+    <update id="resolvePendingReportsByInquiryId">
+        UPDATE diary_report
+           SET status = 'RESOLVED',
+               resolution = #{resolution},
+               admin_note = #{adminNote},
+               resolved_by = #{resolvedBy},
+               resolved_at = NOW()
+        WHERE inquiry_id = #{inquiryId}
           AND status = 'PENDING'
     </update>
 

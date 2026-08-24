@@ -66,16 +66,14 @@ class TossChargeServiceTest {
     // ── 기존 charge() 시나리오 ─────────────────────────────────────────────────
 
     @Test
-    void should_creditTossConfirmedTotalAmountNotRequestAmount_when_confirmSucceeds() {
+    void should_creditOrderedAmount_when_tossTotalAmountMatches() {
         init();
         stubOrderFound();
         stubWalletFound();
-        // Request asks to charge 10000, but Toss confirms only 9500 was actually approved.
-        // If these were equal, asserting amount == totalAmount would pass vacuously.
-        TossConfirmResult confirmResult = TossConfirmResult.success(9500L, Map.of("status", "DONE"));
+        TossConfirmResult confirmResult = TossConfirmResult.success(10000L, Map.of("status", "DONE"));
         when(tossPaymentsClient.confirmPayment(PAYMENT_KEY, ORDER_ID, 10000L)).thenReturn(confirmResult);
         WalletResponse expectedResponse = WalletResponse.builder()
-                .walletId("1").memberId(MEMBER_ID).totalBalance(new BigDecimal("9500")).build();
+                .walletId("1").memberId(MEMBER_ID).totalBalance(new BigDecimal("10000")).build();
         when(walletService.depositExternal(any())).thenReturn(expectedResponse);
 
         WalletResponse actual = service.charge(MEMBER_ID, request(new BigDecimal("10000")));
@@ -83,11 +81,51 @@ class TossChargeServiceTest {
         assertSame(expectedResponse, actual);
         ArgumentCaptor<ExternalChargeCommand> captor = ArgumentCaptor.forClass(ExternalChargeCommand.class);
         verify(walletService).depositExternal(captor.capture());
-        ExternalChargeCommand command = captor.getValue();
-        assertEquals(PAYMENT_KEY, command.getPaymentKey());
-        assertEquals(ORDER_ID, command.getOrderId());
-        assertEquals(new BigDecimal("9500"), command.getAmount());
-        assertNotEquals(new BigDecimal("10000"), command.getAmount());
+        assertEquals(new BigDecimal("10000"), captor.getValue().getAmount());
+        verify(tossPaymentsClient, never()).cancelPayment(anyString(), anyString());
+        verify(tossPaymentClaim, never()).release(anyString());
+    }
+
+    @Test
+    void should_cancelAndSkipDeposit_when_tossTotalAmountDiffersFromOrder() {
+        init();
+        stubOrderFound();
+        stubWalletFound();
+        // 10,000원 주문인데 Toss가 9,500원만 승인하면 원장에 넣지 않고 취소한다.
+        TossConfirmResult confirmResult = TossConfirmResult.success(9500L, Map.of("status", "DONE"));
+        when(tossPaymentsClient.confirmPayment(PAYMENT_KEY, ORDER_ID, 10000L)).thenReturn(confirmResult);
+        when(tossPaymentsClient.cancelPayment(eq(PAYMENT_KEY), anyString()))
+                .thenReturn(TossCancelResult.success());
+
+        BusinessException ex = assertThrows(BusinessException.class,
+                () -> service.charge(MEMBER_ID, request(new BigDecimal("10000"))));
+
+        assertEquals(HttpStatus.CONFLICT, ex.getStatus());
+        assertEquals("승인 금액이 주문 금액과 일치하지 않습니다.", ex.getMessage());
+        verify(walletService, never()).depositExternal(any());
+        ArgumentCaptor<String> reasonCaptor = ArgumentCaptor.forClass(String.class);
+        verify(tossPaymentsClient).cancelPayment(eq(PAYMENT_KEY), reasonCaptor.capture());
+        assertEquals("승인 금액이 주문 금액과 일치하지 않아 자동 취소", reasonCaptor.getValue());
+        verify(auditLogger).compensated();
+        verify(tossPaymentClaim).release(ORDER_ID);
+    }
+
+    @Test
+    void should_keepClaim_when_amountMismatchCancelFails() {
+        init();
+        stubOrderFound();
+        stubWalletFound();
+        when(tossPaymentsClient.confirmPayment(PAYMENT_KEY, ORDER_ID, 10000L))
+                .thenReturn(TossConfirmResult.success(9500L, Map.of("status", "DONE")));
+        when(tossPaymentsClient.cancelPayment(eq(PAYMENT_KEY), anyString()))
+                .thenReturn(TossCancelResult.failure("FORBIDDEN_CONSECUTIVE_TRANSACTION", "취소 실패"));
+
+        BusinessException ex = assertThrows(BusinessException.class,
+                () -> service.charge(MEMBER_ID, request(new BigDecimal("10000"))));
+
+        assertEquals(HttpStatus.INTERNAL_SERVER_ERROR, ex.getStatus());
+        verify(walletService, never()).depositExternal(any());
+        verify(auditLogger).compensationFailed();
         verify(tossPaymentClaim, never()).release(anyString());
     }
 

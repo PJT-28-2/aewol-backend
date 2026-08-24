@@ -10,6 +10,7 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import javax.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PutMapping;
@@ -44,8 +45,10 @@ public class AdminInquiryController {
     @Operation(summary = "문의 답변 등록 또는 수정")
     @PutMapping("/{inquiryId}/answer")
     public ResponseEntity<ApiResponse<InquiryDetailResponse>> answerInquiry(
+            @AuthenticationPrincipal String adminId,
             @PathVariable String inquiryId,
             @Valid @RequestBody InquiryAnswerRequest request) {
-        return ResponseEntity.ok(ApiResponse.success(inquiryService.answerInquiry(inquiryId, request.getAnswer())));
+        return ResponseEntity.ok(ApiResponse.success(
+                inquiryService.answerInquiry(adminId, inquiryId, request.getAnswer())));
     }
 }

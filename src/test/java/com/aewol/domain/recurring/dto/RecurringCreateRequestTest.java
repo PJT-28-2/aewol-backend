@@ -85,4 +85,15 @@ class RecurringCreateRequestTest {
 
         assertEquals("반려동물을 선택해 주세요.", violations.iterator().next().getMessage());
     }
+
+    @Test
+    void should_rejectRequest_when_idempotencyKeyExceedsMaxLength() {
+        RecurringCreateRequest request = new RecurringCreateRequest(
+                "강아지 사료", new BigDecimal("32000"), 15, "FOOD", "pet-1", "k".repeat(65));
+
+        Set<ConstraintViolation<RecurringCreateRequest>> violations = validator.validate(request);
+
+        assertEquals("중복 요청 방지 키는 64자 이하여야 합니다.",
+                violations.iterator().next().getMessage());
+    }
 }
