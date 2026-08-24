@@ -7,11 +7,13 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.aewol.common.exception.BusinessException;
+import com.aewol.domain.donation.PotTransfer;
 import com.aewol.domain.donation.mapper.DonationMapper;
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -21,6 +23,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
@@ -37,11 +40,7 @@ class DonationRoundUpExecutorTest {
     @DisplayName("31,275원을 1,000원 단위로 깎으면 275원을 저금통으로 옮긴다")
     void should_transferRemainder_when_walletHasSpareChange() {
         LocalDate today = LocalDate.now(DonationRoundUpExecutor.SEOUL);
-        when(donationMapper.findSettingsForUpdate("member-1")).thenReturn(settings(true, "1000", null));
-        when(donationMapper.findMainWalletForUpdate("member-1"))
-                .thenReturn(wallet("wallet-1", "31275"));
-        when(donationMapper.findPotByMemberId("member-1")).thenReturn(wallet("pot-1", "0"));
-        when(donationMapper.findPotForUpdate("member-1")).thenReturn(wallet("pot-1", "0"));
+        stubReadyToTransfer("31275");
         when(donationMapper.decreaseMainWalletBalance("wallet-1", new BigDecimal("275"))).thenReturn(1);
         when(donationMapper.increasePotBalance("pot-1", new BigDecimal("275"))).thenReturn(1);
         when(donationMapper.markSpareTrimmed("member-1", today)).thenReturn(1);
@@ -56,19 +55,27 @@ class DonationRoundUpExecutorTest {
         assertEquals("wallet-1", captor.getValue().get("sourceWalletId"));
         assertEquals("pot-1", captor.getValue().get("counterWalletId"));
         assertEquals(new BigDecimal("275"), captor.getValue().get("amount"));
-        assertEquals("spare-trim-member-1-" + today, captor.getValue().get("idempotencyKey"));
+        assertEquals(PotTransfer.spareTrimKey("member-1", today), captor.getValue().get("idempotencyKey"));
+        assertEquals(PotTransfer.PURPOSE_SPARE_TRIM, captor.getValue().get("transferPurpose"));
         verify(donationMapper).markSpareTrimmed("member-1", today);
+
+        InOrder lockOrder = inOrder(donationMapper);
+        lockOrder.verify(donationMapper).findSettings("member-1");
+        lockOrder.verify(donationMapper).findMainWalletForUpdate("member-1");
+        lockOrder.verify(donationMapper).findPotForUpdate("member-1");
+        lockOrder.verify(donationMapper).findSettingsForUpdate("member-1");
     }
 
     @Test
     @DisplayName("저금통이 아직 없는 회원이면 만든 뒤 잠가서 처리한다")
     void should_createPot_when_potDoesNotExistYet() {
         LocalDate today = LocalDate.now(DonationRoundUpExecutor.SEOUL);
-        when(donationMapper.findSettingsForUpdate("member-1")).thenReturn(settings(true, "1000", null));
+        when(donationMapper.findSettings("member-1")).thenReturn(settings(true, "1000", null));
         when(donationMapper.findMainWalletForUpdate("member-1"))
                 .thenReturn(wallet("wallet-1", "31275"));
         when(donationMapper.findPotByMemberId("member-1")).thenReturn(null, wallet("pot-1", "0"));
         when(donationMapper.findPotForUpdate("member-1")).thenReturn(wallet("pot-1", "0"));
+        when(donationMapper.findSettingsForUpdate("member-1")).thenReturn(settings(true, "1000", null));
         when(donationMapper.decreaseMainWalletBalance(eq("wallet-1"), any())).thenReturn(1);
         when(donationMapper.increasePotBalance(eq("pot-1"), any())).thenReturn(1);
         when(donationMapper.markSpareTrimmed("member-1", today)).thenReturn(1);
@@ -83,9 +90,7 @@ class DonationRoundUpExecutorTest {
     @DisplayName("잔액이 저금 단위로 딱 나눠떨어지면 표시만 하고 이체하지 않는다")
     void should_markTrimmedWithoutTransfer_when_balanceDividesEvenly() {
         LocalDate today = LocalDate.now(DonationRoundUpExecutor.SEOUL);
-        when(donationMapper.findSettingsForUpdate("member-1")).thenReturn(settings(true, "1000", null));
-        when(donationMapper.findMainWalletForUpdate("member-1"))
-                .thenReturn(wallet("wallet-1", "31000"));
+        stubReadyToTransfer("31000");
         when(donationMapper.markSpareTrimmed("member-1", today)).thenReturn(1);
 
         boolean result = executor().execute(candidate("member-1"));
@@ -97,10 +102,24 @@ class DonationRoundUpExecutorTest {
     }
 
     @Test
+    @DisplayName("나머지 0인데 이미 오늘 표시된 회원이면 markSpareTrimmed 0을 받아도 예외 없이 건너뛴다")
+    void should_skipWithoutThrowing_when_remainderIsZeroAndMarkAffectsNoRows() {
+        LocalDate today = LocalDate.now(DonationRoundUpExecutor.SEOUL);
+        stubReadyToTransfer("31000");
+        when(donationMapper.markSpareTrimmed("member-1", today)).thenReturn(0);
+
+        boolean result = executor().execute(candidate("member-1"));
+
+        assertFalse(result);
+        verify(donationMapper).markSpareTrimmed("member-1", today);
+        verify(donationMapper, never()).insertWalletTransaction(anyMap());
+    }
+
+    @Test
     @DisplayName("오늘 이미 깎은 회원이면 지갑을 건드리지 않는다")
     void should_skipWithoutTouchingWallets_when_alreadyTrimmedToday() {
         LocalDate today = LocalDate.now(DonationRoundUpExecutor.SEOUL);
-        when(donationMapper.findSettingsForUpdate("member-1"))
+        when(donationMapper.findSettings("member-1"))
                 .thenReturn(settings(true, "1000", today));
 
         boolean result = executor().execute(candidate("member-1"));
@@ -114,7 +133,7 @@ class DonationRoundUpExecutorTest {
     @Test
     @DisplayName("저금통 사용이 꺼져 있으면 이체하지 않는다")
     void should_skip_when_piggyBankIsDisabled() {
-        when(donationMapper.findSettingsForUpdate("member-1")).thenReturn(settings(false, "1000", null));
+        when(donationMapper.findSettings("member-1")).thenReturn(settings(false, "1000", null));
 
         boolean result = executor().execute(candidate("member-1"));
 
@@ -125,7 +144,7 @@ class DonationRoundUpExecutorTest {
     @Test
     @DisplayName("적립 단위가 0 이하면 이체하지 않는다")
     void should_skip_when_savingUnitIsNotPositive() {
-        when(donationMapper.findSettingsForUpdate("member-1")).thenReturn(settings(true, "0", null));
+        when(donationMapper.findSettings("member-1")).thenReturn(settings(true, "0", null));
 
         boolean result = executor().execute(candidate("member-1"));
 
@@ -136,11 +155,7 @@ class DonationRoundUpExecutorTest {
     @Test
     @DisplayName("잔액 차감이 실패하면 예외를 던지고 절삭 완료로 넘어가지 않는다")
     void should_throw_andNotMark_when_decreaseMainAffectsNoRows() {
-        when(donationMapper.findSettingsForUpdate("member-1")).thenReturn(settings(true, "1000", null));
-        when(donationMapper.findMainWalletForUpdate("member-1"))
-                .thenReturn(wallet("wallet-1", "31275"));
-        when(donationMapper.findPotByMemberId("member-1")).thenReturn(wallet("pot-1", "0"));
-        when(donationMapper.findPotForUpdate("member-1")).thenReturn(wallet("pot-1", "0"));
+        stubReadyToTransfer("31275");
         when(donationMapper.decreaseMainWalletBalance(eq("wallet-1"), any())).thenReturn(0);
 
         assertThrows(BusinessException.class, () -> executor().execute(candidate("member-1")));
@@ -160,6 +175,15 @@ class DonationRoundUpExecutorTest {
                 DonationRoundUpExecutor.truncatedRemainder(new BigDecimal("31275"), new BigDecimal("10")));
         assertEquals(BigDecimal.ZERO,
                 DonationRoundUpExecutor.truncatedRemainder(new BigDecimal("31000"), new BigDecimal("1000")));
+    }
+
+    private void stubReadyToTransfer(String mainBalance) {
+        when(donationMapper.findSettings("member-1")).thenReturn(settings(true, "1000", null));
+        when(donationMapper.findMainWalletForUpdate("member-1"))
+                .thenReturn(wallet("wallet-1", mainBalance));
+        when(donationMapper.findPotByMemberId("member-1")).thenReturn(wallet("pot-1", "0"));
+        when(donationMapper.findPotForUpdate("member-1")).thenReturn(wallet("pot-1", "0"));
+        when(donationMapper.findSettingsForUpdate("member-1")).thenReturn(settings(true, "1000", null));
     }
 
     private Map<String, Object> candidate(String memberId) {

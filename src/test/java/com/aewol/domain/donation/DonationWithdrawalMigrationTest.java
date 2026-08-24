@@ -65,6 +65,7 @@ class DonationWithdrawalMigrationTest {
                     txn_type VARCHAR(20) NULL,
                     price DECIMAL(15,2) NULL,
                     auto_tagged CHAR(1) NULL DEFAULT 'N',
+                    transfer_purpose VARCHAR(32) NULL,
                     PRIMARY KEY (txn_id)
                 )
                 """);
@@ -163,8 +164,8 @@ class DonationWithdrawalMigrationTest {
                                   String idempotencyKey, BigDecimal amount) throws Exception {
         try (PreparedStatement statement = connection.prepareStatement(
                 "INSERT INTO `transaction` "
-                        + "(wallet_id, txn_type, price, auto_tagged, idempotency_key) "
-                        + "VALUES (?, 'TRANSFER', ?, 'N', ?)")) {
+                        + "(wallet_id, txn_type, price, auto_tagged, idempotency_key, transfer_purpose) "
+                        + "VALUES (?, 'TRANSFER', ?, 'N', ?, 'POT_WITHDRAW')")) {
             statement.setLong(1, walletId);
             statement.setBigDecimal(2, amount);
             statement.setString(3, idempotencyKey);
