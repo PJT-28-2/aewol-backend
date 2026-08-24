@@ -58,7 +58,7 @@ class ShareServiceImplTest {
         when(petMapper.findById("pet-1")).thenReturn(map("pet_id", "pet-1", "member_id", "owner-1"));
         when(shareMapper.findMainWalletByMemberId("owner-1"))
                 .thenReturn(map("wallet_id", "wallet-1", "balance", BigDecimal.ZERO));
-        when(memberMapper.findByEmail("family@example.com")).thenReturn(null);
+        when(memberMapper.findActiveByEmail("family@example.com")).thenReturn(null);
         when(shareMapper.findActiveInvite("pet-1", "family@example.com", null)).thenReturn(null);
 
         ShareInviteResponse result = service.invite("owner-1", request);
@@ -173,13 +173,33 @@ class ShareServiceImplTest {
         ReflectionTestUtils.setField(request, "recipient", "family@example.com");
         ReflectionTestUtils.setField(request, "role", "VIEWER");
         givenOwnedPetWithWallet();
-        when(memberMapper.findByEmail("family@example.com")).thenReturn(null);
+        when(memberMapper.findActiveByEmail("family@example.com")).thenReturn(null);
         when(shareMapper.findActiveInvite("pet-1", "family@example.com", null)).thenReturn(null);
         LocalDateTime before = LocalDateTime.now();
 
         service.invite("owner-1", request);
 
         assertTrue(capturedExpiry().isAfter(before.plusDays(6)));
+    }
+
+    @Test
+    @DisplayName("탈퇴 회원 이메일로는 초대 대상 계정을 연결하지 않는다")
+    void should_notBindInvite_when_emailBelongsToInactiveMember() {
+        ShareServiceImpl service = service();
+        ShareInviteRequest request = new ShareInviteRequest();
+        ReflectionTestUtils.setField(request, "petId", "pet-1");
+        ReflectionTestUtils.setField(request, "recipient", "gone@example.com");
+        ReflectionTestUtils.setField(request, "role", "VIEWER");
+        givenOwnedPetWithWallet();
+        when(memberMapper.findActiveByEmail("gone@example.com")).thenReturn(null);
+        when(shareMapper.findActiveInvite("pet-1", "gone@example.com", null)).thenReturn(null);
+
+        service.invite("owner-1", request);
+
+        ArgumentCaptor<Map<String, Object>> captor = ArgumentCaptor.forClass(Map.class);
+        verify(shareMapper).insert(captor.capture());
+        assertNull(captor.getValue().get("memberId"));
+        verify(memberMapper, never()).findByEmail(any());
     }
 
     private ShareServiceImpl service() {
