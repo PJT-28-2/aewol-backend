@@ -36,6 +36,7 @@ import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -236,6 +237,7 @@ class ClaimServiceImplTest {
         when(insuranceMapper.findClaimById("1"))
                 .thenReturn(claimRow(1L, 100L, 10L, null, null, null, "{}", "DRAFT"))
                 .thenReturn(claimRow(1L, 100L, 10L, "애월동물병원", "2026-01-01", new BigDecimal("15000"), "{}", "SUBMITTED"));
+        when(insuranceMapper.updateClaim(any())).thenReturn(1);
 
         ClaimConfirmRequest corrected = ClaimConfirmRequest.builder()
                 .hospitalName("애월동물병원")
@@ -260,6 +262,7 @@ class ClaimServiceImplTest {
         Map<String, Object> existing = claimRow(1L, 100L, 10L, "기존병원", "2025-12-01",
                 new BigDecimal("9000"), "{\"hospital_name\":\"기존병원\"}", "DRAFT");
         when(insuranceMapper.findClaimById("1")).thenReturn(existing);
+        when(insuranceMapper.updateClaim(any())).thenReturn(1);
 
         service.confirmClaim("100", "1", null);
 
@@ -322,6 +325,26 @@ class ClaimServiceImplTest {
 
         assertEquals(HttpStatus.CONFLICT, ex.getStatus());
         verify(insuranceMapper, never()).updateClaim(any());
+    }
+
+    @Test
+    @DisplayName("confirmClaim은 DRAFT 행을 갱신하지 못하면 재제출로 보지 않는다")
+    void should_rejectConfirmClaim_whenDraftUpdateAffectsNoRow() {
+        service = new ClaimServiceImpl(insuranceMapper, petMapper, paddleOcrClient, fileStorage);
+        when(insuranceMapper.findClaimById("1")).thenReturn(
+                claimRow(1L, 100L, 10L, "애월동물병원", "2026-01-01", new BigDecimal("15000"), "{}", "DRAFT"));
+        when(insuranceMapper.updateClaim(any())).thenReturn(0);
+
+        BusinessException ex = assertThrows(BusinessException.class,
+                () -> service.confirmClaim("100", "1", ClaimConfirmRequest.builder()
+                        .hospitalName("다른병원")
+                        .treatmentDate(LocalDate.of(2026, 1, 2))
+                        .totalAmount(new BigDecimal("1"))
+                        .build()));
+
+        assertEquals(HttpStatus.CONFLICT, ex.getStatus());
+        verify(insuranceMapper).updateClaim(any());
+        verify(insuranceMapper, times(1)).findClaimById("1");
     }
 
     // ---------- getClaims ----------
