@@ -75,6 +75,36 @@ class HomeInsightServiceImplTest {
         verify(homeInsightMapper, never()).upsert(any());
     }
 
+    // 도넛 데이터는 캐시가 아니라 매 요청 계산한 값이다. 캐시 미스라고 빼면
+    // 홈 화면에서 도넛 차트만 사라진 카드가 내려간다.
+    @Test
+    @DisplayName("캐시 미스 응답에도 도넛 차트 데이터와 추천 상품을 담는다")
+    void should_includeCategoryBreakdown_when_cacheMisses() {
+        when(homeInsightMapper.findFreshByMemberId("m1")).thenReturn(List.of());
+        InsightCard card = InsightCard.builder()
+                .type(InsightCardType.SPENDING)
+                .headline("이번 달 지출 100,000원")
+                .facts("총 지출: 100,000원")
+                .fallbackBody("대체 문구")
+                .ctaLabel("내역 보기")
+                .ctaPath("/wallet/history")
+                .digest("d1")
+                .recommendedProducts(List.of())
+                .categoryBreakdown(List.of(com.aewol.domain.insight.dto.CategoryShare.builder()
+                        .label("사료")
+                        .amount(java.math.BigDecimal.valueOf(41000))
+                        .percentage(41)
+                        .build()))
+                .build();
+
+        List<HomeInsightResponse> cards =
+                service(List.of(collector(InsightCardType.SPENDING, card)), true).getCards("m1", null);
+
+        assertEquals(1, cards.get(0).getCategoryBreakdown().size());
+        assertEquals("사료", cards.get(0).getCategoryBreakdown().get(0).getLabel());
+        assertEquals(List.of(), cards.get(0).getRecommendedProducts());
+    }
+
     @Test
     @DisplayName("생성된 문구를 캐시에 저장한다")
     void should_storeGeneratedBody() {
