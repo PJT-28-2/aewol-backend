@@ -103,7 +103,7 @@ class AdminInquiryControllerSecurityTest {
                         .content("{\"answer\":\"처리했습니다.\"}"))
                 .andExpect(status().isForbidden());
 
-        verify(inquiryService, never()).answerInquiry(any(), any());
+        verify(inquiryService, never()).answerInquiry(any(), any(), any());
     }
 
     @Test
@@ -116,7 +116,7 @@ class AdminInquiryControllerSecurityTest {
                         .content("{\"answer\":\"처리했습니다.\"}"))
                 .andExpect(status().isOk());
 
-        verify(inquiryService).answerInquiry(eq("25"), eq("처리했습니다."));
+        verify(inquiryService).answerInquiry(eq("member-1"), eq("25"), eq("처리했습니다."));
     }
 
     private void stubAccessToken(String role) {

@@ -9,6 +9,7 @@ import com.aewol.domain.inquiry.dto.InquiryCreateResponse;
 import com.aewol.domain.inquiry.dto.InquiryDetailResponse;
 import com.aewol.domain.inquiry.dto.InquiryListResponse;
 import com.aewol.domain.inquiry.mapper.InquiryMapper;
+import com.aewol.domain.share.mapper.CareDiaryMapper;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -26,6 +27,7 @@ class InquiryServiceImplTest {
 
     @Mock InquiryMapper inquiryMapper;
     @Mock FileStorage fileStorage;
+    @Mock CareDiaryMapper careDiaryMapper;
     @InjectMocks InquiryServiceImpl service;
 
     private static final String MEMBER_ID = "9001";
@@ -238,9 +240,11 @@ class InquiryServiceImplTest {
                 .thenReturn(inquiryDetailRow("ANSWERED", "확인 후 조치했습니다."));
         when(inquiryMapper.findAttachmentsByInquiryId(INQUIRY_ID)).thenReturn(List.of());
 
-        InquiryDetailResponse result = service.answerInquiry(INQUIRY_ID, "  확인 후 조치했습니다.  ");
+        InquiryDetailResponse result = service.answerInquiry("admin-1", INQUIRY_ID, "  확인 후 조치했습니다.  ");
 
         verify(inquiryMapper).updateAnswer(INQUIRY_ID, "확인 후 조치했습니다.");
+        verify(careDiaryMapper).resolvePendingReportsByInquiryId(
+                INQUIRY_ID, "KEEP_HIDDEN", "확인 후 조치했습니다.", "admin-1");
         assertEquals("ANSWERED", result.getStatus());
         assertEquals("확인 후 조치했습니다.", result.getAnswer());
     }
@@ -251,20 +255,22 @@ class InquiryServiceImplTest {
         when(inquiryMapper.updateAnswer(INQUIRY_ID, "답변")).thenReturn(0);
 
         BusinessException ex = assertThrows(BusinessException.class,
-                () -> service.answerInquiry(INQUIRY_ID, "답변"));
+                () -> service.answerInquiry("admin-1", INQUIRY_ID, "답변"));
 
         assertEquals(org.springframework.http.HttpStatus.NOT_FOUND, ex.getStatus());
         verify(inquiryMapper, never()).findById(any());
+        verify(careDiaryMapper, never()).resolvePendingReportsByInquiryId(any(), any(), any(), any());
     }
 
     @Test
     @DisplayName("빈 답변은 저장하지 않고 400 예외를 던진다")
     void should_throwBadRequest_when_adminAnswerIsBlank() {
         BusinessException ex = assertThrows(BusinessException.class,
-                () -> service.answerInquiry(INQUIRY_ID, "   "));
+                () -> service.answerInquiry("admin-1", INQUIRY_ID, "   "));
 
         assertEquals(org.springframework.http.HttpStatus.BAD_REQUEST, ex.getStatus());
         verify(inquiryMapper, never()).updateAnswer(any(), any());
+        verify(careDiaryMapper, never()).resolvePendingReportsByInquiryId(any(), any(), any(), any());
     }
 
     private Map<String, Object> inquiryDetailRow(String status, String answer) {
