@@ -65,7 +65,7 @@ class RecurringControllerTest {
     @Test
     void should_return201_when_creatingRecurringPayment() throws Exception {
         RecurringCreateRequest request = new RecurringCreateRequest(
-                "강아지 사료", new BigDecimal("32000"), 15, "FOOD", "pet-1");
+                "강아지 사료", new BigDecimal("32000"), 15, "FOOD", "pet-1", "recurring-key-1");
         when(recurringService.createRecurring(any(), any())).thenReturn(RecurringResponse.builder()
                 .recurringId("10")
                 .itemName("강아지 사료")
@@ -87,7 +87,7 @@ class RecurringControllerTest {
     @Test
     void should_return400_when_createRequestIsInvalid() throws Exception {
         RecurringCreateRequest request = new RecurringCreateRequest(
-                "강아지 사료", BigDecimal.ZERO, 32, "SOS", null);
+                "강아지 사료", BigDecimal.ZERO, 32, "SOS", null, null);
 
         mockMvc.perform(post("/api/recurring")
                         .contentType(MediaType.APPLICATION_JSON)
