@@ -196,8 +196,15 @@ public class TossChargeService {
                 break;
         }
 
-        // 4. 원장 기록 — 적립 금액은 요청 DTO의 amount가 아니라 Toss confirm이 확정한
-        // totalAmount를 쓴다. 클라이언트가 보낸 금액을 그대로 신뢰하지 않는다.
+        // 4. 승인 금액 검증 — confirm에 넣은 주문 금액과 Toss가 실제로 잡은 totalAmount가
+        // 같아야 적립한다. 다르면 원장에 넣지 않고 즉시 취소한다. 9,500원을 적립하면
+        // 주문은 10,000원인데 잔액만 적어져 이후 대사·환불이 어긋난다.
+        if (result.getTotalAmount() == null || result.getTotalAmount() != confirmAmount) {
+            rejectMismatchedApprovedAmount(paymentKey, orderId);
+        }
+
+        // 5. 원장 기록 — 여기까지 왔으면 totalAmount == 주문 금액이다. 요청 DTO 금액을
+        // 다시 쓰지 않고 승인이 확정한 값을 그대로 적립한다.
         ExternalChargeCommand command = ExternalChargeCommand.builder()
                 .memberId(memberId)
                 .amount(BigDecimal.valueOf(result.getTotalAmount()))
@@ -208,7 +215,7 @@ public class TossChargeService {
         try {
             WalletResponse response = walletService.depositExternal(command);
 
-            // 5. 주문 상태 업데이트 — 성공 클레임은 해제하지 않고 TTL(10분) 만료까지 유지한다.
+            // 6. 주문 상태 업데이트 — 성공 클레임은 해제하지 않고 TTL(10분) 만료까지 유지한다.
             // updateStatus 실패는 이미 완료된 충전을 취소하지 않는다. payment_key UNIQUE 제약이
             // 재충전을 막으므로 APPROVED 마킹은 감사 목적이며, 실패 시 경고 로그만 남긴다.
             markOrderApprovedBestEffort(orderId);
@@ -240,6 +247,7 @@ public class TossChargeService {
      * 않는 내부 처리에도 전달하지 않는다.
      */
     private static final String CANCEL_REASON = "지갑 충전 기록 실패로 인한 자동 취소";
+    private static final String AMOUNT_MISMATCH_CANCEL_REASON = "승인 금액이 주문 금액과 일치하지 않아 자동 취소";
 
     /** 실제 원장에 기록된 회원·주문·결제키·금액이 모두 같을 때만 완료 재요청으로 인정한다. */
     private boolean hasMatchingCompletedCharge(String memberId, TossChargeRequest request) {
@@ -268,6 +276,26 @@ public class TossChargeService {
             // 원장이 진실의 원천이므로 상태 갱신 실패가 완료 재시도를 막아서는 안 된다.
             log.warn("충전 주문 상태 업데이트 실패 - orderId: {}", orderId, updateEx);
         }
+    }
+
+    /**
+     * 승인 금액이 주문과 다르면 적립하지 않고 Toss 취소를 시도한다.
+     *
+     * <p>취소가 성공하면 클레임을 풀어 새 주문을 받을 수 있게 한다. 같은 paymentKey로
+     * confirm을 다시 치면 이미 취소된 결제가 된다. 취소가 실패하면 클레임을 유지하고
+     * 500으로 남긴다 — 풀어 재시도하면 이중 청구가 될 수 있다.
+     */
+    private void rejectMismatchedApprovedAmount(String paymentKey, String orderId) {
+        TossCancelResult cancelResult = tossPaymentsClient.cancelPayment(
+                paymentKey, AMOUNT_MISMATCH_CANCEL_REASON);
+        if (!cancelResult.isSuccess()) {
+            auditLogger.compensationFailed();
+            throw new BusinessException(HttpStatus.INTERNAL_SERVER_ERROR,
+                    "충전 처리 중 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.");
+        }
+        auditLogger.compensated();
+        tossPaymentClaim.release(orderId);
+        throw new BusinessException(HttpStatus.CONFLICT, "승인 금액이 주문 금액과 일치하지 않습니다.");
     }
 
     private void compensate(String paymentKey) {

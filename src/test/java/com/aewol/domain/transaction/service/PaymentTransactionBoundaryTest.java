@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
 
+import com.aewol.domain.notification.service.InboxNotifier;
 import com.aewol.domain.pet.mapper.PetMapper;
 import com.aewol.common.exception.BusinessException;
 import com.aewol.domain.transaction.dto.PaymentRecordCommand;
@@ -44,10 +45,11 @@ class PaymentTransactionBoundaryTest {
     @Mock WalletMapper walletMapper;
     @Mock AutoTaggingService autoTaggingService;
     @Mock PetMapper petMapper;
+    @Mock InboxNotifier inboxNotifier;
 
     private TransactionServiceImpl service() {
         return new TransactionServiceImpl(transactionMapper, walletMapper, autoTaggingService, petMapper,
-                new PaymentLedgerService(transactionMapper, walletMapper));
+                new PaymentLedgerService(transactionMapper, walletMapper, inboxNotifier));
     }
 
     /*
@@ -127,7 +129,7 @@ class PaymentTransactionBoundaryTest {
     @Test
     @DisplayName("기록한 거래를 읽는 것도 원장 트랜잭션 안에서 한다")
     void should_readSavedRow_insideLedgerTransaction() {
-        PaymentLedgerService ledger = new PaymentLedgerService(transactionMapper, walletMapper);
+        PaymentLedgerService ledger = new PaymentLedgerService(transactionMapper, walletMapper, inboxNotifier);
 
         Map<String, Object> wallet = new HashMap<>();
         wallet.put("wallet_id", "wallet-1");

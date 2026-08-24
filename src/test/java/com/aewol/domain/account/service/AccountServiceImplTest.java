@@ -286,6 +286,7 @@ private static final String ACCOUNT_ID = "1";
         verification.put("status", "VERIFIED");
         verification.put("bank_code", "004");
         verification.put("account_number", "1234567890");
+        verification.put("requested_at", LocalDateTime.now());
         when(accountVerificationMapper.findById(TRANSACTION_ID)).thenReturn(verification);
         when(accountVerificationMapper.markUsedIfVerified(TRANSACTION_ID)).thenReturn(1);
         doAnswer(invocation -> {
@@ -312,6 +313,7 @@ private static final String ACCOUNT_ID = "1";
         verification.put("status", "VERIFIED");
         verification.put("bank_code", "004");
         verification.put("account_number", "1234567890");
+        verification.put("requested_at", LocalDateTime.now());
         when(accountVerificationMapper.findById(TRANSACTION_ID)).thenReturn(verification);
         when(accountVerificationMapper.markUsedIfVerified(TRANSACTION_ID)).thenReturn(1);
         doAnswer(invocation -> {
@@ -339,6 +341,7 @@ private static final String ACCOUNT_ID = "1";
         verification.put("status", "VERIFIED");
         verification.put("bank_code", "004");
         verification.put("account_number", "ciphertext-abc");
+        verification.put("requested_at", LocalDateTime.now());
         when(accountVerificationMapper.findById(TRANSACTION_ID)).thenReturn(verification);
         when(accountVerificationMapper.markUsedIfVerified(TRANSACTION_ID)).thenReturn(1);
         when(accountNumberCrypto.decrypt("ciphertext-abc")).thenReturn("1234567890");
@@ -361,6 +364,26 @@ private static final String ACCOUNT_ID = "1";
         // 불변조건을 고정한다 — 나중에 누가 실수로 재암호화 로직을 넣으면 이 테스트가
         // 바로 잡아낸다(PR #162 리뷰 반영, 2026-08-14).
         verify(accountNumberCrypto, never()).encrypt(any());
+    }
+
+    @Test
+    @DisplayName("VERIFIED여도 요청 시각이 만료되면 계좌를 등록하지 않는다")
+    void should_rejectRegisterAccount_whenVerifiedDepositAuthIsExpired() {
+        Map<String, Object> verification = new HashMap<>();
+        verification.put("member_id", MEMBER_ID);
+        verification.put("status", "VERIFIED");
+        verification.put("bank_code", "004");
+        verification.put("account_number", "1234567890");
+        verification.put("requested_at", LocalDateTime.now().minusSeconds(181));
+        when(accountVerificationMapper.findById(TRANSACTION_ID)).thenReturn(verification);
+
+        BusinessException ex = assertThrows(BusinessException.class,
+                () -> service.registerAccount(MEMBER_ID, new AccountRegisterRequest(TRANSACTION_ID, null)));
+
+        assertEquals(org.springframework.http.HttpStatus.CONFLICT, ex.getStatus());
+        assertEquals("1원 인증이 만료되었어요", ex.getMessage());
+        verify(accountVerificationMapper, never()).markUsedIfVerified(any());
+        verify(accountMapper, never()).insert(any());
     }
 
     @Test

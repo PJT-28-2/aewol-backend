@@ -13,4 +13,8 @@ public interface NotificationService {
 
     String createNotification(
             String memberId, String type, String title, String message, String targetPath);
+
+    String createNotification(
+            String memberId, String type, String title, String message, String targetPath,
+            String eventKey);
 }

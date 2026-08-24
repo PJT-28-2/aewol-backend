@@ -61,11 +61,17 @@ public class TransactionServiceImpl implements TransactionService {
         // 반려동물 소유권과 지갑 존재는 짧은 조회라 커넥션을 바로 반납한다. 외부 호출보다
         // 먼저 걸러야 처음부터 안 될 요청이 카카오 응답을 20초 기다린 뒤에 실패하지 않는다.
         assertOwnedPet(memberId, request.getPetId());
-        if (walletMapper.findByMemberId(memberId) == null) {
+        Map<String, Object> wallet = walletMapper.findByMemberId(memberId);
+        if (wallet == null) {
             throw BusinessException.notFound("지갑을 찾을 수 없습니다.");
         }
+        BigDecimal balance = (BigDecimal) wallet.get("balance");
+        if (balance == null || balance.compareTo(request.getAmount()) < 0) {
+            throw new BusinessException("잔액이 부족합니다.");
+        }
 
-        // 외부 호출은 트랜잭션 밖에서 끝낸다.
+        // 외부 호출은 트랜잭션 밖에서 끝낸다. 잔액이 부족한 요청은 위에서 거절해
+        // 카카오 로컬과 캐시 저장이 나가지 않게 한다.
         String category = autoTaggingService.categorize(request.getMerchantName());
         log.info("자동 태깅 완료 - category: {}", category);
 

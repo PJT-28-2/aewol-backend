@@ -186,6 +186,11 @@ public class AccountServiceImpl implements AccountService {
         if (!"VERIFIED".equals(verification.get("status"))) {
             throw new BusinessException(HttpStatus.CONFLICT, "1원 인증이 완료되지 않았어요");
         }
+        // confirm 때만 만료를 보면, VERIFIED 이후 오래 지난 transactionId로도 계좌를
+        // 등록할 수 있다. 등록 시점에도 요청 시각 기준 3분을 다시 본다.
+        if (isExpired(verification.get("requested_at"))) {
+            throw new BusinessException(HttpStatus.CONFLICT, "1원 인증이 만료되었어요");
+        }
 
         // VERIFIED -> USED 전환을 조건부 UPDATE + 영향 행 수 확인으로 원자적으로 처리한다.
         // 위의 findById 읽기와 상태 체크는 잠금이 없어서, 같은 transactionId로

@@ -42,16 +42,25 @@ public interface CareDiaryMapper {
 
     int hideByReport(@Param("diaryId") String diaryId);
 
+    int countReportsByDiary(@Param("diaryId") String diaryId);
+
     List<Map<String, Object>> findAdminReports(@Param("status") String status,
                                                @Param("limit") int limit,
                                                @Param("offset") int offset);
 
     Map<String, Object> findAdminReportById(@Param("reportId") String reportId);
 
+    Map<String, Object> findLinkedReportDiaryByInquiryId(@Param("inquiryId") String inquiryId);
+
     int resolvePendingReportsByDiary(@Param("diaryId") String diaryId,
                                      @Param("resolution") String resolution,
                                      @Param("adminNote") String adminNote,
                                      @Param("resolvedBy") String resolvedBy);
+
+    int resolvePendingReportsByInquiryId(@Param("inquiryId") String inquiryId,
+                                         @Param("resolution") String resolution,
+                                         @Param("adminNote") String adminNote,
+                                         @Param("resolvedBy") String resolvedBy);
 
     int restoreByReport(@Param("diaryId") String diaryId);
 

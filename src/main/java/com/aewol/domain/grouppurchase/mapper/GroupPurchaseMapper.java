@@ -40,7 +40,7 @@ public interface GroupPurchaseMapper {
     int cancelParticipant(@Param("gpId") String gpId, @Param("memberId") String memberId, @Param("canceledAt") LocalDateTime canceledAt);
     List<Map<String, Object>> findMyGroupPurchases(@Param("memberId") String memberId, @Param("status") String status);
     List<Map<String, Object>> findExpiredUnfulfilledPaidParticipants();
-    int cancelGroupPurchase(@Param("gpId") String gpId);
+    int cancelGroupPurchase(@Param("gpId") String gpId, @Param("memberId") String memberId);
     List<Map<String, Object>> findActiveParticipants(@Param("gpId") String gpId);
     int deactivateExpiredUrgentFlags();
 }

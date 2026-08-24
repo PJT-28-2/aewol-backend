@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withBadRequest;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withServerError;
+import static org.springframework.test.web.client.response.MockRestResponseCreators.withStatus;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
 
 import java.nio.charset.StandardCharsets;
@@ -18,6 +19,7 @@ import javax.crypto.spec.SecretKeySpec;
 import org.junit.jupiter.api.Test;
 import org.springframework.mock.http.client.MockClientHttpRequest;
 import org.springframework.http.HttpMethod;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.client.MockRestServiceServer;
 import org.springframework.web.client.RestTemplate;
@@ -66,6 +68,7 @@ class SolapiSmsSenderTest {
                 () -> sender.send("01000000000", "test message"));
 
         assertEquals("SOLAPI request failed", exception.getMessage());
+        assertEquals(SmsFailureReason.TRANSPORT_OR_HTTP, exception.getReason());
         server.verify();
     }
 
@@ -104,18 +107,56 @@ class SolapiSmsSenderTest {
                 .andRespond(request -> {
                     throw new ResourceAccessException("simulated timeout");
                 });
-        assertEquals("SOLAPI request failed", assertThrows(SmsSendException.class,
-                () -> sender(transportErrorTemplate).send("01000000000", "test message")).getMessage());
+        SmsSendException transport = assertThrows(SmsSendException.class,
+                () -> sender(transportErrorTemplate).send("01000000000", "test message"));
+        assertEquals("SOLAPI request failed", transport.getMessage());
+        assertEquals(SmsFailureReason.TRANSPORT_OR_HTTP, transport.getReason());
         transportError.verify();
+    }
+
+    @Test
+    void mapsUnauthorizedToAuthReasonWithoutExposingRawResponse() {
+        RestTemplate restTemplate = new RestTemplate();
+        MockRestServiceServer server = MockRestServiceServer.bindTo(restTemplate).build();
+        server.expect(request -> { })
+                .andRespond(withStatus(HttpStatus.UNAUTHORIZED)
+                        .body("{\"errorCode\":\"InvalidAPIKey\"}"));
+
+        SmsSendException exception = assertThrows(SmsSendException.class,
+                () -> sender(restTemplate).send("01000000000", "test message"));
+
+        assertEquals("SOLAPI request failed", exception.getMessage());
+        assertEquals(SmsFailureReason.AUTH, exception.getReason());
+        server.verify();
+    }
+
+    @Test
+    void mapsSenderRegistrationFailureWithoutLoggingPhoneNumber() {
+        RestTemplate restTemplate = new RestTemplate();
+        MockRestServiceServer server = MockRestServiceServer.bindTo(restTemplate).build();
+        server.expect(request -> { })
+                .andRespond(withSuccess(
+                        "{\"failedMessageList\":[{\"to\":\"must-not-be-logged\",\"statusCode\":\"1024\","
+                                + "\"statusMessage\":\"발신번호 미등록\"}],"
+                                + "\"groupInfo\":{\"count\":{\"registeredSuccess\":0,\"registeredFailed\":1}}}",
+                        MediaType.APPLICATION_JSON));
+
+        SmsSendException exception = assertThrows(SmsSendException.class,
+                () -> sender(restTemplate).send("01000000000", "test message"));
+
+        assertEquals("SOLAPI message registration failed", exception.getMessage());
+        assertEquals(SmsFailureReason.SENDER_NOT_APPROVED, exception.getReason());
+        server.verify();
     }
 
     @Test
     void missingCredentialsFailBeforeNetworkCall() {
         SolapiSmsSender sender = new SolapiSmsSender(new RestTemplate(), "", "", "",
                 Clock.fixed(NOW, ZoneOffset.UTC), () -> SALT);
-        assertEquals("SOLAPI is not configured",
-                assertThrows(SmsSendException.class,
-                        () -> sender.send("01000000000", "test message")).getMessage());
+        SmsSendException exception = assertThrows(SmsSendException.class,
+                () -> sender.send("01000000000", "test message"));
+        assertEquals("SOLAPI is not configured", exception.getMessage());
+        assertEquals(SmsFailureReason.NOT_CONFIGURED, exception.getReason());
     }
 
     private SolapiSmsSender sender(RestTemplate restTemplate) {
@@ -133,8 +174,10 @@ class SolapiSmsSenderTest {
                     .andRespond(withSuccess(responseBody, MediaType.APPLICATION_JSON));
         }
 
-        assertEquals("SOLAPI message registration failed", assertThrows(SmsSendException.class,
-                () -> sender(restTemplate).send("01000000000", "test message")).getMessage());
+        SmsSendException exception = assertThrows(SmsSendException.class,
+                () -> sender(restTemplate).send("01000000000", "test message"));
+        assertEquals("SOLAPI message registration failed", exception.getMessage());
+        assertEquals(SmsFailureReason.PROVIDER_REJECTED, exception.getReason());
         server.verify();
     }
 
