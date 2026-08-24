@@ -13,6 +13,7 @@ import com.aewol.domain.share.dto.CareDiaryReportResponse;
 import com.aewol.domain.share.dto.CareDiaryResponse;
 import com.aewol.domain.share.dto.CareDiaryUpdateRequest;
 import com.aewol.domain.share.dto.CareDiaryVisibilityRequest;
+import com.aewol.domain.share.dto.AdminDiaryReportResolutionRequest;
 import com.aewol.domain.inquiry.mapper.InquiryMapper;
 import com.aewol.domain.share.mapper.CareDiaryMapper;
 import com.aewol.domain.share.mapper.ShareMapper;
@@ -678,6 +679,105 @@ class CareDiaryServiceImplTest {
 
         assertEquals(409, exception.getStatus().value());
         verify(careDiaryMapper, never()).updateVisibility(anyString(), anyString());
+    }
+
+    @Test
+    @DisplayName("관리자가 신고를 반려하면 같은 게시물의 미처리 신고를 끝내고 게시물을 복원한다")
+    void should_restoreDiary_when_adminDismissesReport() {
+        CareDiaryServiceImpl service = service();
+        Map<String, Object> pending = adminReportRow("PENDING", null);
+        Map<String, Object> resolved = adminReportRow("RESOLVED", "RESTORE");
+        when(careDiaryMapper.findAdminReportById("report-1")).thenReturn(pending, resolved);
+        when(careDiaryMapper.findImagesForPublish("diary-1")).thenReturn(List.of(map(
+                "imageId", "image-1", "imageUrl", "diary/original.png", "publicImageKey", null)));
+        when(fileStorage.publish("diary/original.png")).thenReturn("public/restored.png");
+        when(careDiaryMapper.restoreByReport("diary-1")).thenReturn(1);
+        when(careDiaryMapper.resolvePendingReportsByDiary(
+                "diary-1", "RESTORE", "오탐", "admin-1")).thenReturn(2);
+
+        var result = service.resolveAdminReport(
+                "admin-1", "report-1", resolutionRequest("RESTORE", " 오탐 "));
+
+        assertEquals("RESOLVED", result.getStatus());
+        assertEquals("RESTORE", result.getResolution());
+        verify(careDiaryMapper).updatePublicImageKey("image-1", "public/restored.png");
+        verify(careDiaryMapper).restoreByReport("diary-1");
+    }
+
+    @Test
+    @DisplayName("관리자가 신고를 승인하면 게시물 숨김을 유지한다")
+    void should_keepDiaryHidden_when_adminAcceptsReport() {
+        CareDiaryServiceImpl service = service();
+        when(careDiaryMapper.findAdminReportById("report-1"))
+                .thenReturn(adminReportRow("PENDING", null),
+                        adminReportRow("RESOLVED", "KEEP_HIDDEN"));
+        when(careDiaryMapper.resolvePendingReportsByDiary(
+                "diary-1", "KEEP_HIDDEN", null, "admin-1")).thenReturn(1);
+        when(careDiaryMapper.findImagesForPublish("diary-1")).thenReturn(List.of());
+
+        service.resolveAdminReport(
+                "admin-1", "report-1", resolutionRequest("KEEP_HIDDEN", null));
+
+        verify(careDiaryMapper, never()).restoreByReport(anyString());
+        verify(fileStorage, never()).publish(anyString());
+    }
+
+    @Test
+    @DisplayName("공개 사진 복원에 실패하면 신고를 처리 완료로 바꾸지 않는다")
+    void should_notResolveReport_when_publicImageRestoreFails() {
+        CareDiaryServiceImpl service = service();
+        when(careDiaryMapper.findAdminReportById("report-1"))
+                .thenReturn(adminReportRow("PENDING", null));
+        when(careDiaryMapper.findImagesForPublish("diary-1")).thenReturn(List.of(map(
+                "imageId", "image-1", "imageUrl", "diary/original.png", "publicImageKey", null)));
+        when(fileStorage.publish("diary/original.png")).thenReturn(null);
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.resolveAdminReport(
+                        "admin-1", "report-1", resolutionRequest("RESTORE", null)));
+
+        assertEquals(409, exception.getStatus().value());
+        verify(careDiaryMapper, never()).restoreByReport(anyString());
+        verify(careDiaryMapper, never()).resolvePendingReportsByDiary(
+                anyString(), anyString(), any(), anyString());
+    }
+
+    @Test
+    @DisplayName("이미 처리된 신고는 다시 처리하지 않는다")
+    void should_rejectResolution_when_reportAlreadyResolved() {
+        CareDiaryServiceImpl service = service();
+        when(careDiaryMapper.findAdminReportById("report-1"))
+                .thenReturn(adminReportRow("RESOLVED", "KEEP_HIDDEN"));
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.resolveAdminReport(
+                        "admin-1", "report-1", resolutionRequest("RESTORE", null)));
+
+        assertEquals(409, exception.getStatus().value());
+        verify(careDiaryMapper, never()).resolvePendingReportsByDiary(
+                anyString(), anyString(), any(), anyString());
+    }
+
+    private static AdminDiaryReportResolutionRequest resolutionRequest(
+            String resolution, String adminNote) {
+        AdminDiaryReportResolutionRequest request = new AdminDiaryReportResolutionRequest();
+        ReflectionTestUtils.setField(request, "resolution", resolution);
+        ReflectionTestUtils.setField(request, "adminNote", adminNote);
+        return request;
+    }
+
+    private static Map<String, Object> adminReportRow(String status, String resolution) {
+        return map("reportId", "report-1",
+                "diaryId", "diary-1",
+                "reason", "SPAM",
+                "status", status,
+                "resolution", resolution,
+                "reporterName", "신고자",
+                "reporterEmail", "reporter@example.com",
+                "authorName", "작성자",
+                "petName", "멍이",
+                "content", "신고된 게시물",
+                "createdAt", java.sql.Timestamp.valueOf("2026-08-24 10:00:00"));
     }
 
     private static Map<String, Object> diaryRow(String diaryId, String petId, String authorId,

@@ -136,6 +136,75 @@
           AND hidden_by_report_at IS NULL
     </update>
 
+    <select id="findAdminReports" resultType="map">
+        SELECT r.report_id AS reportId,
+               r.diary_id AS diaryId,
+               r.reason,
+               r.status,
+               r.resolution,
+               reporter.name AS reporterName,
+               author.name AS authorName,
+               p.name AS petName,
+               LEFT(d.content, 100) AS contentPreview,
+               r.created_at AS createdAt,
+               r.resolved_at AS resolvedAt
+        FROM diary_report r
+        JOIN care_diary d ON d.diary_id = r.diary_id
+        JOIN pet p ON p.pet_id = d.pet_id
+        JOIN member reporter ON reporter.member_id = r.reporter_id
+        JOIN member author ON author.member_id = d.author_member_id
+        <if test="status != null and status != ''">
+            WHERE r.status = #{status}
+        </if>
+        ORDER BY r.created_at DESC, r.report_id DESC
+        LIMIT #{limit} OFFSET #{offset}
+    </select>
+
+    <select id="findAdminReportById" resultType="map">
+        SELECT r.report_id AS reportId,
+               r.diary_id AS diaryId,
+               r.reason,
+               r.status,
+               r.resolution,
+               r.admin_note AS adminNote,
+               reporter.name AS reporterName,
+               reporter.email AS reporterEmail,
+               author.name AS authorName,
+               p.name AS petName,
+               d.content,
+               d.visibility,
+               d.deleted_at AS deletedAt,
+               i.inquiry_number AS inquiryNumber,
+               r.created_at AS createdAt,
+               r.resolved_at AS resolvedAt
+        FROM diary_report r
+        JOIN care_diary d ON d.diary_id = r.diary_id
+        JOIN pet p ON p.pet_id = d.pet_id
+        JOIN member reporter ON reporter.member_id = r.reporter_id
+        JOIN member author ON author.member_id = d.author_member_id
+        LEFT JOIN inquiry i ON i.inquiry_id = r.inquiry_id
+        WHERE r.report_id = #{reportId}
+    </select>
+
+    <update id="resolvePendingReportsByDiary">
+        UPDATE diary_report
+           SET status = 'RESOLVED',
+               resolution = #{resolution},
+               admin_note = #{adminNote},
+               resolved_by = #{resolvedBy},
+               resolved_at = NOW()
+        WHERE diary_id = #{diaryId}
+          AND status = 'PENDING'
+    </update>
+
+    <update id="restoreByReport">
+        UPDATE care_diary
+           SET hidden_by_report_at = NULL
+        WHERE diary_id = #{diaryId}
+          AND deleted_at IS NULL
+          AND hidden_by_report_at IS NOT NULL
+    </update>
+
     <update id="softDelete">
         UPDATE care_diary
            SET deleted_at = NOW()
