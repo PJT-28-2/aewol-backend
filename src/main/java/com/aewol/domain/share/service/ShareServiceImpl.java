@@ -185,6 +185,7 @@ public class ShareServiceImpl implements ShareService {
         List<ContributionShare> shares = new ArrayList<>();
         int assigned = 0;
         for (int index = 0; index < rows.size(); index++) {
+            // findMonthlyContributions는 SUM(ABS(t.price))를 반환하므로 기여 금액은 항상 0 이상이다.
             BigDecimal exact = decimal(rows.get(index), "amount")
                     .multiply(BigDecimal.valueOf(100))
                     .divide(total, 8, RoundingMode.HALF_UP);
