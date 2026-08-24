@@ -28,7 +28,6 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Import;
 import org.springframework.mock.web.MockServletContext;
 import org.springframework.test.context.support.TestPropertySourceUtils;
@@ -119,7 +118,6 @@ class AdminDiaryReportControllerSecurityTest {
         when(memberMapper.findAuthStateById("member-1")).thenReturn(authState);
     }
 
-    @Configuration
     @EnableWebMvc
     @Import(SecurityConfig.class)
     static class TestConfig {
