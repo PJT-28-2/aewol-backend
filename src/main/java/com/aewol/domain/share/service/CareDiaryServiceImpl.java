@@ -2,6 +2,7 @@ package com.aewol.domain.share.service;
 
 import com.aewol.common.exception.BusinessException;
 import com.aewol.common.storage.FileStorage;
+import com.aewol.common.util.RedisRateLimiter;
 import com.aewol.domain.activity.mapper.ActivityLogMapper;
 import com.aewol.domain.pet.mapper.PetMapper;
 import com.aewol.domain.share.dto.AdminDiaryReportDetailResponse;
@@ -32,6 +33,7 @@ import java.util.Map;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
@@ -46,6 +48,11 @@ public class CareDiaryServiceImpl implements CareDiaryService {
     private static final String PUBLIC = "PUBLIC";
     private static final int MAX_CONTENT_LENGTH = 500;
     private static final String UPLOAD_SUB_DIR = "diary";
+    /** 서로 다른 신고가 이 수에 닿아야 글을 내린다. 1건으로 내리면 오탐에도 바로 사라진다. */
+    private static final int REPORT_HIDE_THRESHOLD = 3;
+    private static final int REPORT_RATE_LIMIT_MAX = 5;
+    private static final long REPORT_RATE_LIMIT_WINDOW_SECONDS = 15 * 60;
+    private static final String REPORT_RATE_LIMIT_KEY_PREFIX = "rate:diary-report:";
     /** 업로드 경로로 공개되므로 스크립트가 실행될 수 있는 형식(svg, html 등)은 받지 않는다. */
     private static final Map<String, String> ALLOWED_IMAGE_TYPES = Map.of(
             "image/jpeg", "jpg",
@@ -59,6 +66,7 @@ public class CareDiaryServiceImpl implements CareDiaryService {
     private final ActivityLogMapper activityLogMapper;
     private final FileStorage fileStorage;
     private final InquiryMapper inquiryMapper;
+    private final RedisRateLimiter redisRateLimiter;
 
     @Override
     @Transactional
@@ -215,48 +223,65 @@ public class CareDiaryServiceImpl implements CareDiaryService {
             throw BusinessException.forbidden("작성자 또는 대표 보호자만 일기를 비공개로 바꿀 수 있습니다.");
         }
 
+        if (PUBLIC.equals(visibility)) {
+            // 사본을 못 만들었는데 PUBLIC이면 피드에 빈 칸이 생긴다. 사본이 준비된 뒤에만
+            // 공개로 바꾼다. 실패하면 예외로 트랜잭션이 롤백된다.
+            publishPublicImagesOrThrow(images);
+        }
         if (careDiaryMapper.updateVisibility(diaryId, visibility) != 1) {
             throw BusinessException.notFound("공개 여부를 바꿀 일기를 찾을 수 없습니다.");
         }
-        syncPublicImages(images, PUBLIC.equals(visibility));
+        if (!PUBLIC.equals(visibility)) {
+            syncPublicImages(images, false);
+        }
         return getDetail(memberId, diaryId);
     }
 
     /**
      * 공개 전환에 맞춰 사진 사본을 맞춘다.
      *
-     * <p>공개로 바꾸면 CDN이 서빙할 사본을 만들고, 되돌리면 그 사본을 지운다. 원본은 어느
-     * 쪽이든 손대지 않는다.
+     * <p>비공개로 되돌리면 CDN 사본을 지운다. 원본은 손대지 않는다. 사본 삭제가 실패해도
+     * 예외를 던지지 않는다 — 노출을 멈추는 쪽이 먼저다.
      *
-     * <p>사본 작업이 실패해도 예외를 던지지 않는다. 공개 전환 자체는 이미 커밋 대상이고,
-     * 특히 비공개로 되돌리는 흐름이 사본 삭제 실패 때문에 막히면 안 된다 — 노출을 멈추는
-     * 쪽이 먼저다. 사진이 없는 일기는 목록에서 빠지므로 사본 생성 실패는 글이 피드에
-     * 안 뜨는 것으로 드러난다.
+     * <p>공개로 올릴 때는 {@link #publishPublicImagesOrThrow}를 쓴다. 사본 없이 PUBLIC이 되면
+     * 피드에 빈 칸이 생긴다.
      */
     private void syncPublicImages(List<Map<String, Object>> images, boolean publishing) {
+        if (publishing) {
+            publishPublicImagesOrThrow(images);
+            return;
+        }
         for (Map<String, Object> image : images) {
             String imageId = text(image, "imageId");
             String publicKey = text(image, "publicImageKey");
-            if (publishing) {
-                if (publicKey != null) {
-                    continue;
-                }
-                String created = fileStorage.publish(text(image, "imageUrl"));
-                if (created != null) {
-                    careDiaryMapper.updatePublicImageKey(imageId, created);
-                }
-            } else if (publicKey != null) {
+            if (publicKey != null) {
                 fileStorage.unpublish(publicKey);
                 careDiaryMapper.updatePublicImageKey(imageId, null);
             }
         }
     }
 
+    /** 사본을 모두 만든 뒤에만 호출부가 PUBLIC으로 바꾼다. 하나라도 실패하면 공개하지 않는다. */
+    private void publishPublicImagesOrThrow(List<Map<String, Object>> images) {
+        for (Map<String, Object> image : images) {
+            String imageId = text(image, "imageId");
+            String publicKey = text(image, "publicImageKey");
+            if (publicKey != null) {
+                continue;
+            }
+            String created = fileStorage.publish(text(image, "imageUrl"));
+            if (created == null) {
+                throw BusinessException.conflict("사진을 공개하지 못했어요. 잠시 후 다시 시도해 주세요.");
+            }
+            careDiaryMapper.updatePublicImageKey(imageId, created);
+        }
+    }
+
     /**
-     * 신고 접수. 즉시 노출을 멈추고 고객센터 문의로 잇는다.
+     * 신고 접수. 서로 다른 신고가 임계치에 닿으면 노출을 멈추고 고객센터 문의로 잇는다.
      *
-     * <p>고객센터에는 아직 답변 API가 없어 처리까지 시간이 걸린다. 그동안 글이 계속 보이면
-     * 신고의 의미가 없으므로 <b>먼저 내리고</b> 나중에 판단한다. 오탐이면 관리자가 되돌린다.
+     * <p>1건으로 내리면 오탐에도 글이 바로 사라진다. 그 전까지는 접수만 하고, 같은 사람의
+     * 반복 신고는 UNIQUE로 한 건으로 센다. 짧은 시간에 여러 글을 두드리는 것은 횟수로 막는다.
      *
      * <p>공개된 글만 신고 대상이다. 비공개 일기는 신고자가 볼 수 없고, 볼 수 있다면 이미
      * 그 가족이라 신고가 아니라 대화로 풀 일이다.
@@ -277,20 +302,32 @@ public class CareDiaryServiceImpl implements CareDiaryService {
             throw new BusinessException("자기가 쓴 글은 신고할 수 없어요. 비공개로 바꿔 주세요.");
         }
 
+        String rateLimitKey = REPORT_RATE_LIMIT_KEY_PREFIX + memberId;
+        long requestCount = redisRateLimiter.incrementWithExpiry(
+                rateLimitKey, REPORT_RATE_LIMIT_WINDOW_SECONDS);
+        if (requestCount > REPORT_RATE_LIMIT_MAX) {
+            throw new BusinessException(HttpStatus.TOO_MANY_REQUESTS,
+                    "신고 요청이 너무 많아요. 15분 후 다시 시도해 주세요.");
+        }
+
         Map<String, Object> report = new HashMap<>();
         report.put("diaryId", diaryId);
         report.put("reporterId", memberId);
         report.put("reason", request.getReason());
         if (careDiaryMapper.insertReport(report) == 0) {
+            redisRateLimiter.rollback(rateLimitKey);
             throw BusinessException.conflict("이미 신고한 게시물이에요. 처리 결과를 기다려 주세요.");
         }
         String reportId = String.valueOf(report.get("reportId"));
 
-        boolean hidden = careDiaryMapper.hideByReport(diaryId) == 1;
-        if (hidden) {
-            // 피드에서 빼는 것만으로는 부족하다. CDN 주소를 이미 아는 사람에게는 사진이
-            // 계속 보인다. 오탐이면 원본이 남아 있으니 사본을 다시 만들면 된다.
-            syncPublicImages(careDiaryMapper.findImagesForPublish(diaryId), false);
+        boolean hidden = false;
+        if (careDiaryMapper.countReportsByDiary(diaryId) >= REPORT_HIDE_THRESHOLD) {
+            hidden = careDiaryMapper.hideByReport(diaryId) == 1;
+            if (hidden) {
+                // 피드에서 빼는 것만으로는 부족하다. CDN 주소를 이미 아는 사람에게는 사진이
+                // 계속 보인다. 오탐이면 원본이 남아 있으니 사본을 다시 만들면 된다.
+                syncPublicImages(careDiaryMapper.findImagesForPublish(diaryId), false);
+            }
         }
         String inquiryNumber = createReportInquiry(memberId, diaryId, request.getReason(), reportId);
 
@@ -461,8 +498,8 @@ public class CareDiaryServiceImpl implements CareDiaryService {
             careDiaryMapper.linkReportInquiry(reportId, inquiryId);
             return inquiryNumber;
         } catch (RuntimeException e) {
-            // 문의 생성이 실패해도 신고와 비공개 처리는 남아야 한다. 노출을 멈추는 것이
-            // 접수번호를 주는 것보다 중요하다.
+            // 문의 생성이 실패해도 신고 접수는 남아야 한다. 임계치에 닿아 내린 글은
+            // 접수번호를 못 줘도 노출을 멈추는 쪽이 먼저다.
             log.warn("[REPORT_INQUIRY_FAILED] 신고 문의 생성 실패 - reportId: {}", reportId, e);
             return null;
         }
