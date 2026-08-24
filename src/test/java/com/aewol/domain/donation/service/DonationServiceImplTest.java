@@ -21,11 +21,14 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
+import org.springframework.transaction.support.TransactionCallback;
+import org.springframework.transaction.support.TransactionOperations;
 
 @ExtendWith(MockitoExtension.class)
 class DonationServiceImplTest {
 
     @Mock DonationMapper donationMapper;
+    @Mock TransactionOperations transactionOperations;
 
     @Test
     @DisplayName("저금통과 활성 캠페인 및 설정을 화면 통합 형식으로 반환한다")
@@ -304,6 +307,49 @@ class DonationServiceImplTest {
         assertEquals(1, completedCount);
     }
 
+    @Test
+    @DisplayName("월말 자동 기부는 한 회원 실패가 다른 회원 처리를 막지 않는다")
+    void should_continueOtherMembers_when_oneMonthlyAutoDonationFails() {
+        DonationServiceImpl service = service();
+        when(donationMapper.findMonthlyAutoDonationCandidates("2026-08")).thenReturn(List.of(
+                map("memberId", "member-1", "campaignId", "campaign-1"),
+                map("memberId", "member-2", "campaignId", "campaign-1")));
+        when(donationMapper.findHistoryByIdempotencyKey("member-1", "auto-member-1-2026-08"))
+                .thenReturn(null);
+        when(donationMapper.findHistoryByIdempotencyKey("member-2", "auto-member-2-2026-08"))
+                .thenReturn(null);
+        when(donationMapper.findCampaignById("campaign-1")).thenReturn(map(
+                "campaign_id", "campaign-1", "organization_id", "organization-1",
+                "organization_name", "테스트 보호소", "channel_id", "channel-1"));
+        when(donationMapper.findPotByMemberId("member-1"))
+                .thenReturn(map("wallet_id", "pot-1", "balance", new BigDecimal("12400")));
+        when(donationMapper.findPotForUpdate("member-1"))
+                .thenReturn(map("wallet_id", "pot-1", "balance", new BigDecimal("12400")));
+        when(donationMapper.decreasePotBalance("pot-1", new BigDecimal("12400"))).thenReturn(0);
+        when(donationMapper.findPotByMemberId("member-2"))
+                .thenReturn(map("wallet_id", "pot-2", "balance", new BigDecimal("5000")),
+                        map("wallet_id", "pot-2", "balance", BigDecimal.ZERO),
+                        map("wallet_id", "pot-2", "balance", BigDecimal.ZERO));
+        when(donationMapper.findPotForUpdate("member-2"))
+                .thenReturn(map("wallet_id", "pot-2", "balance", new BigDecimal("5000")),
+                        map("wallet_id", "pot-2", "balance", new BigDecimal("5000")));
+        when(donationMapper.decreasePotBalance("pot-2", new BigDecimal("5000"))).thenReturn(1);
+        when(donationMapper.increaseCampaignResult("campaign-1", new BigDecimal("5000"))).thenReturn(1);
+        when(donationMapper.markAutoDonationCompleted("member-2", "2026-08")).thenReturn(1);
+
+        int completedCount = service.processMonthlyAutoDonations("2026-08");
+
+        assertEquals(1, completedCount);
+        verify(transactionOperations, times(2)).execute(any());
+        verify(donationMapper, never()).insertHistory(argThat(history ->
+                "auto-member-1-2026-08".equals(history.get("idempotencyKey"))));
+        verify(donationMapper).insertHistory(argThat(history ->
+                "auto-member-2-2026-08".equals(history.get("idempotencyKey"))
+                        && new BigDecimal("5000").equals(history.get("amount"))));
+        verify(donationMapper, never()).markAutoDonationCompleted("member-1", "2026-08");
+        verify(donationMapper).markAutoDonationCompleted("member-2", "2026-08");
+    }
+
     private DonationRequest donationRequest(String amount, String campaignId, String key) {
         DonationRequest request = new DonationRequest();
         ReflectionTestUtils.setField(request, "amount", new BigDecimal(amount));
@@ -325,7 +371,10 @@ class DonationServiceImplTest {
     }
 
     private DonationServiceImpl service() {
-        return new DonationServiceImpl(donationMapper);
+        lenient().doAnswer(invocation ->
+                        ((TransactionCallback<?>) invocation.getArgument(0)).doInTransaction(null))
+                .when(transactionOperations).execute(any());
+        return new DonationServiceImpl(donationMapper, transactionOperations);
     }
 
     private static Map<String, Object> map(Object... values) {
