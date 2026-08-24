@@ -69,6 +69,24 @@ class InquiryServiceImplTest {
     }
 
     @Test
+    @DisplayName("webp 첨부파일도 업로드 후 첨부 테이블에 저장한다")
+    void should_uploadAndInsertAttachment_when_fileIsWebp() {
+        doAnswer(invocation -> {
+            Map<String, Object> arg = invocation.getArgument(0);
+            arg.put("inquiryId", 25L);
+            return null;
+        }).when(inquiryMapper).insert(any());
+        when(fileStorage.store(any(), eq("inquiries"), eq("webp"))).thenReturn("inquiries/a.webp");
+
+        MockMultipartFile file = new MockMultipartFile("attachments", "image1.webp", "image/webp", new byte[]{1, 2, 3});
+
+        service.createInquiry(MEMBER_ID, "보험", "제목", "내용", "user@example.com", List.of(file));
+
+        verify(fileStorage).store(any(), eq("inquiries"), eq("webp"));
+        verify(inquiryMapper).insertAttachment(any());
+    }
+
+    @Test
     @DisplayName("첨부파일이 3개를 초과하면 400 예외를 던지고 업로드를 시도하지 않는다")
     void should_throwBadRequest_when_moreThanThreeAttachments() {
         List<MultipartFile> files = List.of(
