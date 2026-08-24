@@ -194,19 +194,21 @@
         WHERE w.member_id = #{memberId}
           AND w.wallet_type = 'DONATION'
           AND t.txn_type = 'TRANSFER'
+          AND t.transfer_purpose = 'POT_WITHDRAW'
           AND t.idempotency_key = #{idempotencyKey}
         FOR UPDATE
     </select>
 
     <!-- 저금통 <-> 실지갑 내부 이체(TRANSFER).
-         chk_txn_type_consistency: TRANSFER는 counter_wallet_id 필수, recurring_id NULL. -->
+         chk_txn_type_consistency: TRANSFER는 counter_wallet_id 필수, recurring_id NULL.
+         transfer_purpose로 수동 넣기/출금/자동 절삭을 구분한다 — 메모 문자열에 의존하지 않는다. -->
     <insert id="insertWalletTransaction" parameterType="map" useGeneratedKeys="true" keyProperty="txnId" keyColumn="txn_id">
         INSERT INTO `transaction`
             (wallet_id, counter_wallet_id, pet_id, txn_type, price,
-             category, merchant_name, memo, auto_tagged, idempotency_key, txn_date)
+             category, merchant_name, memo, auto_tagged, idempotency_key, transfer_purpose, txn_date)
         VALUES
             (#{sourceWalletId}, #{counterWalletId}, NULL, 'TRANSFER', #{amount},
-             'ETC', '짜투리 저금통', #{memo}, 'N', #{idempotencyKey}, NOW())
+             'ETC', '짜투리 저금통', #{memo}, 'N', #{idempotencyKey}, #{transferPurpose}, NOW())
     </insert>
 
     <select id="findDepositByIdempotencyKey" resultType="map">
@@ -216,6 +218,7 @@
         WHERE w.member_id = #{memberId}
           AND w.wallet_type = 'MAIN'
           AND t.txn_type = 'TRANSFER'
+          AND t.transfer_purpose = 'POT_DEPOSIT'
           AND t.idempotency_key = #{idempotencyKey}
         FOR UPDATE
     </select>

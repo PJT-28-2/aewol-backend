@@ -1,6 +1,7 @@
 package com.aewol.batch;
 
 import com.aewol.common.exception.BusinessException;
+import com.aewol.domain.donation.PotTransfer;
 import com.aewol.domain.donation.mapper.DonationMapper;
 import java.math.BigDecimal;
 import java.sql.Date;
@@ -17,7 +18,10 @@ import org.springframework.transaction.annotation.Transactional;
  *
  * <p>배치 메서드에서 self-invocation으로 @Transactional을 붙이면 프록시가 적용되지 않으므로 별도 빈으로 분리
  * — GroupPurchaseRefundExecutor/RecurringPaymentExecutor와 동일 패턴. 한 회원의 실패가 같은 배치
- * 실행의 다른 회원 처리를 롤백시키지 않는다. MAIN → DONATION 순으로 잠가 넣기/출금과 교착을 피한다.
+ * 실행의 다른 회원 처리를 롤백시키지 않는다.
+ *
+ * <p>잠금 순서는 MAIN → DONATION → donation_setting 으로, 월말 자동기부와 같다.
+ * 설정은 먼저 일반 조회한 뒤 지갑을 잠그고 다시 잠금 조회·검증한다.
  */
 @Component
 @RequiredArgsConstructor
@@ -39,6 +43,24 @@ public class DonationRoundUpExecutor {
         }
 
         LocalDate today = LocalDate.now(SEOUL);
+        Map<String, Object> peeked = donationMapper.findSettings(memberId);
+        if (peeked == null || !bool(peeked, "piggyBankEnabled", "piggy_bank_enabled")) {
+            return false;
+        }
+        if (alreadyTrimmedOn(peeked, today)) {
+            return false;
+        }
+        BigDecimal peekedUnit = decimal(peeked, "savingUnit", "saving_unit");
+        if (peekedUnit.signum() <= 0) {
+            return false;
+        }
+
+        Map<String, Object> mainWallet = donationMapper.findMainWalletForUpdate(memberId);
+        if (mainWallet == null) {
+            return false;
+        }
+        Map<String, Object> pot = getOrCreatePotForUpdate(memberId);
+
         Map<String, Object> settings = donationMapper.findSettingsForUpdate(memberId);
         if (settings == null || !bool(settings, "piggyBankEnabled", "piggy_bank_enabled")) {
             return false;
@@ -46,14 +68,8 @@ public class DonationRoundUpExecutor {
         if (alreadyTrimmedOn(settings, today)) {
             return false;
         }
-
         BigDecimal savingUnit = decimal(settings, "savingUnit", "saving_unit");
         if (savingUnit.signum() <= 0) {
-            return false;
-        }
-
-        Map<String, Object> mainWallet = donationMapper.findMainWalletForUpdate(memberId);
-        if (mainWallet == null) {
             return false;
         }
 
@@ -63,7 +79,6 @@ public class DonationRoundUpExecutor {
             return false;
         }
 
-        Map<String, Object> pot = getOrCreatePotForUpdate(memberId);
         String mainWalletId = text(mainWallet, "wallet_id", "walletId");
         String potWalletId = text(pot, "wallet_id", "walletId");
         if (donationMapper.decreaseMainWalletBalance(mainWalletId, remainder) != 1
@@ -76,7 +91,8 @@ public class DonationRoundUpExecutor {
         transaction.put("counterWalletId", potWalletId);
         transaction.put("amount", remainder);
         transaction.put("memo", "짜투리 저금통 절삭");
-        transaction.put("idempotencyKey", "spare-trim-" + memberId + "-" + today);
+        transaction.put("idempotencyKey", PotTransfer.spareTrimKey(memberId, today));
+        transaction.put("transferPurpose", PotTransfer.PURPOSE_SPARE_TRIM);
         donationMapper.insertWalletTransaction(transaction);
 
         if (donationMapper.markSpareTrimmed(memberId, today) != 1) {

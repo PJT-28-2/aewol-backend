@@ -1,5 +1,6 @@
 package com.aewol.batch;
 
+import com.aewol.common.lock.DeadlockRetries;
 import com.aewol.domain.donation.mapper.DonationMapper;
 import com.aewol.domain.donation.service.DonationService;
 import lombok.RequiredArgsConstructor;
@@ -47,7 +48,7 @@ public class DonationRoundUpJob {
         int success = 0, skipped = 0, error = 0;
         for (Map<String, Object> candidate : candidates) {
             try {
-                if (executor.execute(candidate)) {
+                if (Boolean.TRUE.equals(DeadlockRetries.execute(() -> executor.execute(candidate)))) {
                     success++;
                 } else {
                     skipped++;
