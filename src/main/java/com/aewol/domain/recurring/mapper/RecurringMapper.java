@@ -8,6 +8,8 @@ import java.util.Map;
 @Mapper
 public interface RecurringMapper {
     Map<String, Object> findByIdForUpdate(@Param("recurringId") String recurringId);
+    Map<String, Object> findByWalletIdAndIdempotencyKey(@Param("walletId") String walletId,
+                                                        @Param("idempotencyKey") String idempotencyKey);
     List<Map<String, Object>> findByWalletId(@Param("walletId") String walletId);
     void insert(Map<String, Object> recurring);
     int update(Map<String, Object> recurring);
