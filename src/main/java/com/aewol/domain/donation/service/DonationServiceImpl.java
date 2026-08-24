@@ -11,7 +11,6 @@ import java.time.temporal.ChronoUnit;
 import java.util.*;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -23,8 +22,6 @@ public class DonationServiceImpl implements DonationService {
             BigDecimal.TEN, BigDecimal.valueOf(100), BigDecimal.valueOf(1000));
 
     private final DonationMapper donationMapper;
-    @Value("${donation.show-demo-campaigns:true}")
-    private boolean showDemoCampaigns = true;
 
     @Override
     @Transactional
@@ -37,7 +34,6 @@ public class DonationServiceImpl implements DonationService {
                 donationMapper.findMonthlySaved(text(pot, "wallet_id", "walletId")))
                 .orElse(BigDecimal.ZERO);
         List<DonationCampaignResponse> campaigns = donationMapper.findActiveCampaigns(memberId).stream()
-                .filter(this::visibleCampaign)
                 .map(this::toCampaignResponse)
                 .collect(Collectors.toList());
 
@@ -71,7 +67,7 @@ public class DonationServiceImpl implements DonationService {
         }
 
         Map<String, Object> campaign = donationMapper.findCampaignById(request.getCampaignId());
-        if (campaign == null || !visibleCampaign(campaign)) {
+        if (campaign == null) {
             throw BusinessException.notFound("진행 중인 기부 캠페인을 찾을 수 없습니다.");
         }
         return donateToCampaign(memberId, campaign, request.getAmount(), idempotencyKey);
@@ -164,7 +160,7 @@ public class DonationServiceImpl implements DonationService {
                 throw new BusinessException("자동 기부 캠페인을 선택해 주세요.");
             }
             Map<String, Object> campaign = donationMapper.findCampaignById(campaignId);
-            if (campaign == null || !visibleCampaign(campaign)) {
+            if (campaign == null) {
                 throw BusinessException.notFound("진행 중인 자동 기부 캠페인을 찾을 수 없습니다.");
             }
             organizationId = text(campaign, "organization_id", "organizationId");
@@ -245,7 +241,7 @@ public class DonationServiceImpl implements DonationService {
             Map<String, Object> existing = donationMapper.findHistoryByIdempotencyKey(memberId, idempotencyKey);
             if (existing == null) {
                 Map<String, Object> campaign = donationMapper.findCampaignById(campaignId);
-                if (campaign == null || !visibleCampaign(campaign)) continue;
+                if (campaign == null) continue;
                 Map<String, Object> pot = getOrCreatePotForUpdate(memberId);
                 BigDecimal amount = decimal(pot, "balance");
                 if (amount.signum() <= 0) continue;
@@ -318,14 +314,6 @@ public class DonationServiceImpl implements DonationService {
         if (balance.signum() <= 0) return "첫 잔돈을 모아 반려동물을 위한 변화를 시작해 보세요";
         int meals = Math.max(balance.divide(BigDecimal.valueOf(4000), 0, RoundingMode.DOWN).intValue(), 1);
         return "유기동물 " + meals + "마리의 한 끼를 도울 수 있어요";
-    }
-
-    private boolean visibleCampaign(Map<String, Object> campaign) {
-        if (showDemoCampaigns) {
-            return true;
-        }
-        String title = text(campaign, "title");
-        return title == null || !title.startsWith("[시연]");
     }
 
     private String requireMemberId(String memberId) {

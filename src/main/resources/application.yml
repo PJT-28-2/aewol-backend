@@ -45,9 +45,6 @@ insight:
 swagger:
   enabled: ${SWAGGER_ENABLED:true}
 
-donation:
-  show-demo-campaigns: ${DONATION_SHOW_DEMO_CAMPAIGNS:true}
-
 cookie:
   secure: ${COOKIE_SECURE:false}
 
