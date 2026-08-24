@@ -13,12 +13,14 @@ import java.time.temporal.ChronoUnit;
 import java.util.*;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionOperations;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class DonationServiceImpl implements DonationService {
@@ -317,6 +319,16 @@ public class DonationServiceImpl implements DonationService {
                 .build();
     }
 
+    /**
+     * 월말 자동기부 후보를 회원마다 따로 커밋한다.
+     *
+     * <p>한 트랜잭션에 전원 넣으면 뒤쪽 회원 한 명의 잔액·캠페인 오류가 앞에서 끝난 기부까지
+     * 되돌린다. 배치는 월 1회라 그달 기부를 전원 놓치게 된다. 잔돈 적립이 건별 트랜잭션인
+     * 것과 같은 이유다.
+     *
+     * <p>후보 목록 조회는 트랜잭션 밖이고, 기부·완료 표시만 회원 단위로 묶는다. 한 명이
+     * 실패해도 다음 회원을 계속 처리한다.
+     */
     @Override
     public int processMonthlyAutoDonations(String yearMonth) {
         if (yearMonth == null || !yearMonth.matches("\\d{4}-(0[1-9]|1[0-2])")) {
@@ -326,11 +338,16 @@ public class DonationServiceImpl implements DonationService {
         for (Map<String, Object> candidate : donationMapper.findMonthlyAutoDonationCandidates(yearMonth)) {
             String memberId = text(candidate, "memberId", "member_id");
             String campaignId = text(candidate, "campaignId", "campaign_id");
-            Boolean donated = DeadlockRetries.execute(() ->
-                    transactionOperations.execute(status ->
-                            processOneMonthlyAutoDonation(memberId, campaignId, yearMonth)));
-            if (Boolean.TRUE.equals(donated)) {
-                completedCount++;
+            try {
+                Boolean donated = DeadlockRetries.execute(() ->
+                        transactionOperations.execute(status ->
+                                processOneMonthlyAutoDonation(memberId, campaignId, yearMonth)));
+                if (Boolean.TRUE.equals(donated)) {
+                    completedCount++;
+                }
+            } catch (RuntimeException e) {
+                log.error("[Batch] 월말 자동 기부 처리 실패 — memberId={}, yearMonth={}",
+                        memberId, yearMonth, e);
             }
         }
         return completedCount;
