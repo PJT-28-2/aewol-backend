@@ -115,7 +115,9 @@ public class ClaimServiceImpl implements ClaimService {
         update.put("extractedData", existing.get("extracted_data"));
         update.put("claimStatus", "SUBMITTED");
         update.put("claimDocumentUrl", null);
-        insuranceMapper.updateClaim(update);
+        if (insuranceMapper.updateClaim(update) != 1) {
+            throw BusinessException.conflict("이미 제출된 청구입니다.");
+        }
 
         return toResponse(insuranceMapper.findClaimById(claimId));
     }
