@@ -181,11 +181,14 @@ public class TransactionServiceImpl implements TransactionService {
         return getTransaction(memberId, txnId);
     }
 
+    // 공동육아 구성원(shared_access ACCEPTED)도 자기 결제를 공유 펫에 태깅할 수 있어야
+    // 기여도(share/contributions)에 잡힌다. 소유자 전용으로 막으면 구성원 지출이 집계에서 빠진다.
     private void assertOwnedPet(String memberId, String petId) {
         if (petId == null || petId.isBlank()) {
             return;
         }
-        if (petMapper.findByIdAndMemberId(petId, memberId) == null) {
+        if (petMapper.findByIdAndMemberId(petId, memberId) == null
+                && !petMapper.hasSharedAccess(petId, memberId)) {
             throw BusinessException.notFound("반려동물을 찾을 수 없습니다.");
         }
     }
