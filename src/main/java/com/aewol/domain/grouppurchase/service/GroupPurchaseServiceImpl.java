@@ -18,6 +18,7 @@ import com.aewol.domain.grouppurchase.dto.GroupPurchaseStatusParticipantResponse
 import com.aewol.domain.grouppurchase.dto.GroupPurchaseStatusResponse;
 import com.aewol.domain.grouppurchase.mapper.GroupPurchaseMapper;
 import com.aewol.domain.member.service.SimplePasswordVerificationService;
+import com.aewol.domain.notification.service.InboxNotifier;
 import com.aewol.domain.transaction.mapper.TransactionMapper;
 import com.aewol.domain.wallet.mapper.WalletMapper;
 import lombok.RequiredArgsConstructor;
@@ -52,6 +53,7 @@ public class GroupPurchaseServiceImpl implements GroupPurchaseService {
     private final WalletMapper walletMapper;
     private final TransactionMapper transactionMapper;
     private final SimplePasswordVerificationService simplePasswordVerificationService;
+    private final InboxNotifier inboxNotifier;
 
     /**
      * 목록 API의 status 쿼리 파라미터를 검증한다. 다른 3개 조회 API(getDetail/getStatus/getMyList)와
@@ -338,6 +340,18 @@ public class GroupPurchaseServiceImpl implements GroupPurchaseService {
             groupPurchaseMapper.updateDeliveryDate(gpId, LocalDate.now().plusDays(estimateDays));
         }
 
+        Object authorId = gp.get("member_id");
+        if (authorId != null && !String.valueOf(authorId).equals(memberId)) {
+            inboxNotifier.notifyAfterCommit(
+                    String.valueOf(authorId),
+                    InboxNotifier.Channel.COMMUNITY,
+                    "GROUP_PURCHASE",
+                    "공동구매에 참여가 들어왔어요",
+                    InboxNotifier.text(gp.get("product_name"), "공동구매")
+                            + "에 새 참여가 있어요.",
+                    "/group-purchase/" + gpId + "/status");
+        }
+
         return GroupPurchaseJoinResponse.builder()
                 .gpId(gpId)
                 .participantId(toLong(savedParticipant.get("participant_id")))
@@ -546,6 +560,13 @@ public class GroupPurchaseServiceImpl implements GroupPurchaseService {
         txn.put("autoTagged", "N");
         txn.put("txnDate", LocalDateTime.now());
         transactionMapper.insert(txn);
+        inboxNotifier.notifyAfterCommit(
+                memberId,
+                InboxNotifier.Channel.PAYMENT,
+                "PAYMENT",
+                "결제가 완료됐어요",
+                "공동구매 결제에서 " + InboxNotifier.won(amount) + "이 결제됐어요.",
+                "/group-purchase/" + gp.get("gp_id") + "/status");
         return toLong(txn.get("txnId"));
     }
 

@@ -46,4 +46,11 @@
         SELECT * FROM recurring_payment WHERE is_active = 1 AND next_payment_date &lt;= #{date}
     </select>
 
+    <select id="findUpcomingPayments" resultType="map">
+        SELECT rp.*, w.member_id
+        FROM recurring_payment rp
+        INNER JOIN wallet w ON w.wallet_id = rp.wallet_id
+        WHERE rp.is_active = 1 AND rp.next_payment_date = #{date}
+    </select>
+
 </mapper>

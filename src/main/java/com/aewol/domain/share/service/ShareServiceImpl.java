@@ -2,6 +2,7 @@ package com.aewol.domain.share.service;
 
 import com.aewol.common.exception.BusinessException;
 import com.aewol.domain.member.mapper.MemberMapper;
+import com.aewol.domain.notification.service.InboxNotifier;
 import com.aewol.domain.pet.mapper.PetMapper;
 import com.aewol.domain.share.dto.*;
 import com.aewol.domain.share.mapper.ShareMapper;
@@ -39,6 +40,7 @@ public class ShareServiceImpl implements ShareService {
     private final ShareMapper shareMapper;
     private final PetMapper petMapper;
     private final MemberMapper memberMapper;
+    private final InboxNotifier inboxNotifier;
 
     @Override
     public List<SharePetResponse> getAccessiblePets(String memberId) {
@@ -118,6 +120,15 @@ public class ShareServiceImpl implements ShareService {
         if (shareMapper.acceptInvite(text(invite, "access_id", "accessId"), memberId) != 1) {
             throw BusinessException.conflict("이미 처리된 초대입니다.");
         }
+        String petName = text(invite, "pet_name", "petName");
+        inboxNotifier.notifyAfterCommit(
+                ownerId,
+                InboxNotifier.Channel.FAMILY,
+                "FAMILY_SHARE",
+                "공동육아에 새 가족이 왔어요",
+                (petName == null || petName.isBlank() ? "반려동물" : petName)
+                        + " 공동육아 초대가 수락됐어요.",
+                "/share");
     }
 
     @Override
