@@ -23,6 +23,7 @@ import java.time.LocalDate;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -33,6 +34,9 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.HttpStatus;
 import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.test.util.ReflectionTestUtils;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
+import org.springframework.transaction.support.TransactionSynchronizationUtils;
 import org.springframework.web.multipart.MultipartFile;
 
 @ExtendWith(MockitoExtension.class)
@@ -52,6 +56,13 @@ class CareDiaryServiceImplTest {
         lenient().when(fileStorage.signedUrl(anyString()))
                 .thenAnswer(invocation -> "signed:" + invocation.getArgument(0));
         lenient().when(redisRateLimiter.incrementWithExpiry(anyString(), anyLong())).thenReturn(1L);
+    }
+
+    @AfterEach
+    void tearDown() {
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.clearSynchronization();
+        }
     }
 
     @Test
@@ -430,6 +441,54 @@ class CareDiaryServiceImplTest {
         verify(careDiaryMapper, never()).updatePublicImageKey(anyString(), anyString());
     }
 
+    @Test
+    @DisplayName("여러 장 중 뒤 사진 공개가 실패하면 이미 만든 사본을 지운다")
+    void should_unpublishCreatedCopy_when_laterImagePublishFails() {
+        CareDiaryServiceImpl service = service();
+        givenPetOwnedBy("pet-1", "owner-1");
+        when(careDiaryMapper.findById("diary-1"))
+                .thenReturn(diaryRow("diary-1", "pet-1", "owner-1", "2026-08-10", "산책"));
+        when(careDiaryMapper.findImagesForPublish("diary-1")).thenReturn(List.of(
+                map("imageId", "img-1", "imageUrl", "diary/a.png"),
+                map("imageId", "img-2", "imageUrl", "diary/b.png")));
+        when(fileStorage.publish("diary/a.png")).thenReturn("public/a.png");
+        when(fileStorage.publish("diary/b.png")).thenReturn(null);
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.changeVisibility("owner-1", "diary-1", visibilityRequest("PUBLIC")));
+
+        assertEquals(409, exception.getStatus().value());
+        verify(fileStorage).unpublish("public/a.png");
+        verify(fileStorage, never()).unpublish("public/b.png");
+        verify(careDiaryMapper, never()).updateVisibility(anyString(), anyString());
+    }
+
+    @Test
+    @DisplayName("공개 사본을 만든 뒤 DB가 롤백되면 사본을 지운다")
+    void should_unpublishCreatedCopies_when_publishTransactionRollsBack() {
+        TransactionSynchronizationManager.initSynchronization();
+        CareDiaryServiceImpl service = service();
+        givenPetOwnedBy("pet-1", "owner-1");
+        when(careDiaryMapper.findById("diary-1"))
+                .thenReturn(diaryRow("diary-1", "pet-1", "owner-1", "2026-08-10", "산책"));
+        when(careDiaryMapper.findImagesForPublish("diary-1")).thenReturn(List.of(
+                map("imageId", "img-1", "imageUrl", "diary/a.png"),
+                map("imageId", "img-2", "imageUrl", "diary/b.png")));
+        when(fileStorage.publish("diary/a.png")).thenReturn("public/a.png");
+        when(fileStorage.publish("diary/b.png")).thenReturn("public/b.png");
+        when(careDiaryMapper.updateVisibility("diary-1", "PUBLIC")).thenReturn(0);
+
+        assertThrows(BusinessException.class,
+                () -> service.changeVisibility("owner-1", "diary-1", visibilityRequest("PUBLIC")));
+        verify(fileStorage, never()).unpublish(anyString());
+
+        TransactionSynchronizationUtils.triggerAfterCompletion(
+                TransactionSynchronization.STATUS_ROLLED_BACK);
+
+        verify(fileStorage).unpublish("public/a.png");
+        verify(fileStorage).unpublish("public/b.png");
+    }
+
     // 원본만 지우면 CDN 사본은 주소를 아는 사람에게 영구히 보인다.
     @Test
     @DisplayName("일기를 지우면 공개 사본까지 정리한다")
@@ -785,6 +844,30 @@ class CareDiaryServiceImplTest {
         verify(careDiaryMapper, never()).restoreByReport(anyString());
         verify(careDiaryMapper, never()).resolvePendingReportsByDiary(
                 anyString(), anyString(), any(), anyString());
+    }
+
+    @Test
+    @DisplayName("복원 중 뒤 사진 사본이 실패하면 이미 만든 사본만 지운다")
+    void should_unpublishRestoredCopy_when_laterImageRestoreFails() {
+        CareDiaryServiceImpl service = service();
+        when(careDiaryMapper.findAdminReportById("report-1"))
+                .thenReturn(adminReportRow("PENDING", null));
+        when(careDiaryMapper.findImagesForPublish("diary-1")).thenReturn(List.of(
+                map("imageId", "image-1", "imageUrl", "diary/a.png",
+                        "publicImageKey", "public/existing.png"),
+                map("imageId", "image-2", "imageUrl", "diary/b.png"),
+                map("imageId", "image-3", "imageUrl", "diary/c.png")));
+        when(fileStorage.publish("diary/b.png")).thenReturn("public/b.png");
+        when(fileStorage.publish("diary/c.png")).thenReturn(null);
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.resolveAdminReport(
+                        "admin-1", "report-1", resolutionRequest("RESTORE", null)));
+
+        assertEquals(409, exception.getStatus().value());
+        verify(fileStorage).unpublish("public/b.png");
+        verify(fileStorage, never()).unpublish("public/existing.png");
+        verify(careDiaryMapper, never()).restoreByReport(anyString());
     }
 
     @Test
