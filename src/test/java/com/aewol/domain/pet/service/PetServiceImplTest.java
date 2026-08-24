@@ -394,6 +394,27 @@ class PetServiceImplTest {
         verify(fileStorage, never()).store(any(), any(), any());
     }
 
+    // "RIFF" 프리픽스와 길이는 충분하지만 8~11바이트가 "WEBP"가 아닌 다른 RIFF 기반 포맷(AVI는
+    // 실제로 RIFF 컨테이너를 공유한다)으로 위장한 파일 — 위 테스트(should_rejectDocument_when_
+    // extensionIsWebpButSignatureDoesNotMatch)는 RIFF 프리픽스 자체가 달라 startsWith에서 걸러지므로
+    // matchesAt(오프셋 8, WEBP_FORMAT_SIGNATURE) 검증은 이 케이스가 없으면 실질적으로 테스트되지
+    // 않는다(리뷰로 추가).
+    @Test
+    void should_rejectDocument_when_riffContainerFormatTagIsNotWebp() {
+        PetServiceImpl service = service();
+        when(petMapper.findById("pet-1")).thenReturn(pet("member-1"));
+        byte[] fakeAvi = {
+                0x52, 0x49, 0x46, 0x46, 0x00, 0x00, 0x00, 0x00, 0x41, 0x56, 0x49, 0x20
+        };
+        MockMultipartFile file = new MockMultipartFile("file", "vaccination.webp", "image/webp", fakeAvi);
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.uploadPetDocument("member-1", "pet-1", "VACCINATION", file, null));
+
+        assertEquals("JPEG, PNG, WEBP, PDF 파일만 업로드할 수 있습니다.", exception.getMessage());
+        verify(fileStorage, never()).store(any(), any(), any());
+    }
+
     // "RIFF"까지는 있지만 크기 필드(4~7바이트)에서 잘려 "WEBP" 태그(8~11바이트)에 도달하지
     // 못하는 파일 — matchesAt의 길이 체크(bytes.length < offset + signature.length)가 이
     // 경계에서도 예외 없이 false로 안전하게 거부하는지 검증한다(리뷰로 추가).
