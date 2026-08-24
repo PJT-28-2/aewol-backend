@@ -6,6 +6,7 @@ import java.math.RoundingMode;
 import java.util.Map;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
@@ -34,33 +35,56 @@ public class InboxNotifier {
         }
     }
 
-    private final NotificationService notificationService;
+    public enum Result {
+        CREATED,
+        DISABLED,
+        DUPLICATE,
+        FAILED
+    }
+
+    private final InboxNotificationWriter inboxNotificationWriter;
     private final NotificationSettingMapper notificationSettingMapper;
 
     public void notifyAfterCommit(String memberId, Channel channel,
                                   String type, String title, String message, String targetPath) {
+        notifyAfterCommit(memberId, channel, type, title, message, targetPath, null);
+    }
+
+    public void notifyAfterCommit(String memberId, Channel channel,
+                                  String type, String title, String message, String targetPath,
+                                  String eventKey) {
         if (memberId == null || memberId.isBlank()) return;
         if (!TransactionSynchronizationManager.isSynchronizationActive()) {
-            notifyQuietly(memberId, channel, type, title, message, targetPath);
+            notifyQuietly(memberId, channel, type, title, message, targetPath, eventKey);
             return;
         }
         TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
             @Override
             public void afterCommit() {
-                notifyQuietly(memberId, channel, type, title, message, targetPath);
+                notifyQuietly(memberId, channel, type, title, message, targetPath, eventKey);
             }
         });
     }
 
-    public void notifyQuietly(String memberId, Channel channel,
-                              String type, String title, String message, String targetPath) {
-        if (memberId == null || memberId.isBlank()) return;
+    public Result notifyQuietly(String memberId, Channel channel,
+                                String type, String title, String message, String targetPath) {
+        return notifyQuietly(memberId, channel, type, title, message, targetPath, null);
+    }
+
+    public Result notifyQuietly(String memberId, Channel channel,
+                                String type, String title, String message, String targetPath,
+                                String eventKey) {
+        if (memberId == null || memberId.isBlank()) return Result.DISABLED;
         try {
             Map<String, Object> settings = notificationSettingMapper.findByMemberId(memberId);
-            if (!isEnabled(settings, channel)) return;
-            notificationService.createNotification(memberId, type, title, message, targetPath);
+            if (!isEnabled(settings, channel)) return Result.DISABLED;
+            inboxNotificationWriter.write(memberId, type, title, message, targetPath, eventKey);
+            return Result.CREATED;
+        } catch (DuplicateKeyException exception) {
+            return Result.DUPLICATE;
         } catch (RuntimeException exception) {
             log.warn("[INBOX] 알림 저장 실패 - memberId: {} type: {}", memberId, type, exception);
+            return Result.FAILED;
         }
     }
 

@@ -80,8 +80,8 @@ public class RecurringPaymentExecutor {
         if (wallet == null || wallet.get("member_id") == null) return;
         inboxNotifier.notifyAfterCommit(
                 String.valueOf(wallet.get("member_id")),
-                InboxNotifier.Channel.PAYMENT,
-                "PAYMENT",
+                InboxNotifier.Channel.RECURRING,
+                "RECURRING",
                 "정기결제가 실행됐어요",
                 InboxNotifier.text(recurring.get("product_name"), "정기결제")
                         + " " + InboxNotifier.won(price) + "이 결제됐어요.",

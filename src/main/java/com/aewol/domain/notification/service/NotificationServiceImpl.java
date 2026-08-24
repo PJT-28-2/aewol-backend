@@ -22,6 +22,7 @@ public class NotificationServiceImpl implements NotificationService {
     private static final int DEFAULT_PAGE_SIZE = 20;
     private static final int MAX_PAGE_SIZE = 100;
     private static final Pattern TYPE_PATTERN = Pattern.compile("^[A-Z][A-Z0-9_]{0,49}$");
+    private static final Pattern EVENT_KEY_PATTERN = Pattern.compile("^[A-Za-z0-9:._-]{1,120}$");
 
     private final NotificationMapper notificationMapper;
 
@@ -80,6 +81,14 @@ public class NotificationServiceImpl implements NotificationService {
     @Transactional
     public String createNotification(
             String memberId, String type, String title, String message, String targetPath) {
+        return createNotification(memberId, type, title, message, targetPath, null);
+    }
+
+    @Override
+    @Transactional
+    public String createNotification(
+            String memberId, String type, String title, String message, String targetPath,
+            String eventKey) {
         memberId = requireMemberId(memberId);
         if (type == null || !TYPE_PATTERN.matcher(type).matches()) {
             throw new BusinessException("알림 종류를 확인해주세요.");
@@ -87,6 +96,7 @@ public class NotificationServiceImpl implements NotificationService {
         String normalizedTitle = requireText(title, 100, "알림 제목을 확인해주세요.");
         String normalizedMessage = requireText(message, 500, "알림 내용을 확인해주세요.");
         String normalizedTargetPath = normalizeTargetPath(targetPath);
+        String normalizedEventKey = normalizeEventKey(eventKey);
 
         Map<String, Object> notification = new HashMap<>();
         notification.put("memberId", memberId);
@@ -94,6 +104,7 @@ public class NotificationServiceImpl implements NotificationService {
         notification.put("title", normalizedTitle);
         notification.put("message", normalizedMessage);
         notification.put("targetPath", normalizedTargetPath);
+        notification.put("eventKey", normalizedEventKey);
         notificationMapper.insert(notification);
         Object generatedId = notification.get("notificationId");
         if (generatedId == null) {
@@ -127,6 +138,15 @@ public class NotificationServiceImpl implements NotificationService {
         if (value == null || value.isBlank()) throw new BusinessException(message);
         String normalized = value.trim();
         if (normalized.length() > maxLength) throw new BusinessException(message);
+        return normalized;
+    }
+
+    private String normalizeEventKey(String eventKey) {
+        if (eventKey == null || eventKey.isBlank()) return null;
+        String normalized = eventKey.trim();
+        if (!EVENT_KEY_PATTERN.matcher(normalized).matches()) {
+            throw new BusinessException("알림 이벤트 키를 확인해주세요.");
+        }
         return normalized;
     }
 
