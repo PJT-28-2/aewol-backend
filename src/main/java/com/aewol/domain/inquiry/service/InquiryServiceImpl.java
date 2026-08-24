@@ -41,6 +41,7 @@ public class InquiryServiceImpl implements InquiryService {
     private static final Map<String, Set<String>> ALLOWED_FILE_TYPES = Map.of(
             "image/jpeg", Set.of("jpg", "jpeg"),
             "image/png", Set.of("png"),
+            "image/webp", Set.of("webp"),
             "application/pdf", Set.of("pdf")
     );
 
@@ -191,7 +192,7 @@ public class InquiryServiceImpl implements InquiryService {
                 ? originalFilename.substring(originalFilename.lastIndexOf('.') + 1).toLowerCase(Locale.ROOT)
                 : "";
         if (extensions == null || !extensions.contains(extension)) {
-            throw new BusinessException("JPG, JPEG, PNG, PDF 파일만 업로드할 수 있어요");
+            throw new BusinessException("JPG, JPEG, PNG, WEBP, PDF 파일만 업로드할 수 있어요");
         }
         return "image/jpeg".equals(contentType) ? "jpg" : extension;
     }
