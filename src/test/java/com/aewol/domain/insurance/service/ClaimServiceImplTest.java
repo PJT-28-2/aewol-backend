@@ -2,6 +2,7 @@ package com.aewol.domain.insurance.service;
 
 import com.aewol.common.exception.BusinessException;
 import com.aewol.common.storage.FileStorage;
+import com.aewol.domain.insurance.dto.ClaimConfirmRequest;
 import com.aewol.domain.insurance.dto.ClaimResponse;
 import com.aewol.domain.insurance.mapper.InsuranceMapper;
 import com.aewol.domain.pet.mapper.PetMapper;
@@ -17,6 +18,7 @@ import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.nio.file.Path;
 import java.util.HashMap;
 import java.util.List;
@@ -162,9 +164,9 @@ class ClaimServiceImplTest {
                 .thenReturn(claimRow(1L, 100L, 10L, null, null, null, "{}", "DRAFT"))
                 .thenReturn(claimRow(1L, 100L, 10L, "애월동물병원", "2026-01-01", new BigDecimal("15000"), "{}", "SUBMITTED"));
 
-        ClaimResponse corrected = ClaimResponse.builder()
+        ClaimConfirmRequest corrected = ClaimConfirmRequest.builder()
                 .hospitalName("애월동물병원")
-                .treatmentDate("2026-01-01")
+                .treatmentDate(LocalDate.of(2026, 1, 1))
                 .totalAmount(new BigDecimal("15000"))
                 .build();
 
@@ -173,7 +175,9 @@ class ClaimServiceImplTest {
         assertEquals("SUBMITTED", result.getClaimStatus());
         assertEquals("애월동물병원", result.getHospitalName());
         verify(insuranceMapper).updateClaim(argThat((Map<String, Object> m) ->
-                "애월동물병원".equals(m.get("hospitalName")) && "SUBMITTED".equals(m.get("claimStatus"))));
+                "애월동물병원".equals(m.get("hospitalName"))
+                        && LocalDate.of(2026, 1, 1).equals(m.get("treatmentDate"))
+                        && "SUBMITTED".equals(m.get("claimStatus"))));
     }
 
     @Test
@@ -192,6 +196,21 @@ class ClaimServiceImplTest {
                         && new BigDecimal("9000").equals(m.get("totalAmount"))
                         && "{\"hospital_name\":\"기존병원\"}".equals(m.get("extractedData"))
                         && "SUBMITTED".equals(m.get("claimStatus"))));
+    }
+
+    @Test
+    @DisplayName("confirmClaim은 body가 없어도 기존 필수값이 비어 있으면 제출하지 않는다")
+    void should_rejectIncompleteExistingClaim_whenConfirmedWithoutBody() {
+        service = new ClaimServiceImpl(insuranceMapper, petMapper, paddleOcrClient, fileStorage);
+        when(insuranceMapper.findClaimById("1"))
+                .thenReturn(claimRow(1L, 100L, 10L, null, "2025-12-01",
+                        new BigDecimal("9000"), "{}", "DRAFT"));
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.confirmClaim("100", "1", null));
+
+        assertEquals(HttpStatus.BAD_REQUEST, exception.getStatus());
+        verify(insuranceMapper, never()).updateClaim(any());
     }
 
     @Test

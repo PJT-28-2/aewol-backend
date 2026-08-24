@@ -2,22 +2,21 @@ package com.aewol.domain.insurance.service;
 
 import com.aewol.common.exception.BusinessException;
 import com.aewol.common.storage.FileStorage;
+import com.aewol.domain.insurance.dto.ClaimConfirmRequest;
 import com.aewol.domain.insurance.dto.ClaimResponse;
 import com.aewol.domain.insurance.mapper.InsuranceMapper;
 import com.aewol.domain.pet.mapper.PetMapper;
 import com.aewol.external.paddleocr.PaddleOcrClient;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
 import java.math.BigDecimal;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.Paths;
+import java.time.LocalDate;
+import java.time.format.DateTimeParseException;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -80,7 +79,7 @@ public class ClaimServiceImpl implements ClaimService {
 
     @Override
     @Transactional
-    public ClaimResponse confirmClaim(String memberId, String claimId, ClaimResponse correctedData) {
+    public ClaimResponse confirmClaim(String memberId, String claimId, ClaimConfirmRequest correctedData) {
         Map<String, Object> existing = insuranceMapper.findClaimById(claimId);
         if (existing == null || !String.valueOf(existing.get("member_id")).equals(memberId)) {
             throw BusinessException.notFound("청구 정보를 찾을 수 없습니다.");
@@ -88,22 +87,47 @@ public class ClaimServiceImpl implements ClaimService {
 
         Map<String, Object> update = new HashMap<>();
         update.put("claimId", claimId);
-        if (correctedData == null) {
-            update.put("hospitalName", existing.get("hospital_name"));
-            update.put("treatmentDate", existing.get("treatment_date"));
-            update.put("totalAmount", existing.get("total_amount"));
-            update.put("extractedData", existing.get("extracted_data"));
-        } else {
-            update.put("hospitalName", correctedData.getHospitalName());
-            update.put("treatmentDate", correctedData.getTreatmentDate());
-            update.put("totalAmount", correctedData.getTotalAmount());
-            update.put("extractedData", existing.get("extracted_data"));
-        }
+        Object hospitalName = correctedData == null
+                ? existing.get("hospital_name") : correctedData.getHospitalName().trim();
+        Object treatmentDate = correctedData == null
+                ? existing.get("treatment_date") : correctedData.getTreatmentDate();
+        Object totalAmount = correctedData == null
+                ? existing.get("total_amount") : correctedData.getTotalAmount();
+        validateFinalClaim(hospitalName, treatmentDate, totalAmount);
+
+        update.put("hospitalName", hospitalName);
+        update.put("treatmentDate", treatmentDate);
+        update.put("totalAmount", totalAmount);
+        update.put("extractedData", existing.get("extracted_data"));
         update.put("claimStatus", "SUBMITTED");
         update.put("claimDocumentUrl", null);
         insuranceMapper.updateClaim(update);
 
         return toResponse(insuranceMapper.findClaimById(claimId));
+    }
+
+    private void validateFinalClaim(Object hospitalName, Object treatmentDate, Object totalAmount) {
+        if (!(hospitalName instanceof String) || ((String) hospitalName).trim().isEmpty()) {
+            throw new BusinessException("병원명을 확인해주세요.");
+        }
+        if (((String) hospitalName).trim().length() > 100) {
+            throw new BusinessException("병원명은 100자 이하여야 합니다.");
+        }
+
+        LocalDate parsedTreatmentDate;
+        try {
+            parsedTreatmentDate = treatmentDate instanceof LocalDate
+                    ? (LocalDate) treatmentDate : LocalDate.parse(String.valueOf(treatmentDate));
+        } catch (DateTimeParseException e) {
+            throw new BusinessException("진료일 형식이 올바르지 않습니다.");
+        }
+        if (parsedTreatmentDate.isAfter(LocalDate.now())) {
+            throw new BusinessException("진료일은 오늘 이후일 수 없습니다.");
+        }
+
+        if (!(totalAmount instanceof BigDecimal) || ((BigDecimal) totalAmount).signum() <= 0) {
+            throw new BusinessException("청구 금액은 0보다 커야 합니다.");
+        }
     }
 
     @Override
