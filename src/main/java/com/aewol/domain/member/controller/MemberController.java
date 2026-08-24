@@ -4,6 +4,9 @@ import com.aewol.common.response.ApiResponse;
 import com.aewol.domain.member.dto.MemberResponse;
 import com.aewol.domain.member.dto.MemberPasswordChangeRequest;
 import com.aewol.domain.member.dto.MemberPasswordVerifyRequest;
+import com.aewol.domain.member.dto.MemberPhoneSendCodeRequest;
+import com.aewol.domain.member.dto.MemberPhoneSendCodeResponse;
+import com.aewol.domain.member.dto.MemberPhoneVerifyCodeRequest;
 import com.aewol.domain.member.dto.MemberUpdateRequest;
 import com.aewol.domain.member.dto.SimplePasswordRequest;
 import com.aewol.domain.member.dto.SimplePasswordVerifyRequest;
@@ -39,6 +42,25 @@ public class MemberController {
                                                           @Valid @RequestBody MemberUpdateRequest request) {
         memberService.updateMember(memberId, request);
         return ResponseEntity.ok(ApiResponse.success());
+    }
+
+    @Operation(summary = "전화번호 변경 인증번호 발송")
+    @PostMapping("/me/phone/send-code")
+    public ResponseEntity<ApiResponse<MemberPhoneSendCodeResponse>> sendPhoneVerificationCode(
+            @AuthenticationPrincipal String memberId,
+            @Valid @RequestBody MemberPhoneSendCodeRequest request) {
+        MemberPhoneSendCodeResponse result =
+                memberService.sendPhoneVerificationCode(memberId, request);
+        return ResponseEntity.ok(ApiResponse.success("인증번호가 발송되었습니다.", result));
+    }
+
+    @Operation(summary = "전화번호 변경 인증번호 검증")
+    @PostMapping("/me/phone/verify-code")
+    public ResponseEntity<ApiResponse<Void>> verifyPhoneCode(
+            @AuthenticationPrincipal String memberId,
+            @Valid @RequestBody MemberPhoneVerifyCodeRequest request) {
+        memberService.verifyPhoneCode(memberId, request);
+        return ResponseEntity.ok(ApiResponse.success("전화번호 인증이 완료되었습니다.", null));
     }
 
     @Operation(summary = "현재 비밀번호 확인")

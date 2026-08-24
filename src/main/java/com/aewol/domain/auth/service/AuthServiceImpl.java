@@ -4,6 +4,7 @@ import com.aewol.common.exception.BusinessException;
 import com.aewol.common.util.JwtUtil;
 import com.aewol.common.util.PhoneNumberUtil;
 import com.aewol.common.util.RedisRateLimiter;
+import com.aewol.common.util.Sha256Util;
 import com.aewol.domain.auth.dto.LoginRequest;
 import com.aewol.domain.auth.dto.KakaoOAuthResponse;
 import com.aewol.domain.auth.dto.KakaoRegistrationSession;
@@ -41,6 +42,7 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 import org.springframework.transaction.support.TransactionOperations;
 
 import java.security.SecureRandom;
+import java.time.Duration;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.List;
@@ -74,6 +76,13 @@ public class AuthServiceImpl implements AuthService {
     private static final String PASSWORD_RESET_TOKEN_KEY_PREFIX = "password:reset:token:";
     private static final String INVALID_PASSWORD_RESET_TOKEN_MESSAGE =
             "유효하지 않거나 만료된 비밀번호 재설정 토큰입니다.";
+    private static final int LOGIN_MAX_FAILURES = 5;
+    private static final long LOGIN_LOCK_SECONDS = 900L;
+    private static final String LOGIN_FAILURE_KEY_PREFIX = "auth:login:failures:email:";
+    private static final String LOGIN_LOCK_KEY_PREFIX = "auth:login:lock:email:";
+    private static final String LOGIN_LOCKED_MESSAGE =
+            "로그인 시도가 너무 많습니다. 15분 후 다시 시도해주세요.";
+    private static final String LOGIN_FAILURE_MESSAGE = "이메일 또는 비밀번호가 잘못되었습니다.";
     private static final String EMAIL_SEND_FAILURE_MESSAGE =
             "인증 이메일을 발송할 수 없습니다. 잠시 후 다시 시도해주세요.";
     private static final String VERIFICATION_VALUE_DELIMITER = "|";
@@ -405,16 +414,28 @@ public class AuthServiceImpl implements AuthService {
 
     @Override
     public TokenResponse login(LoginRequest request) {
+        String emailSubject = loginEmailSubject(request.getEmail());
+        String lockKey = LOGIN_LOCK_KEY_PREFIX + emailSubject;
+        String failureKey = LOGIN_FAILURE_KEY_PREFIX + emailSubject;
+        if (Boolean.TRUE.equals(redisTemplate.hasKey(lockKey))) {
+            throw new BusinessException(HttpStatus.TOO_MANY_REQUESTS, LOGIN_LOCKED_MESSAGE);
+        }
+
         Map<String, Object> member = memberMapper.findActiveByEmail(request.getEmail());
         if (member == null) {
-            throw BusinessException.unauthorized("이메일 또는 비밀번호가 잘못되었습니다.");
+            recordLoginFailure(failureKey, lockKey);
+            throw BusinessException.unauthorized(LOGIN_FAILURE_MESSAGE);
         }
 
         String memberId = String.valueOf(member.get("member_id"));
         String storedPassword = (String) member.get("password");
         if (storedPassword == null || !passwordEncoder.matches(request.getPassword(), storedPassword)) {
-            throw BusinessException.unauthorized("이메일 또는 비밀번호가 잘못되었습니다.");
+            recordLoginFailure(failureKey, lockKey);
+            throw BusinessException.unauthorized(LOGIN_FAILURE_MESSAGE);
         }
+
+        redisTemplate.delete(failureKey);
+        redisTemplate.delete(lockKey);
 
         if (!"Y".equals(member.get("email_verified"))) {
             throw new BusinessException(HttpStatus.FORBIDDEN, "이메일 인증이 필요합니다.");
@@ -784,6 +805,19 @@ public class AuthServiceImpl implements AuthService {
                 }
             }
         });
+    }
+
+    private void recordLoginFailure(String failureKey, String lockKey) {
+        long failures = redisRateLimiter.incrementWithExpiry(failureKey, LOGIN_LOCK_SECONDS);
+        if (failures >= LOGIN_MAX_FAILURES) {
+            redisTemplate.opsForValue().set(lockKey, "1", Duration.ofSeconds(LOGIN_LOCK_SECONDS));
+            redisTemplate.delete(failureKey);
+            throw new BusinessException(HttpStatus.TOO_MANY_REQUESTS, LOGIN_LOCKED_MESSAGE);
+        }
+    }
+
+    private String loginEmailSubject(String email) {
+        return Sha256Util.lowercaseHex(email.trim().toLowerCase(Locale.ROOT));
     }
 
     private String passwordResetVerificationKey(String email) {
