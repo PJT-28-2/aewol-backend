@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
 import com.aewol.common.exception.BusinessException;
+import com.aewol.domain.donation.dto.DonationDepositRequest;
 import com.aewol.domain.donation.dto.DonationHistoryResponse;
 import com.aewol.domain.donation.dto.DonationRequest;
 import com.aewol.domain.donation.dto.DonationSettingRequest;
@@ -204,7 +205,7 @@ class DonationServiceImplTest {
     void should_transferOnce_when_withdrawRequestIsRetried() {
         DonationServiceImpl service = service();
         DonationWithdrawRequest request = withdrawRequest("2000", "withdraw-1");
-        when(donationMapper.findMainWalletByMemberId("member-1")).thenReturn(map("wallet_id", "wallet-1"));
+        when(donationMapper.findMainWalletForUpdate("member-1")).thenReturn(map("wallet_id", "wallet-1"));
         when(donationMapper.findPotByMemberId("member-1"))
                 .thenReturn(map("wallet_id", "pot-1", "balance", new BigDecimal("12400")),
                         map("wallet_id", "pot-1", "balance", new BigDecimal("10400")),
@@ -225,6 +226,8 @@ class DonationServiceImplTest {
         verify(donationMapper, times(1)).increaseWalletBalance("wallet-1", new BigDecimal("2000"));
         verify(donationMapper, times(1)).insertWalletTransaction(captor.capture());
         assertEquals("withdraw-1", captor.getValue().get("idempotencyKey"));
+        assertEquals("pot-1", captor.getValue().get("sourceWalletId"));
+        assertEquals("wallet-1", captor.getValue().get("counterWalletId"));
         assertEquals(new BigDecimal("10400"), firstResult.getBalance());
         assertEquals(new BigDecimal("10400"), retriedResult.getBalance());
     }
@@ -234,6 +237,7 @@ class DonationServiceImplTest {
     void should_throwConflict_when_sameWithdrawalKeyHasDifferentAmount() {
         DonationServiceImpl service = service();
         DonationWithdrawRequest request = withdrawRequest("3000", "withdraw-1");
+        when(donationMapper.findMainWalletForUpdate("member-1")).thenReturn(map("wallet_id", "wallet-1"));
         when(donationMapper.findPotByMemberId("member-1"))
                 .thenReturn(map("wallet_id", "pot-1", "balance", new BigDecimal("10400")));
         when(donationMapper.findPotForUpdate("member-1"))
@@ -246,6 +250,59 @@ class DonationServiceImplTest {
 
         assertEquals(409, exception.getStatus().value());
         verify(donationMapper, never()).decreasePotBalance(any(), any());
+        verify(donationMapper, never()).insertWalletTransaction(anyMap());
+    }
+
+    @Test
+    @DisplayName("넣기 응답이 유실되어 같은 키로 재시도해도 한 번만 이체한다")
+    void should_transferOnce_when_depositRequestIsRetried() {
+        DonationServiceImpl service = service();
+        DonationDepositRequest request = depositRequest("2000", "deposit-1");
+        when(donationMapper.findMainWalletForUpdate("member-1")).thenReturn(map("wallet_id", "wallet-1"));
+        when(donationMapper.findPotByMemberId("member-1"))
+                .thenReturn(map("wallet_id", "pot-1", "balance", new BigDecimal("12400")),
+                        map("wallet_id", "pot-1", "balance", new BigDecimal("14400")),
+                        map("wallet_id", "pot-1", "balance", new BigDecimal("14400")));
+        when(donationMapper.findPotForUpdate("member-1"))
+                .thenReturn(map("wallet_id", "pot-1", "balance", new BigDecimal("12400")),
+                        map("wallet_id", "pot-1", "balance", new BigDecimal("14400")));
+        when(donationMapper.findDepositByIdempotencyKey("member-1", "deposit-1"))
+                .thenReturn(null, map("price", new BigDecimal("2000")));
+        when(donationMapper.decreaseMainWalletBalance("wallet-1", new BigDecimal("2000"))).thenReturn(1);
+        when(donationMapper.increasePotBalance("pot-1", new BigDecimal("2000"))).thenReturn(1);
+
+        var firstResult = service.deposit("member-1", request);
+        var retriedResult = service.deposit("member-1", request);
+
+        ArgumentCaptor<Map<String, Object>> captor = ArgumentCaptor.forClass(Map.class);
+        verify(donationMapper, times(1)).decreaseMainWalletBalance("wallet-1", new BigDecimal("2000"));
+        verify(donationMapper, times(1)).increasePotBalance("pot-1", new BigDecimal("2000"));
+        verify(donationMapper, times(1)).insertWalletTransaction(captor.capture());
+        assertEquals("deposit-1", captor.getValue().get("idempotencyKey"));
+        assertEquals("wallet-1", captor.getValue().get("sourceWalletId"));
+        assertEquals("pot-1", captor.getValue().get("counterWalletId"));
+        assertEquals(new BigDecimal("14400"), firstResult.getBalance());
+        assertEquals(new BigDecimal("14400"), retriedResult.getBalance());
+    }
+
+    @Test
+    @DisplayName("지갑 잔액이 부족하면 저금통에 넣지 않는다")
+    void should_throwException_when_walletBalanceIsInsufficientForDeposit() {
+        DonationServiceImpl service = service();
+        DonationDepositRequest request = depositRequest("3000", "deposit-1");
+        when(donationMapper.findMainWalletForUpdate("member-1")).thenReturn(map("wallet_id", "wallet-1"));
+        when(donationMapper.findPotByMemberId("member-1"))
+                .thenReturn(map("wallet_id", "pot-1", "balance", new BigDecimal("1000")));
+        when(donationMapper.findPotForUpdate("member-1"))
+                .thenReturn(map("wallet_id", "pot-1", "balance", new BigDecimal("1000")));
+        when(donationMapper.findDepositByIdempotencyKey("member-1", "deposit-1")).thenReturn(null);
+        when(donationMapper.decreaseMainWalletBalance("wallet-1", new BigDecimal("3000"))).thenReturn(0);
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.deposit("member-1", request));
+
+        assertEquals("지갑 잔액이 부족합니다.", exception.getMessage());
+        verify(donationMapper, never()).increasePotBalance(any(), any());
         verify(donationMapper, never()).insertWalletTransaction(anyMap());
     }
 
@@ -314,6 +371,13 @@ class DonationServiceImplTest {
 
     private DonationWithdrawRequest withdrawRequest(String amount, String key) {
         DonationWithdrawRequest request = new DonationWithdrawRequest();
+        ReflectionTestUtils.setField(request, "amount", new BigDecimal(amount));
+        ReflectionTestUtils.setField(request, "idempotencyKey", key);
+        return request;
+    }
+
+    private DonationDepositRequest depositRequest(String amount, String key) {
+        DonationDepositRequest request = new DonationDepositRequest();
         ReflectionTestUtils.setField(request, "amount", new BigDecimal(amount));
         ReflectionTestUtils.setField(request, "idempotencyKey", key);
         return request;
