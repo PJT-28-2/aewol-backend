@@ -61,6 +61,7 @@
 
     <select id="findActiveCampaigns" resultType="map">
         SELECT c.campaign_id AS id,
+               c.organization_id AS organizationId,
                o.name AS organization,
                c.title,
                c.category,
@@ -78,6 +79,24 @@
           AND (c.ends_at IS NULL OR c.ends_at &gt;= NOW())
         ORDER BY c.is_recommended DESC, preferred DESC, c.display_order, c.created_at DESC
     </select>
+
+    <select id="findActiveOrganizationById" resultType="map">
+        SELECT organization_id AS organizationId, name
+        FROM donation_organization
+        WHERE organization_id = #{organizationId}
+          AND is_active = 1
+    </select>
+
+    <insert id="insertPreference">
+        INSERT IGNORE INTO member_donation_preference (member_id, organization_id)
+        VALUES (#{memberId}, #{organizationId})
+    </insert>
+
+    <delete id="deletePreference">
+        DELETE FROM member_donation_preference
+        WHERE member_id = #{memberId}
+          AND organization_id = #{organizationId}
+    </delete>
 
     <select id="findCampaignById" resultType="map">
         SELECT c.*, o.name AS organization_name
