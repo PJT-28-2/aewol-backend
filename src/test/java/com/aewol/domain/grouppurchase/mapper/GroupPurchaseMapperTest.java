@@ -165,6 +165,46 @@ class GroupPurchaseMapperTest {
     }
 
     @Test
+    @DisplayName("deadline이 NULL인 비정상 데이터는 status 필터 없이도 findList 결과에서 제외된다")
+    void should_excludeNullDeadline_fromFindList_regardlessOfStatusFilter() {
+        long corruptedGpId = insertGroupPurchase(99L, "OPEN", 3, 10, null);
+        long normalGpId = insertGroupPurchase(99L, "OPEN", 3, 10, LocalDateTime.now().plusDays(5));
+
+        List<Map<String, Object>> result = findList(null, null, null, 10);
+
+        assertEquals(1, result.size());
+        assertEquals(normalGpId, ((Number) result.get(0).get("gp_id")).longValue());
+        assertTrue(result.stream().noneMatch(row -> ((Number) row.get("gp_id")).longValue() == corruptedGpId));
+    }
+
+    @Test
+    @DisplayName("deadline이 NULL인 비정상 데이터는 OPEN 필터에서도 제외된다")
+    void should_excludeNullDeadline_fromFindList_underOpenFilter() {
+        insertGroupPurchase(99L, "OPEN", 3, 10, null);
+
+        assertEquals(0, findList("OPEN", null, null, 10).size());
+    }
+
+    @Test
+    @DisplayName("deadline이 NULL인 글이 섞여 있어도 전체 글 수가 페이지 크기를 넘으면 정상 글만 페이지 크기만큼 반환된다"
+            + " — 회귀 재현: 이 필터가 없으면 NULL 행이 커서 경계로 뽑힐 때 GroupPurchaseServiceImpl#toCursor가 NPE로 500을 던졌다")
+    void should_returnOnlyNormalRows_when_totalRowCountExceedsPageSize_withNullDeadlineMixedIn() {
+        LocalDateTime now = LocalDateTime.now();
+        List<Long> normalIds = new java.util.ArrayList<>();
+        for (int i = 0; i < 10; i++) {
+            normalIds.add(insertGroupPurchase(99L, "OPEN", 3, 10, now.plusDays(i + 1)));
+        }
+        long corruptedGpId = insertGroupPurchase(99L, "OPEN", 3, 10, null);
+
+        List<Map<String, Object>> result = findList(null, null, null, 10);
+
+        assertEquals(10, result.size());
+        assertTrue(result.stream().noneMatch(row -> ((Number) row.get("gp_id")).longValue() == corruptedGpId));
+        assertEquals(new java.util.HashSet<>(normalIds),
+                result.stream().map(row -> ((Number) row.get("gp_id")).longValue()).collect(java.util.stream.Collectors.toSet()));
+    }
+
+    @Test
     @DisplayName("마감 전이어도 목표 수량을 채웠으면 findList의 COMPLETED 필터에 잡히고 OPEN 필터에서는 빠진다")
     void should_matchCompletedFilterOnFindList_notOpenFilter_when_targetReachedBeforeDeadline() {
         insertGroupPurchase(99L, "OPEN", 10, 10, LocalDateTime.now().plusDays(5));
