@@ -26,10 +26,12 @@ public class DonationServiceImpl implements DonationService {
     private static final Set<BigDecimal> SAVING_UNITS = Set.of(
             BigDecimal.TEN, BigDecimal.valueOf(100), BigDecimal.valueOf(1000));
 
+    private static final String DEMO_TITLE_PREFIX = "[시연]";
+
     private final DonationMapper donationMapper;
     private final TransactionOperations transactionOperations;
-    @Value("${donation.show-demo-campaigns:true}")
-    private boolean showDemoCampaigns = true;
+    @Value("${donation.allow-demo-donations:true}")
+    private boolean allowDemoDonations = true;
 
     @Override
     @Transactional
@@ -44,7 +46,6 @@ public class DonationServiceImpl implements DonationService {
                 donationMapper.findMonthlySaved(text(pot, "wallet_id", "walletId")))
                 .orElse(BigDecimal.ZERO);
         List<DonationCampaignResponse> campaigns = donationMapper.findActiveCampaigns(memberId).stream()
-                .filter(this::visibleCampaign)
                 .map(this::toCampaignResponse)
                 .collect(Collectors.toList());
 
@@ -62,47 +63,56 @@ public class DonationServiceImpl implements DonationService {
     @Transactional
     public DonationBalanceResponse donate(String memberId, DonationRequest request) {
         memberId = requireMemberId(memberId);
-        String idempotencyKey = request.getIdempotencyKey();
-        if (idempotencyKey == null || idempotencyKey.isBlank()) {
-            idempotencyKey = UUID.randomUUID().toString();
-        } else if (idempotencyKey.length() > 64) {
-            throw new BusinessException("중복 요청 방지 키는 64자 이하여야 합니다.");
-        }
+        String idempotencyKey = requireIdempotencyKey(request.getIdempotencyKey());
 
         Map<String, Object> existing = donationMapper.findHistoryByIdempotencyKey(memberId, idempotencyKey);
         if (existing != null) {
-            Map<String, Object> currentPot = getOrCreatePot(memberId);
-            return DonationBalanceResponse.builder()
-                    .donationId(text(existing, "donation_id", "donationId"))
-                    .balance(decimal(currentPot, "balance"))
-                    .build();
+            return replayDonation(existing, getOrCreatePot(memberId),
+                    request.getAmount(), request.getCampaignId());
         }
 
         Map<String, Object> campaign = donationMapper.findCampaignById(request.getCampaignId());
-        if (campaign == null || !visibleCampaign(campaign)) {
+        if (campaign == null) {
             throw BusinessException.notFound("진행 중인 기부 캠페인을 찾을 수 없습니다.");
         }
+        rejectDemoDonation(campaign, "시연 캠페인에는 기부할 수 없습니다.");
         return donateToCampaign(memberId, campaign, request.getAmount(), idempotencyKey);
     }
 
     private DonationBalanceResponse donateToCampaign(String memberId, Map<String, Object> campaign,
                                                        BigDecimal amount, String idempotencyKey) {
         Map<String, Object> pot = getOrCreatePotForUpdate(memberId);
-        String walletId = text(pot, "wallet_id", "walletId");
-        if (donationMapper.decreasePotBalance(walletId, amount) != 1) {
-            throw new BusinessException("저금통 잔액이 부족합니다.");
+        // 저금통 행을 잡은 뒤에 다시 본다. 같은 키의 동시 요청은 락에서 직렬화되므로
+        // 두 번째는 이미 커밋된 기부 내역을 읽을 수 있다.
+        Map<String, Object> existing = donationMapper.findHistoryByIdempotencyKey(memberId, idempotencyKey);
+        String campaignId = text(campaign, "campaign_id", "campaignId");
+        if (existing != null) {
+            return replayDonation(existing, pot, amount, campaignId);
         }
 
+        String walletId = text(pot, "wallet_id", "walletId");
         Map<String, Object> history = new HashMap<>();
         history.put("walletId", walletId);
         history.put("organizationId", text(campaign, "organization_id", "organizationId"));
-        history.put("campaignId", text(campaign, "campaign_id", "campaignId"));
+        history.put("campaignId", campaignId);
         history.put("channelId", text(campaign, "channel_id", "channelId"));
         history.put("amount", amount);
         history.put("recipientName", text(campaign, "organization_name", "organizationName"));
         history.put("idempotencyKey", idempotencyKey);
-        donationMapper.insertHistory(history);
-        String campaignId = text(campaign, "campaign_id", "campaignId");
+        try {
+            donationMapper.insertHistory(history);
+        } catch (DuplicateKeyException e) {
+            Map<String, Object> concurrent = donationMapper
+                    .findHistoryByIdempotencyKey(memberId, idempotencyKey);
+            if (concurrent == null) {
+                throw BusinessException.conflict("동일한 기부 요청이 처리 중입니다.");
+            }
+            return replayDonation(concurrent, pot, amount, campaignId);
+        }
+
+        if (donationMapper.decreasePotBalance(walletId, amount) != 1) {
+            throw new BusinessException("저금통 잔액이 부족합니다.");
+        }
         if (donationMapper.increaseCampaignResult(campaignId, amount) != 1) {
             throw BusinessException.conflict("캠페인 모금액을 반영하지 못했습니다.");
         }
@@ -111,6 +121,19 @@ public class DonationServiceImpl implements DonationService {
         return DonationBalanceResponse.builder()
                 .donationId(text(history, "donationId"))
                 .balance(decimal(updatedPot, "balance"))
+                .build();
+    }
+
+    private DonationBalanceResponse replayDonation(Map<String, Object> existing, Map<String, Object> pot,
+                                                   BigDecimal amount, String campaignId) {
+        if (decimal(existing, "amount").compareTo(amount) != 0
+                || !Objects.equals(text(existing, "campaign_id", "campaignId"), campaignId)) {
+            throw BusinessException.conflict(
+                    "동일한 중복 요청 방지 키에 다른 기부 금액이나 캠페인을 사용할 수 없습니다.");
+        }
+        return DonationBalanceResponse.builder()
+                .donationId(text(existing, "donation_id", "donationId"))
+                .balance(decimal(pot, "balance"))
                 .build();
     }
 
@@ -226,9 +249,10 @@ public class DonationServiceImpl implements DonationService {
                 throw new BusinessException("자동 기부 캠페인을 선택해 주세요.");
             }
             Map<String, Object> campaign = donationMapper.findCampaignById(campaignId);
-            if (campaign == null || !visibleCampaign(campaign)) {
+            if (campaign == null) {
                 throw BusinessException.notFound("진행 중인 자동 기부 캠페인을 찾을 수 없습니다.");
             }
+            rejectDemoDonation(campaign, "시연 캠페인은 자동 기부 대상으로 선택할 수 없습니다.");
             organizationId = text(campaign, "organization_id", "organizationId");
         }
 
@@ -343,7 +367,7 @@ public class DonationServiceImpl implements DonationService {
         Map<String, Object> existing = donationMapper.findHistoryByIdempotencyKey(memberId, idempotencyKey);
         if (existing == null) {
             Map<String, Object> campaign = donationMapper.findCampaignById(campaignId);
-            if (campaign == null || !visibleCampaign(campaign)) {
+            if (campaign == null || isBlockedDemoCampaign(campaign)) {
                 return false;
             }
             BigDecimal amount = decimal(pot, "balance");
@@ -394,17 +418,21 @@ public class DonationServiceImpl implements DonationService {
         progress = Math.max(0, Math.min(progress, 100));
         LocalDateTime endsAt = localDateTime(value(row, "endsAt", "ends_at"));
         long daysLeft = endsAt == null ? 0 : Math.max(ChronoUnit.DAYS.between(LocalDateTime.now(), endsAt) + 1, 0);
+        String title = text(row, "title");
+        boolean demo = isDemoTitle(title);
         return DonationCampaignResponse.builder()
                 .id(text(row, "id"))
                 .organizationId(text(row, "organizationId", "organization_id"))
                 .organization(text(row, "organization"))
-                .title(text(row, "title"))
+                .title(title)
                 .category(text(row, "category"))
                 .progress(progress)
                 .raised(raised)
                 .participants(number(row, "participants"))
                 .daysLeft(daysLeft)
                 .preferred(bool(row, "preferred"))
+                .demo(demo)
+                .donatable(allowDemoDonations || !demo)
                 .build();
     }
 
@@ -423,12 +451,18 @@ public class DonationServiceImpl implements DonationService {
         return "유기동물 " + meals + "마리의 한 끼를 도울 수 있어요";
     }
 
-    private boolean visibleCampaign(Map<String, Object> campaign) {
-        if (showDemoCampaigns) {
-            return true;
+    private void rejectDemoDonation(Map<String, Object> campaign, String message) {
+        if (isBlockedDemoCampaign(campaign)) {
+            throw new BusinessException(message);
         }
-        String title = text(campaign, "title");
-        return title == null || !title.startsWith("[시연]");
+    }
+
+    private boolean isBlockedDemoCampaign(Map<String, Object> campaign) {
+        return !allowDemoDonations && isDemoTitle(text(campaign, "title"));
+    }
+
+    private static boolean isDemoTitle(String title) {
+        return title != null && title.startsWith(DEMO_TITLE_PREFIX);
     }
 
     private String requireMemberId(String memberId) {

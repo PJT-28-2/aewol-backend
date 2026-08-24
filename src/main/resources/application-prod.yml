@@ -59,7 +59,7 @@ swagger:
   enabled: false
 
 donation:
-  show-demo-campaigns: false
+  allow-demo-donations: false
 
 cookie:
   secure: true

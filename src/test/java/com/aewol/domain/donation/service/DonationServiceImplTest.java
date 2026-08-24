@@ -95,10 +95,9 @@ class DonationServiceImplTest {
     }
 
     @Test
-    @DisplayName("운영에서는 [시연] 캠페인을 목록과 기부 대상에서 뺀다")
-    void should_hideDemoCampaigns_when_flagDisabled() {
+    @DisplayName("[시연] 접두어가 있는 캠페인도 목록에 그대로 보여 준다")
+    void should_includeDemoPrefixedCampaigns_inOverview() {
         DonationServiceImpl service = service();
-        ReflectionTestUtils.setField(service, "showDemoCampaigns", false);
         when(donationMapper.findPotByMemberId("member-1"))
                 .thenReturn(map("wallet_id", "pot-1", "balance", new BigDecimal("12400")));
         when(donationMapper.findSettings("member-1")).thenReturn(settings(true, "1000", false));
@@ -114,8 +113,125 @@ class DonationServiceImplTest {
                         "endsAt", LocalDateTime.now().plusDays(8), "preferred", 1)));
 
         var overview = service.getOverview("member-1");
+        assertEquals(2, overview.getCampaigns().size());
+        assertEquals("[시연] 유기동물 구조·입양 활동 지원", overview.getCampaigns().get(0).getTitle());
+        assertTrue(overview.getCampaigns().get(0).isDemo());
+        assertTrue(overview.getCampaigns().get(0).isDonatable());
+        assertEquals("난방비 지원", overview.getCampaigns().get(1).getTitle());
+        assertFalse(overview.getCampaigns().get(1).isDemo());
+        assertTrue(overview.getCampaigns().get(1).isDonatable());
+    }
+
+    @Test
+    @DisplayName("운영에서는 시연 캠페인을 목록에 보여 주되 기부 불가로 표시한다")
+    void should_markDemoCampaignNotDonatable_when_demoDonationsAreDisabled() {
+        DonationServiceImpl service = service();
+        ReflectionTestUtils.setField(service, "allowDemoDonations", false);
+        when(donationMapper.findPotByMemberId("member-1"))
+                .thenReturn(map("wallet_id", "pot-1", "balance", new BigDecimal("12400")));
+        when(donationMapper.findSettings("member-1")).thenReturn(settings(true, "1000", false));
+        when(donationMapper.findMonthlySaved("pot-1")).thenReturn(BigDecimal.ZERO);
+        when(donationMapper.findActiveCampaigns("member-1")).thenReturn(List.of(
+                map("id", "demo-1", "organization", "시연", "title", "[시연] 유기동물 구조·입양 활동 지원",
+                        "category", "유기동물", "targetAmount", new BigDecimal("1"),
+                        "raised", BigDecimal.ZERO, "participants", 0,
+                        "endsAt", LocalDateTime.now().plusDays(8), "preferred", 0)));
+
+        var overview = service.getOverview("member-1");
+
         assertEquals(1, overview.getCampaigns().size());
-        assertEquals("난방비 지원", overview.getCampaigns().get(0).getTitle());
+        assertTrue(overview.getCampaigns().get(0).isDemo());
+        assertFalse(overview.getCampaigns().get(0).isDonatable());
+    }
+
+    @Test
+    @DisplayName("운영에서는 시연 캠페인에 직접 기부하지 않는다")
+    void should_rejectDonate_when_demoCampaignAndDemoDonationsDisabled() {
+        DonationServiceImpl service = service();
+        ReflectionTestUtils.setField(service, "allowDemoDonations", false);
+        DonationRequest request = donationRequest("3000", "demo-1", "request-1");
+        when(donationMapper.findHistoryByIdempotencyKey("member-1", "request-1")).thenReturn(null);
+        when(donationMapper.findCampaignById("demo-1")).thenReturn(map(
+                "campaign_id", "demo-1", "title", "[시연] 유기동물 구조·입양 활동 지원"));
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.donate("member-1", request));
+
+        assertEquals("시연 캠페인에는 기부할 수 없습니다.", exception.getMessage());
+        verify(donationMapper, never()).decreasePotBalance(any(), any());
+        verify(donationMapper, never()).insertHistory(anyMap());
+    }
+
+    @Test
+    @DisplayName("시연 허용이면 [시연] 캠페인에도 기부할 수 있다")
+    void should_donate_when_demoCampaignAndDemoDonationsEnabled() {
+        DonationServiceImpl service = service();
+        DonationRequest request = donationRequest("3000", "demo-1", "request-1");
+        when(donationMapper.findHistoryByIdempotencyKey("member-1", "request-1")).thenReturn(null);
+        when(donationMapper.findCampaignById("demo-1")).thenReturn(map(
+                "campaign_id", "demo-1", "title", "[시연] 유기동물 구조·입양 활동 지원",
+                "organization_id", "organization-1", "organization_name", "시연 보호소",
+                "channel_id", "channel-1"));
+        when(donationMapper.findPotByMemberId("member-1"))
+                .thenReturn(map("wallet_id", "pot-1", "balance", new BigDecimal("12400")),
+                        map("wallet_id", "pot-1", "balance", new BigDecimal("9400")));
+        when(donationMapper.findPotForUpdate("member-1"))
+                .thenReturn(map("wallet_id", "pot-1", "balance", new BigDecimal("12400")));
+        when(donationMapper.decreasePotBalance("pot-1", new BigDecimal("3000"))).thenReturn(1);
+        when(donationMapper.increaseCampaignResult("demo-1", new BigDecimal("3000"))).thenReturn(1);
+
+        var result = service.donate("member-1", request);
+
+        assertEquals(new BigDecimal("9400"), result.getBalance());
+        verify(donationMapper).insertHistory(anyMap());
+    }
+
+    @Test
+    @DisplayName("운영에서는 시연 캠페인을 자동 기부 대상으로 저장하지 않는다")
+    void should_rejectAutoDonateSettings_when_demoCampaignAndDemoDonationsDisabled() {
+        DonationServiceImpl service = service();
+        ReflectionTestUtils.setField(service, "allowDemoDonations", false);
+        DonationSettingRequest request = new DonationSettingRequest();
+        ReflectionTestUtils.setField(request, "piggyBankEnabled", true);
+        ReflectionTestUtils.setField(request, "savingUnit", new BigDecimal("1000"));
+        ReflectionTestUtils.setField(request, "autoDonate", true);
+        ReflectionTestUtils.setField(request, "campaignId", "demo-1");
+        when(donationMapper.findSettings("member-1")).thenReturn(settings(true, "1000", false));
+        when(donationMapper.findCampaignById("demo-1")).thenReturn(map(
+                "title", "[시연] 유기동물 구조·입양 활동 지원", "organization_id", "organization-1"));
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.saveSettings("member-1", request));
+
+        assertEquals("시연 캠페인은 자동 기부 대상으로 선택할 수 없습니다.", exception.getMessage());
+        verify(donationMapper, never()).updateSettings(anyMap());
+    }
+
+    @Test
+    @DisplayName("운영에서는 월말 자동기부가 시연 캠페인을 건너뛴다")
+    void should_skipMonthlyAutoDonation_when_demoCampaignAndDemoDonationsDisabled() {
+        DonationServiceImpl service = service();
+        ReflectionTestUtils.setField(service, "allowDemoDonations", false);
+        when(donationMapper.findMonthlyAutoDonationCandidates("2026-08")).thenReturn(List.of(map(
+                "memberId", "member-1", "campaignId", "demo-1")));
+        when(donationMapper.findSettings("member-1")).thenReturn(autoSettings("demo-1", null));
+        when(donationMapper.findMainWalletForUpdate("member-1")).thenReturn(map("wallet_id", "wallet-1"));
+        when(donationMapper.findSettingsForUpdate("member-1")).thenReturn(autoSettings("demo-1", null));
+        when(donationMapper.findHistoryByIdempotencyKey("member-1", "auto-member-1-2026-08"))
+                .thenReturn(null);
+        when(donationMapper.findCampaignById("demo-1")).thenReturn(map(
+                "campaign_id", "demo-1", "title", "[시연] 유기동물 구조·입양 활동 지원"));
+        when(donationMapper.findPotByMemberId("member-1"))
+                .thenReturn(map("wallet_id", "pot-1", "balance", new BigDecimal("12400")));
+        when(donationMapper.findPotForUpdate("member-1"))
+                .thenReturn(map("wallet_id", "pot-1", "balance", new BigDecimal("12400")));
+
+        int completedCount = service.processMonthlyAutoDonations("2026-08");
+
+        assertEquals(0, completedCount);
+        verify(donationMapper, never()).decreasePotBalance(any(), any());
+        verify(donationMapper, never()).insertHistory(anyMap());
+        verify(donationMapper, never()).markAutoDonationCompleted(any(), any());
     }
 
     @Test
@@ -200,7 +316,125 @@ class DonationServiceImplTest {
                 () -> service.donate("member-1", request));
 
         assertEquals("저금통 잔액이 부족합니다.", exception.getMessage());
+        verify(donationMapper).insertHistory(anyMap());
+        verify(donationMapper, never()).increaseCampaignResult(any(), any());
+    }
+
+    @Test
+    @DisplayName("기부 멱등키가 없으면 저금통을 차감하지 않는다")
+    void should_rejectDonate_whenIdempotencyKeyIsMissing() {
+        DonationServiceImpl service = service();
+        DonationRequest request = donationRequest("3000", "campaign-1", "  ");
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.donate("member-1", request));
+
+        assertEquals("중복 요청 방지 키를 입력해 주세요.", exception.getMessage());
+        verify(donationMapper, never()).findHistoryByIdempotencyKey(any(), any());
+        verify(donationMapper, never()).decreasePotBalance(any(), any());
+    }
+
+    @Test
+    @DisplayName("같은 기부 키로 재시도하면 이전 성공을 반환하고 다시 차감하지 않는다")
+    void should_returnExistingDonation_whenIdempotencyKeyIsReused() {
+        DonationServiceImpl service = service();
+        DonationRequest request = donationRequest("3000", "campaign-1", "request-1");
+        when(donationMapper.findHistoryByIdempotencyKey("member-1", "request-1"))
+                .thenReturn(map("donation_id", "donation-1", "amount", new BigDecimal("3000"),
+                        "campaign_id", "campaign-1"));
+        when(donationMapper.findPotByMemberId("member-1"))
+                .thenReturn(map("wallet_id", "pot-1", "balance", new BigDecimal("9400")));
+
+        var result = service.donate("member-1", request);
+
+        assertEquals("donation-1", result.getDonationId());
+        assertEquals(new BigDecimal("9400"), result.getBalance());
+        verify(donationMapper, never()).decreasePotBalance(any(), any());
         verify(donationMapper, never()).insertHistory(anyMap());
+    }
+
+    @Test
+    @DisplayName("동일한 기부 키에 다른 금액을 요청하면 충돌로 거절한다")
+    void should_throwConflict_whenSameDonationKeyHasDifferentAmount() {
+        DonationServiceImpl service = service();
+        when(donationMapper.findHistoryByIdempotencyKey("member-1", "request-1"))
+                .thenReturn(map("donation_id", "donation-1", "amount", new BigDecimal("3000"),
+                        "campaign_id", "campaign-1"));
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.donate("member-1", donationRequest("5000", "campaign-1", "request-1")));
+
+        assertEquals(409, exception.getStatus().value());
+        verify(donationMapper, never()).decreasePotBalance(any(), any());
+        verify(donationMapper, never()).insertHistory(anyMap());
+    }
+
+    @Test
+    @DisplayName("동일한 기부 키에 다른 캠페인을 요청하면 충돌로 거절한다")
+    void should_throwConflict_whenSameDonationKeyHasDifferentCampaign() {
+        DonationServiceImpl service = service();
+        when(donationMapper.findHistoryByIdempotencyKey("member-1", "request-1"))
+                .thenReturn(map("donation_id", "donation-1", "amount", new BigDecimal("3000"),
+                        "campaign_id", "campaign-1"));
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.donate("member-1", donationRequest("3000", "campaign-2", "request-1")));
+
+        assertEquals(409, exception.getStatus().value());
+        verify(donationMapper, never()).decreasePotBalance(any(), any());
+        verify(donationMapper, never()).insertHistory(anyMap());
+    }
+
+    @Test
+    @DisplayName("저금통 잠금 뒤에 같은 키가 있으면 차감 없이 기존 기부를 반환한다")
+    void should_returnExistingDonation_whenKeyAppearsAfterPotLock() {
+        DonationServiceImpl service = service();
+        DonationRequest request = donationRequest("3000", "campaign-1", "request-1");
+        when(donationMapper.findHistoryByIdempotencyKey("member-1", "request-1"))
+                .thenReturn(null)
+                .thenReturn(map("donation_id", "donation-1", "amount", new BigDecimal("3000"),
+                        "campaign_id", "campaign-1"));
+        when(donationMapper.findCampaignById("campaign-1")).thenReturn(map(
+                "campaign_id", "campaign-1", "organization_id", "organization-1",
+                "organization_name", "테스트 보호소", "channel_id", "channel-1"));
+        when(donationMapper.findPotByMemberId("member-1"))
+                .thenReturn(map("wallet_id", "pot-1", "balance", new BigDecimal("9400")));
+        when(donationMapper.findPotForUpdate("member-1"))
+                .thenReturn(map("wallet_id", "pot-1", "balance", new BigDecimal("9400")));
+
+        var result = service.donate("member-1", request);
+
+        assertEquals("donation-1", result.getDonationId());
+        assertEquals(new BigDecimal("9400"), result.getBalance());
+        verify(donationMapper, never()).decreasePotBalance(any(), any());
+        verify(donationMapper, never()).insertHistory(anyMap());
+    }
+
+    @Test
+    @DisplayName("기부 내역 유니크 충돌이면 오류 대신 기존 기부를 반환한다")
+    void should_returnExistingDonation_whenConcurrentInsertHitsUniqueKey() {
+        DonationServiceImpl service = service();
+        DonationRequest request = donationRequest("3000", "campaign-1", "request-1");
+        when(donationMapper.findHistoryByIdempotencyKey("member-1", "request-1"))
+                .thenReturn(null)
+                .thenReturn(null)
+                .thenReturn(map("donation_id", "donation-1", "amount", new BigDecimal("3000"),
+                        "campaign_id", "campaign-1"));
+        when(donationMapper.findCampaignById("campaign-1")).thenReturn(map(
+                "campaign_id", "campaign-1", "organization_id", "organization-1",
+                "organization_name", "테스트 보호소", "channel_id", "channel-1"));
+        when(donationMapper.findPotByMemberId("member-1"))
+                .thenReturn(map("wallet_id", "pot-1", "balance", new BigDecimal("9400")));
+        when(donationMapper.findPotForUpdate("member-1"))
+                .thenReturn(map("wallet_id", "pot-1", "balance", new BigDecimal("9400")));
+        doThrow(new org.springframework.dao.DuplicateKeyException("duplicate"))
+                .when(donationMapper).insertHistory(anyMap());
+
+        var result = service.donate("member-1", request);
+
+        assertEquals("donation-1", result.getDonationId());
+        assertEquals(new BigDecimal("9400"), result.getBalance());
+        verify(donationMapper, never()).decreasePotBalance(any(), any());
     }
 
     @Test

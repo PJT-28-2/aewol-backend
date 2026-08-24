@@ -118,15 +118,17 @@
         VALUES (#{diaryId}, #{reporterId}, #{reason})
     </insert>
 
+    <select id="countReportsByDiary" resultType="int">
+        SELECT COUNT(*) FROM diary_report WHERE diary_id = #{diaryId}
+    </select>
+
     <update id="linkReportInquiry">
         UPDATE diary_report SET inquiry_id = #{inquiryId} WHERE report_id = #{reportId}
     </update>
 
     <!--
-        신고가 들어오면 즉시 노출을 멈춘다. 고객센터에 답변 API가 없어 처리까지 시간이
-        걸리므로, 확산을 먼저 막고 오탐이면 나중에 되돌린다.
-
-        이미 내려간 글은 시각을 덮어쓰지 않는다. 최초 신고 시점이 남아야 한다.
+        서로 다른 신고가 임계치에 닿았을 때만 노출을 멈춘다. 1건으로 내리면 오탐에도
+        글이 바로 사라진다. 이미 내려간 글은 시각을 덮어쓰지 않는다. 최초 신고 시점이 남아야 한다.
     -->
     <update id="hideByReport">
         UPDATE care_diary
