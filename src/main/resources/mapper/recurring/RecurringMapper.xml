@@ -9,6 +9,11 @@
         FOR UPDATE
     </select>
 
+    <select id="findByWalletIdAndIdempotencyKey" resultType="map">
+        SELECT * FROM recurring_payment
+        WHERE wallet_id = #{walletId} AND idempotency_key = #{idempotencyKey}
+    </select>
+
     <select id="findByWalletId" resultType="map">
         SELECT * FROM recurring_payment
         WHERE wallet_id = #{walletId} AND is_active = 1
@@ -16,8 +21,8 @@
     </select>
 
     <insert id="insert" parameterType="map" useGeneratedKeys="true" keyProperty="recurringId" keyColumn="recurring_id">
-        INSERT INTO recurring_payment (wallet_id, pet_id, product_name, category, price, payment_day, next_payment_date)
-        VALUES (#{walletId}, #{petId}, #{productName}, #{category}, #{price}, #{paymentDay}, #{nextPaymentDate})
+        INSERT INTO recurring_payment (wallet_id, pet_id, product_name, category, price, payment_day, next_payment_date, idempotency_key)
+        VALUES (#{walletId}, #{petId}, #{productName}, #{category}, #{price}, #{paymentDay}, #{nextPaymentDate}, #{idempotencyKey})
     </insert>
 
     <update id="update" parameterType="map">
