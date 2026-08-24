@@ -135,6 +135,7 @@ class TransactionServiceImplTest {
         assertEquals("잔액이 부족합니다.", exception.getMessage());
         verify(walletMapper, never()).deductBalance(any(), any());
         verifyNoInteractions(transactionMapper);
+        verifyNoInteractions(autoTaggingService);
     }
 
     @Test
