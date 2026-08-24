@@ -22,6 +22,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.HttpStatus;
+import org.springframework.mock.web.MockMultipartFile;
 
 @ExtendWith(MockitoExtension.class)
 class PetServiceImplTest {
@@ -357,6 +358,40 @@ class PetServiceImplTest {
         verify(recurringMapper).deactivateByPetId("pet-1");
         verify(petMapper).updateRegistrationNumber("pet-1", "member-1", null);
         verify(petMapper).deactivate("pet-1", "member-1");
+    }
+
+    // WEBP는 "RIFF"(0~3바이트) + 크기(4~7바이트) + "WEBP"(8~11바이트) 구조라, 확장자만 보고
+    // 통과시키면 안 되고 이 헤더까지 실제로 일치해야 한다(#372).
+    @Test
+    void should_uploadDocument_when_extensionAndSignatureAreWebp() {
+        PetServiceImpl service = service();
+        when(petMapper.findById("pet-1")).thenReturn(pet("member-1"));
+        byte[] webpHeader = {
+                0x52, 0x49, 0x46, 0x46, 0x00, 0x00, 0x00, 0x00, 0x57, 0x45, 0x42, 0x50
+        };
+        MockMultipartFile file = new MockMultipartFile("file", "vaccination.webp", "image/webp", webpHeader);
+        when(fileStorage.store(eq(webpHeader), eq("pet-documents"), eq("webp")))
+                .thenReturn("pet-documents/vaccination.webp");
+
+        assertDoesNotThrow(() ->
+                service.uploadPetDocument("member-1", "pet-1", "VACCINATION", file, null));
+
+        verify(fileStorage).store(webpHeader, "pet-documents", "webp");
+    }
+
+    @Test
+    void should_rejectDocument_when_extensionIsWebpButSignatureDoesNotMatch() {
+        PetServiceImpl service = service();
+        when(petMapper.findById("pet-1")).thenReturn(pet("member-1"));
+        // 확장자만 .webp이고 실제 내용은 JPEG 시그니처인 위조 파일.
+        byte[] fakeContent = {(byte) 0xFF, (byte) 0xD8, (byte) 0xFF, 0x00};
+        MockMultipartFile file = new MockMultipartFile("file", "vaccination.webp", "image/webp", fakeContent);
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.uploadPetDocument("member-1", "pet-1", "VACCINATION", file, null));
+
+        assertEquals("JPEG, PNG, WEBP, PDF 파일만 업로드할 수 있습니다.", exception.getMessage());
+        verify(fileStorage, never()).store(any(), any(), any());
     }
 
     // 영수증만 올리고 아직 청구서류(claim_document_url)는 없는 DRAFT 상태 클레임이 흔하다 —
