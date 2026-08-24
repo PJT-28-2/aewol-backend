@@ -57,6 +57,15 @@ class CareDiaryServiceImplTest {
         lenient().when(fileStorage.signedUrl(anyString()))
                 .thenAnswer(invocation -> "signed:" + invocation.getArgument(0));
         lenient().when(redisRateLimiter.incrementWithExpiry(anyString(), anyLong())).thenReturn(1L);
+        lenient().when(fileStorage.createPublicKey(anyString())).thenAnswer(invocation -> {
+            String key = invocation.getArgument(0);
+            return "public/" + key.substring(key.lastIndexOf('/') + 1);
+        });
+        lenient().when(fileStorage.publish(anyString(), anyString())).thenReturn(true);
+        lenient().when(careDiaryMapper.updatePublicImageKey(anyString(), nullable(String.class))).thenReturn(1);
+        lenient().when(careDiaryMapper.updateVisibility(anyString(), eq("PUBLISHING"))).thenReturn(1);
+        lenient().when(careDiaryMapper.updateVisibilityIfCurrent(anyString(), eq("PUBLISHING"), eq("PUBLIC"))).thenReturn(1);
+        lenient().when(careDiaryMapper.updateVisibilityIfCurrent(anyString(), eq("PUBLISHING"), eq("PRIVATE"))).thenReturn(1);
     }
 
     @AfterEach
@@ -428,17 +437,18 @@ class CareDiaryServiceImplTest {
                         publicDiaryRow("owner-1"));
         when(careDiaryMapper.findImagesByDiaryIds(List.of("diary-1"))).thenReturn(List.of(
                 map("diaryId", "diary-1", "imageUrl", "diary/a.png")));
-        when(careDiaryMapper.updateVisibility("diary-1", "PUBLIC")).thenReturn(1);
         when(careDiaryMapper.findImagesForPublish("diary-1")).thenReturn(List.of(
                 map("imageId", "img-1", "imageUrl", "diary/a.png")));
-        when(fileStorage.publish("diary/a.png")).thenReturn("public/xyz.png");
 
         CareDiaryResponse result = service.changeVisibility(
                 "owner-1", "diary-1", visibilityRequest("PUBLIC"));
 
         assertEquals("PUBLIC", result.getVisibility());
-        verify(fileStorage).publish("diary/a.png");
-        verify(careDiaryMapper).updatePublicImageKey("img-1", "public/xyz.png");
+        verify(careDiaryMapper).updatePublicImageKey("img-1", "public/a.png");
+        var inOrder = inOrder(careDiaryMapper, fileStorage);
+        inOrder.verify(careDiaryMapper).updateVisibility("diary-1", "PUBLISHING");
+        inOrder.verify(fileStorage).publish("diary/a.png", "public/a.png");
+        inOrder.verify(careDiaryMapper).updateVisibilityIfCurrent("diary-1", "PUBLISHING", "PUBLIC");
     }
 
     @Test
@@ -471,14 +481,35 @@ class CareDiaryServiceImplTest {
                 .thenReturn(diaryRow("diary-1", "pet-1", "owner-1", "2026-08-10", "산책"));
         when(careDiaryMapper.findImagesForPublish("diary-1")).thenReturn(List.of(
                 map("imageId", "img-1", "imageUrl", "diary/a.png")));
-        when(fileStorage.publish("diary/a.png")).thenReturn(null);
+        when(fileStorage.publish("diary/a.png", "public/a.png")).thenReturn(false);
 
         BusinessException exception = assertThrows(BusinessException.class,
                 () -> service.changeVisibility("owner-1", "diary-1", visibilityRequest("PUBLIC")));
 
         assertEquals(409, exception.getStatus().value());
-        verify(careDiaryMapper, never()).updateVisibility(anyString(), anyString());
-        verify(careDiaryMapper, never()).updatePublicImageKey(anyString(), anyString());
+        verify(careDiaryMapper).updateVisibility("diary-1", "PUBLISHING");
+        verify(careDiaryMapper).updateVisibilityIfCurrent("diary-1", "PUBLISHING", "PRIVATE");
+        verify(careDiaryMapper, never()).updateVisibilityIfCurrent("diary-1", "PUBLISHING", "PUBLIC");
+    }
+
+    @Test
+    @DisplayName("Public image key update affects no rows, S3 copy is not started")
+    void should_notPublishCopy_when_publicImageKeyUpdateAffectsNoRows() {
+        CareDiaryServiceImpl service = service();
+        givenPetOwnedBy("pet-1", "owner-1");
+        when(careDiaryMapper.findById("diary-1"))
+                .thenReturn(diaryRow("diary-1", "pet-1", "owner-1", "2026-08-10", "?곗콉"));
+        when(careDiaryMapper.findImagesForPublish("diary-1")).thenReturn(List.of(
+                map("imageId", "img-1", "imageUrl", "diary/a.png")));
+        when(careDiaryMapper.updatePublicImageKey("img-1", "public/a.png")).thenReturn(0);
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.changeVisibility("owner-1", "diary-1", visibilityRequest("PUBLIC")));
+
+        assertEquals(409, exception.getStatus().value());
+        verify(fileStorage, never()).publish(anyString(), anyString());
+        verify(careDiaryMapper, never()).updateVisibility("diary-1", "PUBLISHING");
+        verify(careDiaryMapper, never()).updateVisibilityIfCurrent("diary-1", "PUBLISHING", "PUBLIC");
     }
 
     @Test
@@ -491,8 +522,7 @@ class CareDiaryServiceImplTest {
         when(careDiaryMapper.findImagesForPublish("diary-1")).thenReturn(List.of(
                 map("imageId", "img-1", "imageUrl", "diary/a.png"),
                 map("imageId", "img-2", "imageUrl", "diary/b.png")));
-        when(fileStorage.publish("diary/a.png")).thenReturn("public/a.png");
-        when(fileStorage.publish("diary/b.png")).thenReturn(null);
+        when(fileStorage.publish("diary/b.png", "public/b.png")).thenReturn(false);
 
         BusinessException exception = assertThrows(BusinessException.class,
                 () -> service.changeVisibility("owner-1", "diary-1", visibilityRequest("PUBLIC")));
@@ -500,7 +530,9 @@ class CareDiaryServiceImplTest {
         assertEquals(409, exception.getStatus().value());
         verify(fileStorage).unpublish("public/a.png");
         verify(fileStorage, never()).unpublish("public/b.png");
-        verify(careDiaryMapper, never()).updateVisibility(anyString(), anyString());
+        verify(careDiaryMapper).updateVisibility("diary-1", "PUBLISHING");
+        verify(careDiaryMapper).updateVisibilityIfCurrent("diary-1", "PUBLISHING", "PRIVATE");
+        verify(careDiaryMapper, never()).updateVisibilityIfCurrent("diary-1", "PUBLISHING", "PUBLIC");
     }
 
     @Test
@@ -513,17 +545,15 @@ class CareDiaryServiceImplTest {
         when(careDiaryMapper.findImagesForPublish("diary-1")).thenReturn(List.of(
                 map("imageId", "img-1", "imageUrl", "diary/a.png"),
                 map("imageId", "img-2", "imageUrl", "diary/b.png")));
-        when(fileStorage.publish("diary/a.png")).thenReturn("public/a.png");
-        when(fileStorage.publish("diary/b.png")).thenReturn("public/b.png");
-        when(careDiaryMapper.updateVisibility("diary-1", "PUBLIC")).thenReturn(0);
+        when(careDiaryMapper.updateVisibilityIfCurrent("diary-1", "PUBLISHING", "PUBLIC")).thenReturn(0);
 
         BusinessException exception = assertThrows(BusinessException.class,
                 () -> service.changeVisibility("owner-1", "diary-1", visibilityRequest("PUBLIC")));
 
         assertEquals(404, exception.getStatus().value());
-        verify(fileStorage).publish("diary/a.png");
-        verify(fileStorage).publish("diary/b.png");
-        verify(careDiaryMapper).updateVisibility("diary-1", "PUBLIC");
+        verify(fileStorage).publish("diary/a.png", "public/a.png");
+        verify(fileStorage).publish("diary/b.png", "public/b.png");
+        verify(careDiaryMapper).updateVisibilityIfCurrent("diary-1", "PUBLISHING", "PUBLIC");
         verify(fileStorage).unpublish("public/a.png");
         verify(fileStorage).unpublish("public/b.png");
     }
@@ -714,14 +744,13 @@ class CareDiaryServiceImplTest {
                 .thenReturn(diaryRow("diary-1", "pet-1", "member-2", "2026-08-10", "산책"));
         when(careDiaryMapper.findImagesForPublish("diary-1")).thenReturn(List.of(
                 map("imageId", "img-1", "imageUrl", "diary/a.png")));
-        when(fileStorage.publish("diary/a.png")).thenReturn("public/xyz.png");
-        when(careDiaryMapper.updateVisibility("diary-1", "PUBLIC")).thenReturn(1);
         when(shareMapper.findAcceptedAccess("pet-1", "member-2")).thenReturn(map("access_id", "access-1"));
         when(careDiaryMapper.findImagesByDiaryIds(List.of("diary-1"))).thenReturn(List.of());
 
         service.changeVisibility("member-2", "diary-1", visibilityRequest("PUBLIC"));
 
-        verify(careDiaryMapper).updateVisibility("diary-1", "PUBLIC");
+        verify(careDiaryMapper).updateVisibility("diary-1", "PUBLISHING");
+        verify(careDiaryMapper).updateVisibilityIfCurrent("diary-1", "PUBLISHING", "PUBLIC");
     }
 
     // 대표 보호자가 남이 쓴 글을 마음대로 공개하면 "내가 쓴 글인데 내 통제 밖에서
@@ -833,7 +862,7 @@ class CareDiaryServiceImplTest {
         when(careDiaryMapper.findAdminReportById("report-1")).thenReturn(pending, resolved);
         when(careDiaryMapper.findImagesForPublish("diary-1")).thenReturn(List.of(map(
                 "imageId", "image-1", "imageUrl", "diary/original.png", "publicImageKey", null)));
-        when(fileStorage.publish("diary/original.png")).thenReturn("public/restored.png");
+        when(fileStorage.createPublicKey("diary/original.png")).thenReturn("public/restored.png");
         when(careDiaryMapper.restoreByReport("diary-1")).thenReturn(1);
         when(careDiaryMapper.resolvePendingReportsByDiary(
                 "diary-1", "RESTORE", "오탐", "admin-1")).thenReturn(2);
@@ -844,6 +873,7 @@ class CareDiaryServiceImplTest {
         assertEquals("RESOLVED", result.getStatus());
         assertEquals("RESTORE", result.getResolution());
         verify(careDiaryMapper).updatePublicImageKey("image-1", "public/restored.png");
+        verify(fileStorage).publish("diary/original.png", "public/restored.png");
         verify(careDiaryMapper).restoreByReport("diary-1");
         verify(inquiryMapper).answerWaitingLinkedToDiary("diary-1", "오탐");
     }
@@ -863,7 +893,7 @@ class CareDiaryServiceImplTest {
                 "admin-1", "report-1", resolutionRequest("KEEP_HIDDEN", null));
 
         verify(careDiaryMapper, never()).restoreByReport(anyString());
-        verify(fileStorage, never()).publish(anyString());
+        verify(fileStorage, never()).publish(anyString(), anyString());
         verify(inquiryMapper).answerWaitingLinkedToDiary("diary-1", "신고가 처리되었습니다.");
     }
 
@@ -875,13 +905,34 @@ class CareDiaryServiceImplTest {
                 .thenReturn(adminReportRow("PENDING", null));
         when(careDiaryMapper.findImagesForPublish("diary-1")).thenReturn(List.of(map(
                 "imageId", "image-1", "imageUrl", "diary/original.png", "publicImageKey", null)));
-        when(fileStorage.publish("diary/original.png")).thenReturn(null);
+        when(fileStorage.publish("diary/original.png", "public/original.png")).thenReturn(false);
 
         BusinessException exception = assertThrows(BusinessException.class,
                 () -> service.resolveAdminReport(
                         "admin-1", "report-1", resolutionRequest("RESTORE", null)));
 
         assertEquals(409, exception.getStatus().value());
+        verify(careDiaryMapper, never()).restoreByReport(anyString());
+        verify(careDiaryMapper, never()).resolvePendingReportsByDiary(
+                anyString(), anyString(), any(), anyString());
+    }
+
+    @Test
+    @DisplayName("Restore stops before S3 copy when public image key update affects no rows")
+    void should_notRestoreCopy_when_publicImageKeyUpdateAffectsNoRows() {
+        CareDiaryServiceImpl service = service();
+        when(careDiaryMapper.findAdminReportById("report-1"))
+                .thenReturn(adminReportRow("PENDING", null));
+        when(careDiaryMapper.findImagesForPublish("diary-1")).thenReturn(List.of(map(
+                "imageId", "image-1", "imageUrl", "diary/original.png", "publicImageKey", null)));
+        when(careDiaryMapper.updatePublicImageKey("image-1", "public/original.png")).thenReturn(0);
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.resolveAdminReport(
+                        "admin-1", "report-1", resolutionRequest("RESTORE", null)));
+
+        assertEquals(409, exception.getStatus().value());
+        verify(fileStorage, never()).publish(anyString(), anyString());
         verify(careDiaryMapper, never()).restoreByReport(anyString());
         verify(careDiaryMapper, never()).resolvePendingReportsByDiary(
                 anyString(), anyString(), any(), anyString());
@@ -898,8 +949,7 @@ class CareDiaryServiceImplTest {
                         "publicImageKey", "public/existing.png"),
                 map("imageId", "image-2", "imageUrl", "diary/b.png"),
                 map("imageId", "image-3", "imageUrl", "diary/c.png")));
-        when(fileStorage.publish("diary/b.png")).thenReturn("public/b.png");
-        when(fileStorage.publish("diary/c.png")).thenReturn(null);
+        when(fileStorage.publish("diary/c.png", "public/c.png")).thenReturn(false);
 
         BusinessException exception = assertThrows(BusinessException.class,
                 () -> service.resolveAdminReport(
