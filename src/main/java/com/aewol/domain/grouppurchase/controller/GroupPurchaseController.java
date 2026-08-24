@@ -117,9 +117,10 @@ public class GroupPurchaseController {
     }
 
     /**
-     * 관리자(role=ADMIN) 전용. SecurityConfig에서 POST /api/group-purchase/{gpId}/cancel에 ROLE_ADMIN을 요구한다.
+     * 작성자(관리자) 전용. SecurityConfig에서 POST /api/group-purchase/{gpId}/cancel에 ROLE_ADMIN을 요구하고,
+     * 서비스가 gp.member_id == 요청자인지도 검사한다. 다른 관리자는 403이며 PIN 검증 전에 거절한다.
      * leave()와 달리 게시글 전체를 취소하며, 이미 결제한 참여자 전원을 함께 환불한다. OPEN(진행중) 상태에서만 가능하다.
-     * leave()와 동일하게 호출한 관리자 본인의 간편 비밀번호를 처리 직전에 재검증한다.
+     * leave()와 동일하게 호출한 작성자 본인의 간편 비밀번호를 처리 직전에 재검증한다.
      */
     @Operation(summary = "공동구매 취소 (작성자 전용)")
     @PostMapping("/{gpId}/cancel")
