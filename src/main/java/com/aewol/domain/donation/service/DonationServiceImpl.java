@@ -23,9 +23,11 @@ public class DonationServiceImpl implements DonationService {
     private static final Set<BigDecimal> SAVING_UNITS = Set.of(
             BigDecimal.TEN, BigDecimal.valueOf(100), BigDecimal.valueOf(1000));
 
+    private static final String DEMO_TITLE_PREFIX = "[시연]";
+
     private final DonationMapper donationMapper;
-    @Value("${donation.show-demo-campaigns:true}")
-    private boolean showDemoCampaigns = true;
+    @Value("${donation.allow-demo-donations:true}")
+    private boolean allowDemoDonations = true;
 
     @Override
     @Transactional
@@ -38,7 +40,6 @@ public class DonationServiceImpl implements DonationService {
                 donationMapper.findMonthlySaved(text(pot, "wallet_id", "walletId")))
                 .orElse(BigDecimal.ZERO);
         List<DonationCampaignResponse> campaigns = donationMapper.findActiveCampaigns(memberId).stream()
-                .filter(this::visibleCampaign)
                 .map(this::toCampaignResponse)
                 .collect(Collectors.toList());
 
@@ -64,9 +65,10 @@ public class DonationServiceImpl implements DonationService {
         }
 
         Map<String, Object> campaign = donationMapper.findCampaignById(request.getCampaignId());
-        if (campaign == null || !visibleCampaign(campaign)) {
+        if (campaign == null) {
             throw BusinessException.notFound("진행 중인 기부 캠페인을 찾을 수 없습니다.");
         }
+        rejectDemoDonation(campaign, "시연 캠페인에는 기부할 수 없습니다.");
         return donateToCampaign(memberId, campaign, request.getAmount(), idempotencyKey);
     }
 
@@ -186,9 +188,10 @@ public class DonationServiceImpl implements DonationService {
                 throw new BusinessException("자동 기부 캠페인을 선택해 주세요.");
             }
             Map<String, Object> campaign = donationMapper.findCampaignById(campaignId);
-            if (campaign == null || !visibleCampaign(campaign)) {
+            if (campaign == null) {
                 throw BusinessException.notFound("진행 중인 자동 기부 캠페인을 찾을 수 없습니다.");
             }
+            rejectDemoDonation(campaign, "시연 캠페인은 자동 기부 대상으로 선택할 수 없습니다.");
             organizationId = text(campaign, "organization_id", "organizationId");
         }
 
@@ -267,7 +270,7 @@ public class DonationServiceImpl implements DonationService {
             Map<String, Object> existing = donationMapper.findHistoryByIdempotencyKey(memberId, idempotencyKey);
             if (existing == null) {
                 Map<String, Object> campaign = donationMapper.findCampaignById(campaignId);
-                if (campaign == null || !visibleCampaign(campaign)) continue;
+                if (campaign == null || isBlockedDemoCampaign(campaign)) continue;
                 Map<String, Object> pot = getOrCreatePotForUpdate(memberId);
                 BigDecimal amount = decimal(pot, "balance");
                 if (amount.signum() <= 0) continue;
@@ -313,17 +316,21 @@ public class DonationServiceImpl implements DonationService {
         progress = Math.max(0, Math.min(progress, 100));
         LocalDateTime endsAt = localDateTime(value(row, "endsAt", "ends_at"));
         long daysLeft = endsAt == null ? 0 : Math.max(ChronoUnit.DAYS.between(LocalDateTime.now(), endsAt) + 1, 0);
+        String title = text(row, "title");
+        boolean demo = isDemoTitle(title);
         return DonationCampaignResponse.builder()
                 .id(text(row, "id"))
                 .organizationId(text(row, "organizationId", "organization_id"))
                 .organization(text(row, "organization"))
-                .title(text(row, "title"))
+                .title(title)
                 .category(text(row, "category"))
                 .progress(progress)
                 .raised(raised)
                 .participants(number(row, "participants"))
                 .daysLeft(daysLeft)
                 .preferred(bool(row, "preferred"))
+                .demo(demo)
+                .donatable(allowDemoDonations || !demo)
                 .build();
     }
 
@@ -342,12 +349,18 @@ public class DonationServiceImpl implements DonationService {
         return "유기동물 " + meals + "마리의 한 끼를 도울 수 있어요";
     }
 
-    private boolean visibleCampaign(Map<String, Object> campaign) {
-        if (showDemoCampaigns) {
-            return true;
+    private void rejectDemoDonation(Map<String, Object> campaign, String message) {
+        if (isBlockedDemoCampaign(campaign)) {
+            throw new BusinessException(message);
         }
-        String title = text(campaign, "title");
-        return title == null || !title.startsWith("[시연]");
+    }
+
+    private boolean isBlockedDemoCampaign(Map<String, Object> campaign) {
+        return !allowDemoDonations && isDemoTitle(text(campaign, "title"));
+    }
+
+    private static boolean isDemoTitle(String title) {
+        return title != null && title.startsWith(DEMO_TITLE_PREFIX);
     }
 
     private String requireMemberId(String memberId) {
