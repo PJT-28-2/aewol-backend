@@ -5,12 +5,14 @@ import com.aewol.domain.pet.mapper.PetMapper;
 import com.aewol.domain.recurring.dto.RecurringCreateRequest;
 import com.aewol.domain.recurring.dto.RecurringResponse;
 import com.aewol.domain.recurring.mapper.RecurringMapper;
+import com.aewol.domain.transaction.mapper.TransactionMapper;
 import com.aewol.domain.wallet.mapper.WalletMapper;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.time.YearMonth;
 import java.math.BigDecimal;
 import java.util.*;
@@ -23,6 +25,7 @@ public class RecurringServiceImpl implements RecurringService {
     private final RecurringMapper recurringMapper;
     private final WalletMapper walletMapper;
     private final PetMapper petMapper;
+    private final TransactionMapper transactionMapper;
 
     @Override
     @Transactional(readOnly = true)
@@ -42,16 +45,25 @@ public class RecurringServiceImpl implements RecurringService {
         assertPetOwnership(memberId, request.getPetId());
 
         int paymentDay = request.getCycleDay();
+        LocalDate today = LocalDate.now();
+        String walletId = String.valueOf(wallet.get("wallet_id"));
+        BigDecimal price = request.getPrice();
+
+        // 첫 회차는 등록 즉시 받는다. 배치(매일 09:00)는 다음 달 결제일부터 돈다.
+        if (walletMapper.deductBalance(walletId, price) == 0) {
+            throw new BusinessException("잔액이 부족합니다.");
+        }
 
         Map<String, Object> recurring = new HashMap<>();
-        recurring.put("walletId", wallet.get("wallet_id"));
+        recurring.put("walletId", walletId);
         recurring.put("petId", blankToNull(request.getPetId()));
         recurring.put("productName", request.getItemName().trim());
         recurring.put("category", request.getCategory());
-        recurring.put("price", request.getPrice());
+        recurring.put("price", price);
         recurring.put("paymentDay", paymentDay);
-        recurring.put("nextPaymentDate", nextPaymentDate(paymentDay));
+        recurring.put("nextPaymentDate", nextPaymentDateAfterFirstCharge(paymentDay, today));
         recurringMapper.insert(recurring); // recurring_id AUTO_INCREMENT
+        recordFirstCharge(recurring, walletId, price);
         return toResponse(recurring);
     }
 
@@ -124,6 +136,30 @@ public class RecurringServiceImpl implements RecurringService {
         LocalDate candidate = paymentDate(currentMonth, paymentDay);
         if (candidate.isAfter(today)) return candidate;
         return paymentDate(currentMonth.plusMonths(1), paymentDay);
+    }
+
+    /**
+     * 등록 때 이미 한 번 받았으므로, 배치 다음 결제는 다음 달 결제일이다.
+     * 이번 달 남은 결제일을 쓰면 며칠 뒤 배치가 또 받는다.
+     */
+    public static LocalDate nextPaymentDateAfterFirstCharge(int paymentDay, LocalDate chargedOn) {
+        return paymentDate(YearMonth.from(chargedOn).plusMonths(1), paymentDay);
+    }
+
+    private void recordFirstCharge(Map<String, Object> recurring, String walletId, BigDecimal price) {
+        Map<String, Object> txn = new HashMap<>();
+        txn.put("walletId", walletId);
+        txn.put("petId", recurring.get("petId"));
+        txn.put("recurringId", recurring.get("recurringId"));
+        txn.put("txnType", "PAYMENT");
+        txn.put("price", price);
+        txn.put("category", recurring.get("category"));
+        txn.put("merchantName", recurring.get("productName"));
+        txn.put("merchantCategoryCode", null);
+        txn.put("memo", "정기결제");
+        txn.put("autoTagged", "N");
+        txn.put("txnDate", LocalDateTime.now());
+        transactionMapper.insert(txn);
     }
 
     private static LocalDate paymentDate(YearMonth month, int paymentDay) {
