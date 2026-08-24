@@ -30,7 +30,7 @@ public class SimplePasswordVerificationService {
 
     public boolean verify(String memberId, String rawPassword) {
         String lockKey = LOCK_KEY_PREFIX + memberId;
-        if (Boolean.TRUE.equals(redisTemplate.hasKey(lockKey))) {
+        if (Boolean.TRUE.equals(hasKey(lockKey))) {
             throw lockedException();
         }
 
@@ -45,17 +45,63 @@ public class SimplePasswordVerificationService {
 
         String failureKey = FAILURE_KEY_PREFIX + memberId;
         if (passwordEncoder.matches(rawPassword, encodedPassword)) {
-            redisTemplate.delete(failureKey);
+            delete(failureKey);
             return true;
         }
 
-        long failures = redisRateLimiter.incrementWithExpiry(failureKey, LOCK_SECONDS);
+        long failures = incrementFailures(failureKey);
         if (failures >= MAX_FAILURES) {
-            redisTemplate.opsForValue().set(lockKey, "1", Duration.ofSeconds(LOCK_SECONDS));
-            redisTemplate.delete(failureKey);
+            setLock(lockKey);
+            delete(failureKey);
             throw lockedException();
         }
         return false;
+    }
+
+    private Boolean hasKey(String key) {
+        Boolean present;
+        try {
+            present = redisTemplate.hasKey(key);
+        } catch (RuntimeException e) {
+            throw serviceUnavailable();
+        }
+        if (present == null) {
+            throw serviceUnavailable();
+        }
+        return present;
+    }
+
+    private long incrementFailures(String key) {
+        try {
+            return redisRateLimiter.incrementWithExpiry(key, LOCK_SECONDS);
+        } catch (RuntimeException e) {
+            throw serviceUnavailable();
+        }
+    }
+
+    private void setLock(String key) {
+        try {
+            redisTemplate.opsForValue().set(key, "1", Duration.ofSeconds(LOCK_SECONDS));
+        } catch (RuntimeException e) {
+            throw serviceUnavailable();
+        }
+    }
+
+    private void delete(String key) {
+        Boolean deleted;
+        try {
+            deleted = redisTemplate.delete(key);
+        } catch (RuntimeException e) {
+            throw serviceUnavailable();
+        }
+        if (deleted == null) {
+            throw serviceUnavailable();
+        }
+    }
+
+    private BusinessException serviceUnavailable() {
+        return new BusinessException(HttpStatus.SERVICE_UNAVAILABLE,
+                "간편 비밀번호 인증 서비스를 일시적으로 사용할 수 없습니다. 잠시 후 다시 시도해주세요.");
     }
 
     private BusinessException lockedException() {

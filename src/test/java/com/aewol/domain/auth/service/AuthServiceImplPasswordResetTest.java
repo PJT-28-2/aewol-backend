@@ -163,6 +163,30 @@ class AuthServiceImplPasswordResetTest {
     }
 
     @Test
+    void resetRequestRateLimiterAndOtpStoreRedisFailuresReturnServiceUnavailable() {
+        when(redisRateLimiter.incrementWithExpiry(
+                "password:reset:request-count:" + EMAIL, 1800L))
+                .thenThrow(new BusinessException(HttpStatus.SERVICE_UNAVAILABLE,
+                        "요청 제한 확인 실패"))
+                .thenReturn(1L);
+
+        BusinessException rateLimitFailure = assertThrows(BusinessException.class,
+                () -> service.sendPasswordResetVerificationCode(emailRequest(EMAIL)));
+
+        when(memberMapper.findActiveByEmail(EMAIL)).thenReturn(member("LOCAL", true, "old-hash"));
+        when(redisTemplate.opsForValue()).thenReturn(valueOperations);
+        doThrow(new RuntimeException("redis unavailable")).when(valueOperations).set(
+                eq("password:reset:verify:" + EMAIL), anyString(),
+                eq(300L), eq(TimeUnit.SECONDS));
+        BusinessException storeFailure = assertThrows(BusinessException.class,
+                () -> service.sendPasswordResetVerificationCode(emailRequest(EMAIL)));
+
+        assertEquals(503, rateLimitFailure.getStatus().value());
+        assertEquals(503, storeFailure.getStatus().value());
+        verify(emailService, never()).sendPasswordResetEmail(anyString(), anyString());
+    }
+
+    @Test
     void resendOverwritesOtpSoPreviousStoredValueIsReplaced() {
         when(memberMapper.findActiveByEmail(EMAIL)).thenReturn(member("LOCAL", true, "old-hash"));
         when(redisTemplate.opsForValue()).thenReturn(valueOperations);
@@ -276,6 +300,22 @@ class AuthServiceImplPasswordResetTest {
     }
 
     @Test
+    void otpVerificationRedisFailureAndNullExecutionResultReturnServiceUnavailable() {
+        when(memberMapper.findActiveByEmail(EMAIL)).thenReturn(member("LOCAL", true, "old-hash"));
+        when(redisTemplate.execute(
+                any(RedisScript.class), anyList(), anyString(), anyString(), anyString(), anyString()))
+                .thenThrow(new RuntimeException("redis unavailable"))
+                .thenReturn(null);
+
+        for (int attempt = 0; attempt < 2; attempt++) {
+            BusinessException exception = assertThrows(BusinessException.class,
+                    () -> service.verifyPasswordResetCode(verifyRequest(EMAIL, "123456")));
+            assertEquals(503, exception.getStatus().value());
+            assertEquals(null, exception.getErrorCode());
+        }
+    }
+
+    @Test
     void fifthWrongOtpDeletesItAndLaterVerificationIsMissing() {
         when(memberMapper.findActiveByEmail(EMAIL)).thenReturn(member("LOCAL", true, "old-hash"));
         when(redisTemplate.execute(
@@ -339,6 +379,19 @@ class AuthServiceImplPasswordResetTest {
         assertEquals(400, exception.getStatus().value());
         assertEquals("유효하지 않거나 만료된 비밀번호 재설정 토큰입니다.", exception.getMessage());
         verify(memberMapper, never()).updatePassword(anyString(), anyString());
+    }
+
+    @Test
+    void resetTokenClaimRedisFailureReturnsServiceUnavailable() {
+        when(redisTemplate.execute(any(RedisScript.class), anyList(), anyString()))
+                .thenThrow(new RuntimeException("redis unavailable"));
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.resetPassword(resetRequest("token", "new-password")));
+
+        assertEquals(503, exception.getStatus().value());
+        assertEquals(null, exception.getErrorCode());
+        verify(memberMapper, never()).findById(anyString());
     }
 
     @Test

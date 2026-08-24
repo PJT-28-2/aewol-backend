@@ -157,6 +157,37 @@ class AuthServiceImplEmailVerificationTest {
     }
 
     @Test
+    void rateLimiterRedisFailureReturnsServiceUnavailable() {
+        when(memberMapper.existsActiveByEmail(EMAIL)).thenReturn(false);
+        when(redisRateLimiter.incrementWithExpiry(RATE_LIMIT_KEY, 1800L))
+                .thenThrow(new BusinessException(org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE,
+                        "요청 제한 확인에 실패했습니다."));
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> authService.sendSignupVerificationCode(emailCodeRequest(EMAIL)));
+
+        assertEquals(503, exception.getStatus().value());
+        verify(redisTemplate, never()).opsForValue();
+        verify(emailService, never()).sendVerificationEmail(anyString(), anyString());
+    }
+
+    @Test
+    void otpStoreRedisFailureReturnsServiceUnavailable() {
+        when(memberMapper.existsActiveByEmail(EMAIL)).thenReturn(false);
+        when(redisRateLimiter.incrementWithExpiry(RATE_LIMIT_KEY, 1800L)).thenReturn(1L);
+        when(redisTemplate.opsForValue()).thenReturn(valueOperations);
+        doThrow(new RuntimeException("redis unavailable")).when(valueOperations).set(
+                eq(VERIFICATION_KEY), anyString(), eq(300L), eq(TimeUnit.SECONDS));
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> authService.sendSignupVerificationCode(emailCodeRequest(EMAIL)));
+
+        assertEquals(503, exception.getStatus().value());
+        assertEquals(null, exception.getErrorCode());
+        verify(emailService, never()).sendVerificationEmail(anyString(), anyString());
+    }
+
+    @Test
     void resendingOverwritesOtpAndResetsAttemptsWhileKeepingRateLimitWindow() {
         SignupEmailCodeRequest request = emailCodeRequest("retry@aewol.com");
         when(memberMapper.existsActiveByEmail(request.getEmail())).thenReturn(false);
@@ -275,6 +306,22 @@ class AuthServiceImplEmailVerificationTest {
 
         assertEquals(400, exception.getStatus().value());
         assertTrue(exception.getMessage().contains("만료"));
+    }
+
+    @Test
+    void verifyScriptRedisFailureAndNullResultReturnServiceUnavailable() {
+        SignupEmailVerificationRequest request = verificationRequest(EMAIL, "123456");
+        when(redisTemplate.execute(
+                any(RedisScript.class), anyList(), anyString(), anyString(), anyString()))
+                .thenThrow(new RuntimeException("redis unavailable"))
+                .thenReturn(null);
+
+        for (int attempt = 0; attempt < 2; attempt++) {
+            BusinessException exception = assertThrows(BusinessException.class,
+                    () -> authService.verifySignupEmailCode(request));
+            assertEquals(503, exception.getStatus().value());
+            assertEquals(null, exception.getErrorCode());
+        }
     }
 
     @Test

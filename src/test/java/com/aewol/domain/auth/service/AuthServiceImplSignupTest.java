@@ -135,6 +135,19 @@ class AuthServiceImplSignupTest {
     }
 
     @Test
+    void completedVerificationRedisReadFailureReturnsServiceUnavailable() {
+        when(valueOperations.get(COMPLETED_KEY))
+                .thenThrow(new RuntimeException("redis unavailable"));
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> authService.signup(request(false)));
+
+        assertEquals(503, exception.getStatus().value());
+        assertEquals(null, exception.getErrorCode());
+        verify(memberMapper, never()).insert(any());
+    }
+
+    @Test
     void activeEmailConflictStopsBeforeInsert() {
         stubCompletedVerification();
         when(passwordEncoder.encode(anyString())).thenReturn("encoded");

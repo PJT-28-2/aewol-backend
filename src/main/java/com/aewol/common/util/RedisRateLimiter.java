@@ -58,12 +58,22 @@ public class RedisRateLimiter {
      * 2026-08-07). 그래서 결과를 신뢰할 수 없을 땐 통과시키지 않고 예외로 요청을 거부한다.
      */
     public long incrementWithExpiry(String key, long ttlSeconds) {
-        Long count = redisTemplate.execute(incrementAndExpireScript, List.of(key), String.valueOf(ttlSeconds));
+        Long count;
+        try {
+            count = redisTemplate.execute(
+                    incrementAndExpireScript, List.of(key), String.valueOf(ttlSeconds));
+        } catch (RuntimeException e) {
+            throw serviceUnavailable();
+        }
         if (count == null) {
-            throw new BusinessException(HttpStatus.SERVICE_UNAVAILABLE,
-                    "요청 제한 확인에 실패했어요. 잠시 후 다시 시도해주세요");
+            throw serviceUnavailable();
         }
         return count;
+    }
+
+    private BusinessException serviceUnavailable() {
+        return new BusinessException(HttpStatus.SERVICE_UNAVAILABLE,
+                "요청 제한 확인에 실패했어요. 잠시 후 다시 시도해주세요");
     }
 
     /**

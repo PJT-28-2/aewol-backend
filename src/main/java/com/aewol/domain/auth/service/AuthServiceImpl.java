@@ -181,8 +181,13 @@ public class AuthServiceImpl implements AuthService {
         String verificationValue = UUID.randomUUID() + VERIFICATION_VALUE_DELIMITER + code
                 + VERIFICATION_VALUE_DELIMITER + "0";
         String verificationKey = verificationCodeKey(email);
-        redisTemplate.opsForValue().set(
-                verificationKey, verificationValue, SIGNUP_VERIFICATION_TTL_SECONDS, TimeUnit.SECONDS);
+        try {
+            redisTemplate.opsForValue().set(
+                    verificationKey, verificationValue,
+                    SIGNUP_VERIFICATION_TTL_SECONDS, TimeUnit.SECONDS);
+        } catch (RuntimeException e) {
+            throw authenticationServiceUnavailable();
+        }
 
         try {
             emailService.sendVerificationEmail(email, code);
@@ -203,14 +208,22 @@ public class AuthServiceImpl implements AuthService {
     public void verifySignupEmailCode(SignupEmailVerificationRequest request) {
         String email = request.getEmail();
         String verificationKey = verificationCodeKey(email);
-        Long result = redisTemplate.execute(
-                VERIFY_CODE_SCRIPT,
-                List.of(verificationKey, verificationCompletedKey(email)),
-                request.getVerificationCode(),
-                String.valueOf(SIGNUP_MAX_VERIFICATION_ATTEMPTS),
-                String.valueOf(SIGNUP_VERIFICATION_TTL_SECONDS));
+        Long result;
+        try {
+            result = redisTemplate.execute(
+                    VERIFY_CODE_SCRIPT,
+                    List.of(verificationKey, verificationCompletedKey(email)),
+                    request.getVerificationCode(),
+                    String.valueOf(SIGNUP_MAX_VERIFICATION_ATTEMPTS),
+                    String.valueOf(SIGNUP_VERIFICATION_TTL_SECONDS));
+        } catch (RuntimeException e) {
+            throw authenticationServiceUnavailable();
+        }
 
-        if (result == null || result == 0L) {
+        if (result == null) {
+            throw authenticationServiceUnavailable();
+        }
+        if (result == 0L) {
             throw new BusinessException(HttpStatus.BAD_REQUEST, "인증번호가 만료되었거나 발급되지 않았습니다.");
         }
         if (result == -1L) {
@@ -238,11 +251,15 @@ public class AuthServiceImpl implements AuthService {
         String verificationValue = UUID.randomUUID() + VERIFICATION_VALUE_DELIMITER + code
                 + VERIFICATION_VALUE_DELIMITER + "0";
         String verificationKey = passwordResetVerificationKey(request.getEmail());
-        redisTemplate.opsForValue().set(
-                verificationKey,
-                verificationValue,
-                PASSWORD_RESET_VERIFICATION_TTL_SECONDS,
-                TimeUnit.SECONDS);
+        try {
+            redisTemplate.opsForValue().set(
+                    verificationKey,
+                    verificationValue,
+                    PASSWORD_RESET_VERIFICATION_TTL_SECONDS,
+                    TimeUnit.SECONDS);
+        } catch (RuntimeException e) {
+            throw authenticationServiceUnavailable();
+        }
 
         try {
             emailService.sendPasswordResetEmail(request.getEmail(), code);
@@ -268,17 +285,25 @@ public class AuthServiceImpl implements AuthService {
         }
 
         String resetToken = UUID.randomUUID().toString();
-        Long result = redisTemplate.execute(
-                VERIFY_PASSWORD_RESET_CODE_SCRIPT,
-                List.of(
-                        passwordResetVerificationKey(request.getEmail()),
-                        passwordResetTokenKey(resetToken)),
-                request.getVerificationCode(),
-                String.valueOf(PASSWORD_RESET_MAX_VERIFICATION_ATTEMPTS),
-                String.valueOf(member.get("member_id")),
-                String.valueOf(PASSWORD_RESET_TOKEN_TTL_SECONDS));
+        Long result;
+        try {
+            result = redisTemplate.execute(
+                    VERIFY_PASSWORD_RESET_CODE_SCRIPT,
+                    List.of(
+                            passwordResetVerificationKey(request.getEmail()),
+                            passwordResetTokenKey(resetToken)),
+                    request.getVerificationCode(),
+                    String.valueOf(PASSWORD_RESET_MAX_VERIFICATION_ATTEMPTS),
+                    String.valueOf(member.get("member_id")),
+                    String.valueOf(PASSWORD_RESET_TOKEN_TTL_SECONDS));
+        } catch (RuntimeException e) {
+            throw authenticationServiceUnavailable();
+        }
 
-        if (result == null || result == 0L) {
+        if (result == null) {
+            throw authenticationServiceUnavailable();
+        }
+        if (result == 0L) {
             throw new BusinessException(HttpStatus.BAD_REQUEST,
                     "인증번호가 만료되었거나 발급되지 않았습니다.");
         }
@@ -297,10 +322,15 @@ public class AuthServiceImpl implements AuthService {
         String requestId = UUID.randomUUID().toString();
         String claimPrefix = PASSWORD_RESET_TOKEN_CLAIM_PREFIX + requestId + VERIFICATION_VALUE_DELIMITER;
         String tokenKey = passwordResetTokenKey(request.getResetToken());
-        String memberId = redisTemplate.execute(
-                CLAIM_PASSWORD_RESET_TOKEN_SCRIPT,
-                List.of(tokenKey),
-                claimPrefix);
+        String memberId;
+        try {
+            memberId = redisTemplate.execute(
+                    CLAIM_PASSWORD_RESET_TOKEN_SCRIPT,
+                    List.of(tokenKey),
+                    claimPrefix);
+        } catch (RuntimeException e) {
+            throw authenticationServiceUnavailable();
+        }
         if (memberId == null) {
             throw new BusinessException(INVALID_PASSWORD_RESET_TOKEN_MESSAGE);
         }
@@ -328,7 +358,12 @@ public class AuthServiceImpl implements AuthService {
     @Transactional
     public SignupResponse signup(SignupRequest request) {
         String completedKey = verificationCompletedKey(request.getEmail());
-        String completedValue = redisTemplate.opsForValue().get(completedKey);
+        String completedValue;
+        try {
+            completedValue = redisTemplate.opsForValue().get(completedKey);
+        } catch (RuntimeException e) {
+            throw authenticationServiceUnavailable();
+        }
         validateCompletedVerification(completedValue, request.getVerificationCode());
 
         // DB 작업 전에 완료 키를 지우면 rollback 시 인증 결과도 잃으므로, commit 후 삭제할 전체 값을 보관한다.
@@ -483,7 +518,7 @@ public class AuthServiceImpl implements AuthService {
 
     @Override
     public void logout(String memberId) {
-        redisTemplate.delete("refresh:" + memberId);
+        authCredentialStore.deleteRefresh(memberId);
         log.info("로그아웃이 완료되었습니다.");
     }
 
@@ -671,6 +706,11 @@ public class AuthServiceImpl implements AuthService {
                 .accessToken(accessToken)
                 .refreshToken(refreshToken)
                 .build();
+    }
+
+    private BusinessException authenticationServiceUnavailable() {
+        return new BusinessException(HttpStatus.SERVICE_UNAVAILABLE,
+                "인증 서비스를 일시적으로 사용할 수 없습니다. 잠시 후 다시 시도해주세요.");
     }
 
     private String generateVerificationCode() {
