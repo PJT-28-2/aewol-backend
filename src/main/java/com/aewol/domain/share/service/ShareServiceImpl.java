@@ -65,7 +65,7 @@ public class ShareServiceImpl implements ShareService {
         if (EMAIL_PATTERN.matcher(recipient).matches()) {
             recipientType = "EMAIL";
             normalized = recipient.toLowerCase(Locale.ROOT);
-            targetMember = memberMapper.findByEmail(normalized);
+            targetMember = memberMapper.findActiveByEmail(normalized);
         } else {
             normalized = recipient.replaceAll("\\D", "");
             if (!PHONE_PATTERN.matcher(normalized).matches()) {
