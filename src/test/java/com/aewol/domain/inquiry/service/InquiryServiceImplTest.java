@@ -5,6 +5,7 @@ import static org.mockito.Mockito.*;
 
 import com.aewol.common.exception.BusinessException;
 import com.aewol.common.storage.FileStorage;
+import com.aewol.common.util.RedisRateLimiter;
 import com.aewol.domain.inquiry.dto.InquiryCreateResponse;
 import com.aewol.domain.inquiry.dto.InquiryDetailResponse;
 import com.aewol.domain.inquiry.dto.InquiryListResponse;
@@ -27,6 +28,7 @@ class InquiryServiceImplTest {
 
     @Mock InquiryMapper inquiryMapper;
     @Mock FileStorage fileStorage;
+    @Mock RedisRateLimiter redisRateLimiter;
     @Mock CareDiaryMapper careDiaryMapper;
     @InjectMocks InquiryServiceImpl service;
 
@@ -124,6 +126,54 @@ class InquiryServiceImplTest {
 
         assertEquals(org.springframework.http.HttpStatus.BAD_REQUEST, ex.getStatus());
         verify(inquiryMapper, never()).insert(any());
+    }
+
+    @Test
+    @DisplayName("제목이 200자를 넘으면 저장하지 않고 400 예외를 던진다")
+    void should_throwBadRequest_when_titleExceedsMaxLength() {
+        BusinessException ex = assertThrows(BusinessException.class,
+                () -> service.createInquiry(MEMBER_ID, "기타", "가".repeat(201), "내용", "user@example.com", null));
+
+        assertEquals("제목은 200자 이하로 입력해주세요", ex.getMessage());
+        verify(inquiryMapper, never()).insert(any());
+        verifyNoInteractions(redisRateLimiter);
+    }
+
+    @Test
+    @DisplayName("내용이 5000자를 넘으면 저장하지 않고 400 예외를 던진다")
+    void should_throwBadRequest_when_contentExceedsMaxLength() {
+        BusinessException ex = assertThrows(BusinessException.class,
+                () -> service.createInquiry(MEMBER_ID, "기타", "제목", "가".repeat(5001), "user@example.com", null));
+
+        assertEquals("내용은 5000자 이하로 입력해주세요", ex.getMessage());
+        verify(inquiryMapper, never()).insert(any());
+        verifyNoInteractions(redisRateLimiter);
+    }
+
+    @Test
+    @DisplayName("답변 이메일이 형식이 아니면 저장하지 않고 400 예외를 던진다")
+    void should_throwBadRequest_when_replyEmailIsInvalid() {
+        BusinessException ex = assertThrows(BusinessException.class,
+                () -> service.createInquiry(MEMBER_ID, "기타", "제목", "내용", "not-an-email", null));
+
+        assertEquals("답변받을 이메일 형식이 올바르지 않아요", ex.getMessage());
+        verify(inquiryMapper, never()).insert(any());
+        verifyNoInteractions(fileStorage);
+    }
+
+    @Test
+    @DisplayName("짧은 시간에 문의를 너무 많이 쓰면 첨부 업로드 전에 429로 거절한다")
+    void should_throwTooManyRequests_when_createRateLimitExceeded() {
+        when(redisRateLimiter.incrementWithExpiry("rate:inquiry-create:" + MEMBER_ID, 15 * 60L))
+                .thenReturn(6L);
+        MockMultipartFile file = new MockMultipartFile("attachments", "a.jpg", "image/jpeg", new byte[]{1});
+
+        BusinessException ex = assertThrows(BusinessException.class,
+                () -> service.createInquiry(MEMBER_ID, "기타", "제목", "내용", "user@example.com", List.of(file)));
+
+        assertEquals(org.springframework.http.HttpStatus.TOO_MANY_REQUESTS, ex.getStatus());
+        verify(inquiryMapper, never()).insert(any());
+        verifyNoInteractions(fileStorage);
     }
 
     @Test
@@ -243,10 +293,45 @@ class InquiryServiceImplTest {
         InquiryDetailResponse result = service.answerInquiry("admin-1", INQUIRY_ID, "  확인 후 조치했습니다.  ");
 
         verify(inquiryMapper).updateAnswer(INQUIRY_ID, "확인 후 조치했습니다.");
-        verify(careDiaryMapper).resolvePendingReportsByInquiryId(
-                INQUIRY_ID, "KEEP_HIDDEN", "확인 후 조치했습니다.", "admin-1");
+        verify(careDiaryMapper, never()).resolvePendingReportsByInquiryId(any(), any(), any(), any());
         assertEquals("ANSWERED", result.getStatus());
         assertEquals("확인 후 조치했습니다.", result.getAnswer());
+    }
+
+    @Test
+    @DisplayName("신고 1건으로 게시물이 아직 공개 중이면 문의 답변은 DISMISS로 신고만 끝낸다")
+    void should_dismissLinkedReport_when_diaryIsStillPublic() {
+        when(inquiryMapper.updateAnswer(INQUIRY_ID, "확인 후 조치했습니다.")).thenReturn(1);
+        when(careDiaryMapper.findLinkedReportDiaryByInquiryId(INQUIRY_ID))
+                .thenReturn(linkedDiary("diary-1", null));
+        when(inquiryMapper.findById(INQUIRY_ID))
+                .thenReturn(inquiryDetailRow("ANSWERED", "확인 후 조치했습니다."));
+        when(inquiryMapper.findAttachmentsByInquiryId(INQUIRY_ID)).thenReturn(List.of());
+
+        service.answerInquiry("admin-1", INQUIRY_ID, "확인 후 조치했습니다.");
+
+        verify(careDiaryMapper).resolvePendingReportsByInquiryId(
+                INQUIRY_ID, "DISMISS", "확인 후 조치했습니다.", "admin-1");
+        verify(careDiaryMapper, never()).hideByReport(any());
+        verify(careDiaryMapper, never()).restoreByReport(any());
+    }
+
+    @Test
+    @DisplayName("이미 신고로 숨겨진 게시물의 문의에 답하면 숨김을 유지한다")
+    void should_keepHidden_when_linkedDiaryIsAlreadyHidden() {
+        when(inquiryMapper.updateAnswer(INQUIRY_ID, "확인 후 조치했습니다.")).thenReturn(1);
+        when(careDiaryMapper.findLinkedReportDiaryByInquiryId(INQUIRY_ID))
+                .thenReturn(linkedDiary("diary-1", java.sql.Timestamp.valueOf("2026-08-21 10:00:00")));
+        when(inquiryMapper.findById(INQUIRY_ID))
+                .thenReturn(inquiryDetailRow("ANSWERED", "확인 후 조치했습니다."));
+        when(inquiryMapper.findAttachmentsByInquiryId(INQUIRY_ID)).thenReturn(List.of());
+
+        service.answerInquiry("admin-1", INQUIRY_ID, "확인 후 조치했습니다.");
+
+        verify(careDiaryMapper).resolvePendingReportsByInquiryId(
+                INQUIRY_ID, "KEEP_HIDDEN", "확인 후 조치했습니다.", "admin-1");
+        verify(careDiaryMapper, never()).restoreByReport(any());
+        verify(careDiaryMapper, never()).hideByReport(any());
     }
 
     @Test
@@ -259,6 +344,7 @@ class InquiryServiceImplTest {
 
         assertEquals(org.springframework.http.HttpStatus.NOT_FOUND, ex.getStatus());
         verify(inquiryMapper, never()).findById(any());
+        verify(careDiaryMapper, never()).findLinkedReportDiaryByInquiryId(any());
         verify(careDiaryMapper, never()).resolvePendingReportsByInquiryId(any(), any(), any(), any());
     }
 
@@ -283,6 +369,13 @@ class InquiryServiceImplTest {
         row.put("reply_email", "user@example.com");
         row.put("status", status);
         row.put("answer", answer);
+        return row;
+    }
+
+    private Map<String, Object> linkedDiary(String diaryId, Object hiddenByReportAt) {
+        Map<String, Object> row = new HashMap<>();
+        row.put("diaryId", diaryId);
+        row.put("hiddenByReportAt", hiddenByReportAt);
         return row;
     }
 

@@ -50,6 +50,8 @@ public interface CareDiaryMapper {
 
     Map<String, Object> findAdminReportById(@Param("reportId") String reportId);
 
+    Map<String, Object> findLinkedReportDiaryByInquiryId(@Param("inquiryId") String inquiryId);
+
     int resolvePendingReportsByDiary(@Param("diaryId") String diaryId,
                                      @Param("resolution") String resolution,
                                      @Param("adminNote") String adminNote,
