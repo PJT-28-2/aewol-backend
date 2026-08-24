@@ -2,17 +2,25 @@ package com.aewol.domain.member.service;
 
 import com.aewol.common.exception.BusinessException;
 import com.aewol.common.util.PhoneNumberUtil;
+import com.aewol.common.util.RedisRateLimiter;
+import com.aewol.common.util.Sha256Util;
 import com.aewol.domain.auth.service.AuthCredentialStore;
 import com.aewol.domain.member.dto.MemberPasswordChangeRequest;
 import com.aewol.domain.member.dto.MemberPasswordVerifyRequest;
+import com.aewol.domain.member.dto.MemberPhoneSendCodeRequest;
+import com.aewol.domain.member.dto.MemberPhoneSendCodeResponse;
+import com.aewol.domain.member.dto.MemberPhoneVerifyCodeRequest;
 import com.aewol.domain.member.dto.MemberResponse;
 import com.aewol.domain.member.dto.MemberUpdateRequest;
 import com.aewol.domain.member.dto.MemberWithdrawRequest;
 import com.aewol.domain.member.dto.SimplePasswordRequest;
 import com.aewol.domain.member.mapper.MemberMapper;
 import com.aewol.common.cache.MemberAuthStateCache;
+import com.aewol.external.sms.SmsSender;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.redis.core.RedisTemplate;
+import org.springframework.http.HttpStatus;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -20,6 +28,7 @@ import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.util.StringUtils;
 
+import java.time.Duration;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -29,12 +38,34 @@ import java.util.Map;
 public class MemberServiceImpl implements MemberService {
 
     private static final String PASSWORD_MISMATCH_MESSAGE = "현재 비밀번호가 일치하지 않습니다.";
+    private static final int PASSWORD_MAX_FAILURES = 5;
+    private static final long PASSWORD_LOCK_SECONDS = 900L;
+    private static final String PASSWORD_FAILURE_KEY_PREFIX = "member:password:failures:";
+    private static final String PASSWORD_LOCK_KEY_PREFIX = "member:password:lock:";
+    private static final String PASSWORD_LOCKED_MESSAGE =
+            "비밀번호 확인 시도가 너무 많습니다. 15분 후 다시 시도해주세요.";
+    static final long PHONE_RATE_LIMIT_WINDOW_SECONDS = 1800L;
+    static final long PHONE_RATE_LIMIT_MAX = 5L;
+    static final String PHONE_MEMBER_RATE_LIMIT_PREFIX = "profile:phone:request-count:member:";
+    static final String PHONE_NUMBER_RATE_LIMIT_PREFIX = "profile:phone:request-count:phone:";
+    private static final String SMS_FAILURE_MESSAGE =
+            "인증번호 발송에 실패했습니다. 잠시 후 다시 시도해주세요.";
+    private static final String PHONE_VERIFICATION_FAILURE_MESSAGE =
+            "전화번호 인증 서비스를 이용할 수 없습니다. 잠시 후 다시 시도해주세요.";
+    private static final String PHONE_RATE_LIMIT_MESSAGE =
+            "전화번호 인증번호 요청이 너무 많습니다. 30분 후 다시 시도해주세요.";
+    private static final String PHONE_NOT_VERIFIED_MESSAGE =
+            "전화번호 인증이 완료되지 않았거나 만료되었습니다.";
 
     private final MemberMapper memberMapper;
     private final PasswordEncoder passwordEncoder;
     private final AuthCredentialStore authCredentialStore;
     /** 탈퇴 뒤 인증 캐시를 즉시 버리기 위해 쓴다. */
     private final MemberAuthStateCache authStateCache;
+    private final RedisRateLimiter redisRateLimiter;
+    private final RedisTemplate<String, String> redisTemplate;
+    private final SmsSender smsSender;
+    private final ProfilePhoneVerificationStore phoneVerificationStore;
 
     // 프론트(AccountPasswordSetupView.vue)의 isWeakPin과 동일한 규칙 — 클라이언트 검증은
     // 우회 가능하므로(Postman 등으로 직접 호출) 송금·이체에 쓰이는 PIN인 만큼 서버에서도
@@ -85,6 +116,52 @@ public class MemberServiceImpl implements MemberService {
                 ? request.getAddressDetail().trim() : member.get("address_detail"));
         validateRequiredProfileFields(request);
         memberMapper.updateProfile(update);
+    }
+
+    @Override
+    public MemberPhoneSendCodeResponse sendPhoneVerificationCode(
+            String memberId, MemberPhoneSendCodeRequest request) {
+        Map<String, Object> member = findMember(memberId);
+        String normalizedPhone = PhoneNumberUtil.normalize(request.getPhone());
+        if (normalizedPhone == null || !normalizedPhone.matches("^010\\d{8}$")) {
+            throw new BusinessException("올바른 휴대전화 번호를 입력해주세요.");
+        }
+        if (normalizedPhone.equals(member.get("phone"))) {
+            throw new BusinessException("현재 전화번호와 같습니다.");
+        }
+        enforcePhoneRateLimit(PHONE_MEMBER_RATE_LIMIT_PREFIX + Sha256Util.lowercaseHex(memberId));
+        enforcePhoneRateLimit(PHONE_NUMBER_RATE_LIMIT_PREFIX + Sha256Util.lowercaseHex(normalizedPhone));
+        if (memberMapper.existsActiveByPhoneExcludingMember(normalizedPhone, memberId)) {
+            throw BusinessException.conflict("이미 사용 중인 전화번호입니다.");
+        }
+
+        ProfilePhoneVerificationStore.IssuedVerification issued =
+                phoneVerificationStore.issue(memberId, normalizedPhone);
+        try {
+            smsSender.send(normalizedPhone,
+                    "[AeWol] 전화번호 변경 인증번호: " + issued.getCode() + " (5분 이내 입력)");
+        } catch (RuntimeException e) {
+            try {
+                phoneVerificationStore.discard(issued);
+            } catch (RuntimeException ignored) {
+                // 오류 메시지나 Redis key를 로그에 남기지 않고 OTP TTL 만료에 맡긴다.
+            }
+            throw new BusinessException(HttpStatus.SERVICE_UNAVAILABLE, SMS_FAILURE_MESSAGE);
+        }
+        return new MemberPhoneSendCodeResponse(issued.getExpiresInSeconds());
+    }
+
+    @Override
+    public void verifyPhoneCode(String memberId, MemberPhoneVerifyCodeRequest request) {
+        findMember(memberId);
+        String normalizedPhone = PhoneNumberUtil.normalize(request.getPhone());
+        if (normalizedPhone == null || !normalizedPhone.matches("^010\\d{8}$")) {
+            throw new BusinessException("올바른 휴대전화 번호를 입력해주세요.");
+        }
+        String verifiedPhone = phoneVerificationStore.verify(memberId, request.getVerificationCode());
+        if (!normalizedPhone.equals(verifiedPhone)) {
+            throw new BusinessException(HttpStatus.BAD_REQUEST, PHONE_NOT_VERIFIED_MESSAGE);
+        }
     }
 
     @Override
@@ -161,10 +238,30 @@ public class MemberServiceImpl implements MemberService {
         if (!normalizedPhone.matches("^010\\d{8}$")) {
             throw new BusinessException("올바른 휴대전화 번호를 입력해주세요.");
         }
+        if (normalizedPhone.equals(currentPhone)) {
+            return normalizedPhone;
+        }
+        if (!phoneVerificationStore.consumeVerified(memberId, normalizedPhone)) {
+            throw new BusinessException(HttpStatus.BAD_REQUEST, PHONE_NOT_VERIFIED_MESSAGE);
+        }
         if (memberMapper.existsActiveByPhoneExcludingMember(normalizedPhone, memberId)) {
             throw BusinessException.conflict("이미 사용 중인 전화번호입니다.");
         }
         return normalizedPhone;
+    }
+
+    private void enforcePhoneRateLimit(String key) {
+        long count;
+        try {
+            count = redisRateLimiter.incrementWithExpiry(key, PHONE_RATE_LIMIT_WINDOW_SECONDS);
+        } catch (BusinessException e) {
+            throw e;
+        } catch (RuntimeException e) {
+            throw new BusinessException(HttpStatus.SERVICE_UNAVAILABLE, PHONE_VERIFICATION_FAILURE_MESSAGE);
+        }
+        if (count > PHONE_RATE_LIMIT_MAX) {
+            throw new BusinessException(HttpStatus.TOO_MANY_REQUESTS, PHONE_RATE_LIMIT_MESSAGE);
+        }
     }
 
     private void validateRequiredProfileFields(MemberUpdateRequest request) {
@@ -192,11 +289,30 @@ public class MemberServiceImpl implements MemberService {
     }
 
     private void validateCurrentPassword(Map<String, Object> member, String currentPassword) {
+        String memberId = String.valueOf(member.get("member_id"));
+        String lockKey = PASSWORD_LOCK_KEY_PREFIX + memberId;
+        String failureKey = PASSWORD_FAILURE_KEY_PREFIX + memberId;
+        if (Boolean.TRUE.equals(redisTemplate.hasKey(lockKey))) {
+            throw new BusinessException(HttpStatus.TOO_MANY_REQUESTS, PASSWORD_LOCKED_MESSAGE);
+        }
+
         String storedPassword = (String) member.get("password");
         if (!StringUtils.hasText(currentPassword)
                 || storedPassword == null
                 || !passwordEncoder.matches(currentPassword, storedPassword)) {
+            recordPasswordFailure(failureKey, lockKey);
             throw new BusinessException(PASSWORD_MISMATCH_MESSAGE);
+        }
+        redisTemplate.delete(failureKey);
+        redisTemplate.delete(lockKey);
+    }
+
+    private void recordPasswordFailure(String failureKey, String lockKey) {
+        long failures = redisRateLimiter.incrementWithExpiry(failureKey, PASSWORD_LOCK_SECONDS);
+        if (failures >= PASSWORD_MAX_FAILURES) {
+            redisTemplate.opsForValue().set(lockKey, "1", Duration.ofSeconds(PASSWORD_LOCK_SECONDS));
+            redisTemplate.delete(failureKey);
+            throw new BusinessException(HttpStatus.TOO_MANY_REQUESTS, PASSWORD_LOCKED_MESSAGE);
         }
     }
 

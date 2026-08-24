@@ -2,12 +2,14 @@ package com.aewol.domain.member.service;
 
 import com.aewol.common.cache.MemberAuthStateCache;
 import com.aewol.common.exception.BusinessException;
+import com.aewol.common.util.RedisRateLimiter;
 import com.aewol.domain.auth.service.AuthCredentialStore;
 import com.aewol.domain.member.dto.MemberPasswordChangeRequest;
 import com.aewol.domain.member.dto.MemberPasswordVerifyRequest;
 import com.aewol.domain.member.dto.MemberResponse;
 import com.aewol.domain.member.dto.MemberUpdateRequest;
 import com.aewol.domain.member.mapper.MemberMapper;
+import com.aewol.external.sms.SmsSender;
 import java.util.HashMap;
 import java.util.Map;
 import org.junit.jupiter.api.AfterEach;
@@ -17,6 +19,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.transaction.support.TransactionSynchronization;
@@ -42,13 +45,18 @@ class MemberServiceImplProfilePasswordTest {
     @Mock MemberMapper memberMapper;
     @Mock PasswordEncoder passwordEncoder;
     @Mock AuthCredentialStore authCredentialStore;
+    @Mock RedisRateLimiter redisRateLimiter;
+    @Mock RedisTemplate<String, String> redisTemplate;
+    @Mock SmsSender smsSender;
+    @Mock ProfilePhoneVerificationStore phoneVerificationStore;
 
     private MemberServiceImpl service;
 
     @BeforeEach
     void setUp() {
         service = new MemberServiceImpl(memberMapper, passwordEncoder, authCredentialStore,
-                MemberAuthStateCache.withoutCache(memberMapper));
+                MemberAuthStateCache.withoutCache(memberMapper),
+                redisRateLimiter, redisTemplate, smsSender, phoneVerificationStore);
     }
 
     @AfterEach
@@ -99,7 +107,6 @@ class MemberServiceImplProfilePasswordTest {
     @Test
     void partialUpdateNormalizesPhonePreservesNullsAndNeverUpdatesName() {
         when(memberMapper.findById("1")).thenReturn(member("LOCAL", "encoded"));
-        when(memberMapper.existsActiveByPhoneExcludingMember("01012345678", "1")).thenReturn(false);
         MemberUpdateRequest request = updateRequest("010-1234-5678", null, null, null, "   ");
 
         service.updateMember("1", request);
@@ -118,14 +125,12 @@ class MemberServiceImplProfilePasswordTest {
     @Test
     void phoneWithSpacesAndOwnPhoneAreAllowedAndInactiveDuplicatesDoNotBlock() {
         when(memberMapper.findById("1")).thenReturn(member("LOCAL", "encoded"));
-        when(memberMapper.existsActiveByPhoneExcludingMember("01012345678", "1"))
-                .thenReturn(false, false);
 
         service.updateMember("1", updateRequest("010 1234 5678", null, null, null, null));
         service.updateMember("1", updateRequest("01012345678", null, null, null, null));
 
-        verify(memberMapper, org.mockito.Mockito.times(2))
-                .existsActiveByPhoneExcludingMember("01012345678", "1");
+        verify(memberMapper, never()).existsActiveByPhoneExcludingMember(any(), any());
+        verify(phoneVerificationStore, never()).consumeVerified(any(), any());
         verify(memberMapper, org.mockito.Mockito.times(2)).updateProfile(any());
     }
 
@@ -153,6 +158,7 @@ class MemberServiceImplProfilePasswordTest {
     @Test
     void activeDuplicatePhoneReturnsConflict() {
         when(memberMapper.findById("1")).thenReturn(member("LOCAL", "encoded"));
+        when(phoneVerificationStore.consumeVerified("1", "01099998888")).thenReturn(true);
         when(memberMapper.existsActiveByPhoneExcludingMember("01099998888", "1")).thenReturn(true);
 
         BusinessException exception = assertThrows(BusinessException.class,
