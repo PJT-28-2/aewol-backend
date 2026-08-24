@@ -108,7 +108,7 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(HttpMessageNotReadableException.class)
     public ResponseEntity<ApiResponse<Void>> handleHttpMessageNotReadableException(
             HttpMessageNotReadableException e) {
-        log.warn("HttpMessageNotReadableException: {}", e.getMessage());
+        log.warn("HttpMessageNotReadableException: 요청 본문 역직렬화 실패");
         return ResponseEntity
                 .badRequest()
                 .body(ApiResponse.error(400, "요청 본문을 읽을 수 없어요"));

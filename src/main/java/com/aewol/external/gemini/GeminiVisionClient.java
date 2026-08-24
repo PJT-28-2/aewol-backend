@@ -20,7 +20,7 @@ public class GeminiVisionClient {
      */
     public String classifyMerchant(String merchantName) {
         // TODO: Gemini API를 이용한 가맹점 카테고리 분류
-        log.info("Gemini 가맹점 분류 요청 - merchantName: {}", merchantName);
+        log.info("Gemini 가맹점 분류 요청");
         return "ETC";
     }
 }

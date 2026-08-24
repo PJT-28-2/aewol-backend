@@ -1,6 +1,7 @@
 package com.aewol.domain.insurance.controller;
 
 import com.aewol.common.response.ApiResponse;
+import com.aewol.domain.insurance.dto.ClaimConfirmRequest;
 import com.aewol.domain.insurance.dto.ClaimResponse;
 import com.aewol.domain.insurance.dto.ProductResponse;
 import com.aewol.domain.insurance.dto.SimulationRequest;
@@ -69,7 +70,8 @@ public class InsuranceController {
     @PostMapping("/claims/{claimId}/confirm")
     public ResponseEntity<ApiResponse<ClaimResponse>> confirmClaim(@AuthenticationPrincipal String memberId,
                                                                      @PathVariable String claimId,
-                                                                     @RequestBody(required = false) ClaimResponse correctedData) {
+                                                                     @Valid @RequestBody(required = false)
+                                                                     ClaimConfirmRequest correctedData) {
         return ResponseEntity.ok(ApiResponse.success(claimService.confirmClaim(memberId, claimId, correctedData)));
     }
 

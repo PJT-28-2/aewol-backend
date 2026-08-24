@@ -96,7 +96,7 @@ public class CareInsightCollector implements InsightCardCollector {
                     .digest(today + ":" + targetPetId + ":" + logs.size())
                     .build();
         } catch (RuntimeException e) {
-            log.debug("[Insight] 공동육아 조회 실패 - memberId: {}, reason: {}", memberId, e.getMessage());
+            log.debug("[Insight] 공동육아 조회 실패 - cause: {}", e.getClass().getSimpleName());
             return null;
         }
     }

@@ -36,7 +36,8 @@ class DonationServiceImplTest {
         when(donationMapper.findSettings("member-1")).thenReturn(settings(true, "1000", false));
         when(donationMapper.findMonthlySaved("pot-1")).thenReturn(new BigDecimal("3200"));
         when(donationMapper.findActiveCampaigns("member-1")).thenReturn(List.of(map(
-                "id", "campaign-1", "organization", "테스트 보호소", "title", "난방비 지원",
+                "id", "campaign-1", "organizationId", "organization-1",
+                "organization", "테스트 보호소", "title", "난방비 지원",
                 "category", "유기동물", "targetAmount", new BigDecimal("3000000"),
                 "raised", new BigDecimal("2046000"), "participants", 312,
                 "endsAt", LocalDateTime.now().plusDays(8), "preferred", 1)));
@@ -45,7 +46,48 @@ class DonationServiceImplTest {
 
         assertEquals(new BigDecimal("12400"), result.getBalance());
         assertEquals(68, result.getCampaigns().get(0).getProgress());
+        assertEquals("organization-1", result.getCampaigns().get(0).getOrganizationId());
         assertTrue(result.getCampaigns().get(0).isPreferred());
+    }
+
+    @Test
+    @DisplayName("활성 기부처를 선호 기부처로 멱등 등록한다")
+    void should_addPreference_when_organizationIsActive() {
+        DonationServiceImpl service = service();
+        when(donationMapper.findActiveOrganizationById("organization-1"))
+                .thenReturn(map("organizationId", "organization-1"));
+
+        var result = service.setPreference("member-1", "organization-1", true);
+
+        assertTrue(result.isPreferred());
+        assertEquals("organization-1", result.getOrganizationId());
+        verify(donationMapper).insertPreference("member-1", "organization-1");
+    }
+
+    @Test
+    @DisplayName("선호 기부처 해제는 등록 행이 없어도 성공한다")
+    void should_removePreferenceIdempotently_when_organizationIsActive() {
+        DonationServiceImpl service = service();
+        when(donationMapper.findActiveOrganizationById("organization-1"))
+                .thenReturn(map("organizationId", "organization-1"));
+
+        var result = service.setPreference("member-1", "organization-1", false);
+
+        assertFalse(result.isPreferred());
+        verify(donationMapper).deletePreference("member-1", "organization-1");
+    }
+
+    @Test
+    @DisplayName("비활성 또는 없는 기부처는 선호 등록하지 않는다")
+    void should_rejectPreference_when_organizationIsNotActive() {
+        DonationServiceImpl service = service();
+        when(donationMapper.findActiveOrganizationById("organization-1")).thenReturn(null);
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.setPreference("member-1", "organization-1", true));
+
+        assertEquals(404, exception.getStatus().value());
+        verify(donationMapper, never()).insertPreference(anyString(), anyString());
     }
 
     @Test

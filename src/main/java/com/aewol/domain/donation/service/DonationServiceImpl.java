@@ -184,6 +184,26 @@ public class DonationServiceImpl implements DonationService {
     }
 
     @Override
+    @Transactional
+    public DonationPreferenceResponse setPreference(
+            String memberId, String organizationId, boolean preferred) {
+        memberId = requireMemberId(memberId);
+        if (organizationId == null || organizationId.isBlank()
+                || donationMapper.findActiveOrganizationById(organizationId) == null) {
+            throw BusinessException.notFound("선호 기부처를 찾을 수 없습니다.");
+        }
+        if (preferred) {
+            donationMapper.insertPreference(memberId, organizationId);
+        } else {
+            donationMapper.deletePreference(memberId, organizationId);
+        }
+        return DonationPreferenceResponse.builder()
+                .organizationId(organizationId)
+                .preferred(preferred)
+                .build();
+    }
+
+    @Override
     public List<DonationHistoryResponse> getHistory(String memberId) {
         memberId = requireMemberId(memberId);
         Map<String, Object> pot = donationMapper.findPotByMemberId(memberId);
@@ -273,6 +293,7 @@ public class DonationServiceImpl implements DonationService {
         long daysLeft = endsAt == null ? 0 : Math.max(ChronoUnit.DAYS.between(LocalDateTime.now(), endsAt) + 1, 0);
         return DonationCampaignResponse.builder()
                 .id(text(row, "id"))
+                .organizationId(text(row, "organizationId", "organization_id"))
                 .organization(text(row, "organization"))
                 .title(text(row, "title"))
                 .category(text(row, "category"))

@@ -4,6 +4,10 @@ import com.aewol.common.exception.BusinessException;
 import com.aewol.common.storage.FileStorage;
 import com.aewol.domain.activity.mapper.ActivityLogMapper;
 import com.aewol.domain.pet.mapper.PetMapper;
+import com.aewol.domain.share.dto.AdminDiaryReportDetailResponse;
+import com.aewol.domain.share.dto.AdminDiaryReportListItemResponse;
+import com.aewol.domain.share.dto.AdminDiaryReportListResponse;
+import com.aewol.domain.share.dto.AdminDiaryReportResolutionRequest;
 import com.aewol.domain.share.dto.CareDiaryReportRequest;
 import com.aewol.domain.share.dto.CareDiaryReportResponse;
 import com.aewol.domain.inquiry.mapper.InquiryMapper;
@@ -294,6 +298,142 @@ public class CareDiaryServiceImpl implements CareDiaryService {
                 .reportId(reportId)
                 .inquiryNumber(inquiryNumber)
                 .hidden(hidden)
+                .build();
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public AdminDiaryReportListResponse getAdminReports(String status, int page, int size) {
+        String normalizedStatus = normalizeReportStatus(status);
+        int safePage = Math.max(page, 0);
+        int safeSize = Math.max(1, Math.min(size, 50));
+        List<Map<String, Object>> rows = careDiaryMapper.findAdminReports(
+                normalizedStatus, safeSize + 1, safePage * safeSize);
+        boolean hasNext = rows.size() > safeSize;
+        List<AdminDiaryReportListItemResponse> reports = rows.stream()
+                .limit(safeSize)
+                .map(this::toAdminReportListItem)
+                .collect(Collectors.toList());
+        return AdminDiaryReportListResponse.builder()
+                .reports(reports)
+                .page(safePage)
+                .size(safeSize)
+                .hasNext(hasNext)
+                .build();
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public AdminDiaryReportDetailResponse getAdminReport(String reportId) {
+        return toAdminReportDetail(findAdminReport(reportId));
+    }
+
+    @Override
+    @Transactional
+    public AdminDiaryReportDetailResponse resolveAdminReport(
+            String adminId, String reportId, AdminDiaryReportResolutionRequest request) {
+        adminId = requireMemberId(adminId);
+        Map<String, Object> report = findAdminReport(reportId);
+        if (!"PENDING".equals(text(report, "status"))) {
+            throw BusinessException.conflict("이미 처리된 신고입니다.");
+        }
+
+        String diaryId = text(report, "diaryId");
+        String resolution = request.getResolution();
+        if ("RESTORE".equals(resolution)) {
+            if (value(report, "deletedAt") != null) {
+                throw BusinessException.conflict("이미 삭제된 게시물은 복원할 수 없습니다.");
+            }
+            restorePublicImages(careDiaryMapper.findImagesForPublish(diaryId));
+            if (careDiaryMapper.restoreByReport(diaryId) != 1) {
+                throw BusinessException.conflict("게시물을 복원할 수 없습니다.");
+            }
+        }
+
+        String adminNote = normalizeAdminNote(request.getAdminNote());
+        if (careDiaryMapper.resolvePendingReportsByDiary(
+                diaryId, resolution, adminNote, adminId) == 0) {
+            throw BusinessException.conflict("처리할 신고가 없습니다.");
+        }
+        return toAdminReportDetail(findAdminReport(reportId));
+    }
+
+    private Map<String, Object> findAdminReport(String reportId) {
+        if (reportId == null || reportId.isBlank()) {
+            throw BusinessException.notFound("신고를 찾을 수 없습니다.");
+        }
+        Map<String, Object> report = careDiaryMapper.findAdminReportById(reportId);
+        if (report == null) throw BusinessException.notFound("신고를 찾을 수 없습니다.");
+        return report;
+    }
+
+    private String normalizeReportStatus(String status) {
+        if (status == null || status.isBlank()) return null;
+        String normalized = status.trim().toUpperCase(Locale.ROOT);
+        if (!"PENDING".equals(normalized) && !"RESOLVED".equals(normalized)) {
+            throw new BusinessException("신고 상태가 올바르지 않습니다.");
+        }
+        return normalized;
+    }
+
+    private String normalizeAdminNote(String adminNote) {
+        if (adminNote == null || adminNote.isBlank()) return null;
+        return adminNote.trim();
+    }
+
+    private void restorePublicImages(List<Map<String, Object>> images) {
+        if (images.isEmpty()) {
+            throw BusinessException.conflict("복원할 게시물 사진을 찾을 수 없습니다.");
+        }
+        for (Map<String, Object> image : images) {
+            if (text(image, "publicImageKey") != null) continue;
+            String publicKey = fileStorage.publish(text(image, "imageUrl"));
+            if (publicKey == null) {
+                throw BusinessException.conflict("게시물 사진을 복원하지 못했습니다. 잠시 후 다시 시도해 주세요.");
+            }
+            careDiaryMapper.updatePublicImageKey(text(image, "imageId"), publicKey);
+        }
+    }
+
+    private AdminDiaryReportListItemResponse toAdminReportListItem(Map<String, Object> row) {
+        return AdminDiaryReportListItemResponse.builder()
+                .reportId(text(row, "reportId"))
+                .diaryId(text(row, "diaryId"))
+                .reason(text(row, "reason"))
+                .status(text(row, "status"))
+                .resolution(text(row, "resolution"))
+                .reporterName(text(row, "reporterName"))
+                .authorName(text(row, "authorName"))
+                .petName(text(row, "petName"))
+                .contentPreview(text(row, "contentPreview"))
+                .createdAt(dateTimeText(value(row, "createdAt")))
+                .resolvedAt(dateTimeText(value(row, "resolvedAt")))
+                .build();
+    }
+
+    private AdminDiaryReportDetailResponse toAdminReportDetail(Map<String, Object> row) {
+        String diaryId = text(row, "diaryId");
+        List<String> images = careDiaryMapper.findImagesForPublish(diaryId).stream()
+                .map(image -> text(image, "imageUrl"))
+                .filter(key -> key != null && !key.isBlank())
+                .map(fileStorage::signedUrl)
+                .collect(Collectors.toList());
+        return AdminDiaryReportDetailResponse.builder()
+                .reportId(text(row, "reportId"))
+                .diaryId(diaryId)
+                .reason(text(row, "reason"))
+                .status(text(row, "status"))
+                .resolution(text(row, "resolution"))
+                .adminNote(text(row, "adminNote"))
+                .reporterName(text(row, "reporterName"))
+                .reporterEmail(text(row, "reporterEmail"))
+                .authorName(text(row, "authorName"))
+                .petName(text(row, "petName"))
+                .content(text(row, "content"))
+                .images(images)
+                .inquiryNumber(text(row, "inquiryNumber"))
+                .createdAt(dateTimeText(value(row, "createdAt")))
+                .resolvedAt(dateTimeText(value(row, "resolvedAt")))
                 .build();
     }
 

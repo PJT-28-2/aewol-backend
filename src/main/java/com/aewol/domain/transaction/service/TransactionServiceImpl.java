@@ -67,7 +67,7 @@ public class TransactionServiceImpl implements TransactionService {
 
         // 외부 호출은 트랜잭션 밖에서 끝낸다.
         String category = autoTaggingService.categorize(request.getMerchantName());
-        log.info("자동 태깅 결과 - merchant: {}, category: {}", request.getMerchantName(), category);
+        log.info("자동 태깅 완료 - category: {}", category);
 
         PaymentRecordCommand command = PaymentRecordCommand.builder()
                 .memberId(memberId)

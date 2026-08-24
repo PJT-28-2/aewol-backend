@@ -8,6 +8,8 @@ import lombok.Getter;
 @Builder
 public class InquiryListItemResponse {
     private String inquiryId;
+    private String inquiryNumber;
+    private String category;
     private String title;
     private String status;
     private String createdAt;

@@ -175,20 +175,20 @@ public class TossChargeService {
                 // 카드 거절(402)로 노출하면 시크릿 키 미설정 같은 우리 쪽 설정 오류가 데모
                 // 중 "카드가 거절되었습니다"로 오인될 수 있어 500으로 명확히 구분한다.
                 tossPaymentClaim.release(orderId);
-                log.error("TossPayments 설정 오류 - orderId: {}, code: {}, message: {}",
-                        orderId, result.getCode(), result.getMessage());
+                log.error("TossPayments 설정 오류 - orderId: {}, code: {}",
+                        orderId, result.getCode());
                 throw new BusinessException(HttpStatus.INTERNAL_SERVER_ERROR,
                         "충전 처리 중 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.");
             case ALREADY_APPROVED:
                 // Toss가 이전 confirm으로 이미 승인을 보유하고 있을 가능성이 있다 —
                 // 클레임 유지, 감사 로그 남김.
-                auditLogger.alreadyApproved(paymentKey, orderId, memberId, result.getMessage());
+                auditLogger.alreadyApproved();
                 throw new BusinessException(HttpStatus.CONFLICT, "이미 처리된 충전입니다.");
             case INDETERMINATE:
                 // 승인 여부를 확정할 수 없음 — 클레임을 풀어 재시도를 유도해서는 안 된다.
                 // 타임아웃 직전에 Toss가 승인을 완료했을 수 있으므로 새 주문을 유도하면
                 // 카드가 이중 청구될 수 있다. 결제 내역을 먼저 확인하도록 안내한다.
-                auditLogger.confirmIndeterminate(paymentKey, orderId, memberId, result.getMessage());
+                auditLogger.confirmIndeterminate();
                 throw new BusinessException(HttpStatus.BAD_GATEWAY,
                         "충전 상태를 확인할 수 없습니다. 잠시 후 결제 내역을 확인하신 후 충전이 완료되지 않은 경우에만 다시 시도해 주세요.");
             case SUCCESS:
@@ -226,7 +226,7 @@ public class TossChargeService {
         } catch (Exception e) {
             // 그 외 모든 실패 — Toss는 이미 승인했으므로 cancel 보상을 시도한다. 원래 실패(e)를
             // 보상 호출의 성공/실패로 감추지 않고, 어느 쪽이든 500으로 응답한다.
-            compensate(paymentKey, orderId, memberId, e);
+            compensate(paymentKey);
             throw new BusinessException(HttpStatus.INTERNAL_SERVER_ERROR,
                     "충전 처리 중 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.");
         }
@@ -237,7 +237,7 @@ public class TossChargeService {
      * 의도적으로 넓어서 예상 못 한 RuntimeException(NPE, 드라이버 예외 등)도 잡히는데,
      * 그 메시지에는 SQL 조각이나 내부 식별자가 담길 수 있어 외부 API 필드로 나가면 안 된다.
      * 길이 제한에 걸려 보상 호출 자체가 실패할 위험도 있다. 원인 메시지는 외부에 노출되지
-     * 않는 감사 로그에만 남긴다.
+     * 않는 내부 처리에도 전달하지 않는다.
      */
     private static final String CANCEL_REASON = "지갑 충전 기록 실패로 인한 자동 취소";
 
@@ -270,16 +270,14 @@ public class TossChargeService {
         }
     }
 
-    private void compensate(String paymentKey, String orderId, String memberId, Exception cause) {
+    private void compensate(String paymentKey) {
         TossCancelResult cancelResult = tossPaymentsClient.cancelPayment(paymentKey, CANCEL_REASON);
         if (cancelResult.isSuccess()) {
-            auditLogger.compensated(paymentKey, orderId, memberId, cause.getMessage());
+            auditLogger.compensated();
         } else {
-            // cancel마저 실패 — 자동 복구 불가. 이 로그의 orderId로 원장을 역조회해
+            // cancel마저 실패 — 자동 복구 불가. 감사 이벤트와 미완료 주문을 대조해
             // 수동 대사해야 한다.
-            auditLogger.compensationFailed(paymentKey, orderId, memberId,
-                    cause.getMessage() + " / cancel 실패: code=" + cancelResult.getCode()
-                            + " message=" + cancelResult.getMessage());
+            auditLogger.compensationFailed();
         }
     }
 }

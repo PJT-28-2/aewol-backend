@@ -17,7 +17,6 @@ import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
-import org.springframework.core.env.Environment;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
 import org.springframework.http.HttpStatus;
@@ -43,11 +42,9 @@ class CodefClientTransferAuthTest {
         redisTemplate = mock(RedisTemplate.class);
         valueOperations = mock(ValueOperations.class);
         redisRateLimiter = mock(RedisRateLimiter.class);
-        Environment environment = mock(Environment.class);
-
         when(redisTemplate.opsForValue()).thenReturn(valueOperations);
 
-        codefClient = new CodefClient(codefRestTemplate, redisTemplate, redisRateLimiter, environment);
+        codefClient = new CodefClient(codefRestTemplate, redisTemplate, redisRateLimiter);
     }
 
     @Test

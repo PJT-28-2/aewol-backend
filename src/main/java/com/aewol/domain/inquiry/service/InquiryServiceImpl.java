@@ -37,10 +37,12 @@ public class InquiryServiceImpl implements InquiryService {
     private static final Set<String> ALLOWED_STATUSES = Set.of("WAITING", "ANSWERED");
     private static final int MAX_ATTACHMENTS = 3;
     private static final long MAX_ATTACHMENT_SIZE_BYTES = 10L * 1024 * 1024;
+    private static final int MAX_ANSWER_LENGTH = 5000;
     private static final String ATTACHMENT_SUB_DIR = "inquiries";
     private static final Map<String, Set<String>> ALLOWED_FILE_TYPES = Map.of(
             "image/jpeg", Set.of("jpg", "jpeg"),
             "image/png", Set.of("png"),
+            "image/webp", Set.of("webp"),
             "application/pdf", Set.of("pdf")
     );
 
@@ -142,9 +144,7 @@ public class InquiryServiceImpl implements InquiryService {
 
     @Override
     public InquiryListResponse getInquiries(String memberId, String status, int page, int size) {
-        if (status != null && !status.isBlank() && !ALLOWED_STATUSES.contains(status)) {
-            throw new BusinessException("status는 WAITING 또는 ANSWERED만 가능해요");
-        }
+        validateStatus(status);
         int safePage = Math.max(page, 0);
         int safeSize = size <= 0 ? 10 : size;
 
@@ -167,11 +167,64 @@ public class InquiryServiceImpl implements InquiryService {
             // (setPrimaryAccount/disconnectAccount와 동일한 방식).
             throw BusinessException.notFound("문의를 찾을 수 없어요");
         }
-        List<String> attachments = inquiryMapper.findAttachmentsByInquiryId(inquiryId).stream()
+        return toDetailResponse(inquiry, getAttachmentUrls(inquiryId));
+    }
+
+    @Override
+    public InquiryListResponse getAdminInquiries(String status, int page, int size) {
+        validateStatus(status);
+        int safePage = Math.max(page, 0);
+        int safeSize = size <= 0 ? 10 : Math.min(size, 100);
+
+        List<Map<String, Object>> rows = inquiryMapper.findAll(status, safeSize + 1, safePage * safeSize);
+        boolean hasNext = rows.size() > safeSize;
+        List<Map<String, Object>> pageRows = hasNext ? rows.subList(0, safeSize) : rows;
+        List<InquiryListItemResponse> items = pageRows.stream()
+                .map(this::toListItemResponse)
+                .collect(Collectors.toList());
+        return InquiryListResponse.builder().inquiries(items).hasNext(hasNext).build();
+    }
+
+    @Override
+    public InquiryDetailResponse getAdminInquiry(String inquiryId) {
+        Map<String, Object> inquiry = findAdminInquiry(inquiryId);
+        return toDetailResponse(inquiry, getAttachmentUrls(inquiryId));
+    }
+
+    @Override
+    @Transactional
+    public InquiryDetailResponse answerInquiry(String inquiryId, String answer) {
+        if (answer == null || answer.isBlank()) {
+            throw new BusinessException("답변을 입력해주세요");
+        }
+        if (answer.trim().length() > MAX_ANSWER_LENGTH) {
+            throw new BusinessException("답변은 5000자 이하로 입력해주세요");
+        }
+        if (inquiryMapper.updateAnswer(inquiryId, answer.trim()) == 0) {
+            throw BusinessException.notFound("문의를 찾을 수 없어요");
+        }
+        return getAdminInquiry(inquiryId);
+    }
+
+    private Map<String, Object> findAdminInquiry(String inquiryId) {
+        Map<String, Object> inquiry = inquiryMapper.findById(inquiryId);
+        if (inquiry == null) {
+            throw BusinessException.notFound("문의를 찾을 수 없어요");
+        }
+        return inquiry;
+    }
+
+    private List<String> getAttachmentUrls(String inquiryId) {
+        return inquiryMapper.findAttachmentsByInquiryId(inquiryId).stream()
                 .map(a -> (String) a.get("file_url"))
                 .map(fileStorage::signedUrl)
                 .collect(Collectors.toList());
-        return toDetailResponse(inquiry, attachments);
+    }
+
+    private void validateStatus(String status) {
+        if (status != null && !status.isBlank() && !ALLOWED_STATUSES.contains(status)) {
+            throw new BusinessException("status는 WAITING 또는 ANSWERED만 가능해요");
+        }
     }
 
     private void validateCategory(String category) {
@@ -191,7 +244,7 @@ public class InquiryServiceImpl implements InquiryService {
                 ? originalFilename.substring(originalFilename.lastIndexOf('.') + 1).toLowerCase(Locale.ROOT)
                 : "";
         if (extensions == null || !extensions.contains(extension)) {
-            throw new BusinessException("JPG, JPEG, PNG, PDF 파일만 업로드할 수 있어요");
+            throw new BusinessException("JPG, JPEG, PNG, WEBP, PDF 파일만 업로드할 수 있어요");
         }
         return "image/jpeg".equals(contentType) ? "jpg" : extension;
     }
@@ -213,6 +266,8 @@ public class InquiryServiceImpl implements InquiryService {
     private InquiryListItemResponse toListItemResponse(Map<String, Object> row) {
         return InquiryListItemResponse.builder()
                 .inquiryId(String.valueOf(row.get("inquiry_id")))
+                .inquiryNumber((String) row.get("inquiry_number"))
+                .category((String) row.get("category"))
                 .title((String) row.get("title"))
                 .status((String) row.get("status"))
                 .createdAt(toDateString(row.get("created_at")))

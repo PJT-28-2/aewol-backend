@@ -22,26 +22,22 @@ public class TossPaymentAuditLogger {
     private static final String AUDIT_COMPENSATION_FAILED = "AUDIT_COMPENSATION_FAILED";
 
     /** Toss가 "이미 처리됨"으로 응답한 경우 — 이전 confirm이 성공했을 가능성이 있다. */
-    public void alreadyApproved(String paymentKey, String orderId, String memberId, String detail) {
-        log.error("{} paymentKey={} orderId={} memberId={} detail={}",
-                AUDIT_ALREADY_APPROVED, paymentKey, orderId, memberId, detail);
+    public void alreadyApproved() {
+        log.error(AUDIT_ALREADY_APPROVED);
     }
 
     /** Toss confirm 호출이 타임아웃/5xx/미열거 에러코드 등으로 승인 여부를 확정할 수 없는 경우. */
-    public void confirmIndeterminate(String paymentKey, String orderId, String memberId, String detail) {
-        log.error("{} paymentKey={} orderId={} memberId={} detail={}",
-                AUDIT_CONFIRM_INDETERMINATE, paymentKey, orderId, memberId, detail);
+    public void confirmIndeterminate() {
+        log.error(AUDIT_CONFIRM_INDETERMINATE);
     }
 
     /** 승인 후 원장 기록 실패로 cancel 보상을 호출했고, 그 보상이 성공한 경우. */
-    public void compensated(String paymentKey, String orderId, String memberId, String detail) {
-        log.error("{} paymentKey={} orderId={} memberId={} detail={}",
-                AUDIT_COMPENSATED, paymentKey, orderId, memberId, detail);
+    public void compensated() {
+        log.error(AUDIT_COMPENSATED);
     }
 
     /** 승인 후 원장 기록 실패로 cancel 보상을 호출했으나, 그 보상마저 실패한 경우 — 수동 대사 필요. */
-    public void compensationFailed(String paymentKey, String orderId, String memberId, String detail) {
-        log.error("{} paymentKey={} orderId={} memberId={} detail={}",
-                AUDIT_COMPENSATION_FAILED, paymentKey, orderId, memberId, detail);
+    public void compensationFailed() {
+        log.error(AUDIT_COMPENSATION_FAILED);
     }
 }

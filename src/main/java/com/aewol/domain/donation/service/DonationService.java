@@ -9,6 +9,7 @@ public interface DonationService {
     DonationBalanceResponse donate(String memberId, DonationRequest request);
     DonationBalanceResponse withdraw(String memberId, DonationWithdrawRequest request);
     DonationSettingsResponse saveSettings(String memberId, DonationSettingRequest request);
+    DonationPreferenceResponse setPreference(String memberId, String organizationId, boolean preferred);
     List<DonationHistoryResponse> getHistory(String memberId);
     int processMonthlyAutoDonations(String yearMonth);
 }

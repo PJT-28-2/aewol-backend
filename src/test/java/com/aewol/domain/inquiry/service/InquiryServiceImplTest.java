@@ -69,6 +69,24 @@ class InquiryServiceImplTest {
     }
 
     @Test
+    @DisplayName("webp 첨부파일도 업로드 후 첨부 테이블에 저장한다")
+    void should_uploadAndInsertAttachment_when_fileIsWebp() {
+        doAnswer(invocation -> {
+            Map<String, Object> arg = invocation.getArgument(0);
+            arg.put("inquiryId", 25L);
+            return null;
+        }).when(inquiryMapper).insert(any());
+        when(fileStorage.store(any(), eq("inquiries"), eq("webp"))).thenReturn("inquiries/a.webp");
+
+        MockMultipartFile file = new MockMultipartFile("attachments", "image1.webp", "image/webp", new byte[]{1, 2, 3});
+
+        service.createInquiry(MEMBER_ID, "보험", "제목", "내용", "user@example.com", List.of(file));
+
+        verify(fileStorage).store(any(), eq("inquiries"), eq("webp"));
+        verify(inquiryMapper).insertAttachment(any());
+    }
+
+    @Test
     @DisplayName("첨부파일이 3개를 초과하면 400 예외를 던지고 업로드를 시도하지 않는다")
     void should_throwBadRequest_when_moreThanThreeAttachments() {
         List<MultipartFile> files = List.of(
@@ -180,6 +198,86 @@ class InquiryServiceImplTest {
                 () -> service.getInquiry(MEMBER_ID, INQUIRY_ID));
 
         assertEquals(org.springframework.http.HttpStatus.NOT_FOUND, ex.getStatus());
+    }
+
+    @Test
+    @DisplayName("관리자 문의 목록은 모든 회원의 문의를 상태별로 페이지 조회한다")
+    void should_returnAllInquiries_when_adminRequestsList() {
+        Map<String, Object> first = inquiryListRow("1");
+        first.put("inquiry_number", "AEW-20260824-0001");
+        first.put("category", "보험");
+        when(inquiryMapper.findAll("WAITING", 2, 0)).thenReturn(List.of(first, inquiryListRow("2")));
+
+        InquiryListResponse result = service.getAdminInquiries("WAITING", 0, 1);
+
+        assertEquals(1, result.getInquiries().size());
+        assertEquals("AEW-20260824-0001", result.getInquiries().get(0).getInquiryNumber());
+        assertEquals("보험", result.getInquiries().get(0).getCategory());
+        assertTrue(result.isHasNext());
+    }
+
+    @Test
+    @DisplayName("관리자는 회원 소유권 조건 없이 문의 상세를 조회한다")
+    void should_returnInquiryDetail_when_adminRequestsDetail() {
+        Map<String, Object> row = inquiryDetailRow("WAITING", null);
+        when(inquiryMapper.findById(INQUIRY_ID)).thenReturn(row);
+        when(inquiryMapper.findAttachmentsByInquiryId(INQUIRY_ID)).thenReturn(List.of());
+
+        InquiryDetailResponse result = service.getAdminInquiry(INQUIRY_ID);
+
+        assertEquals(INQUIRY_ID, result.getInquiryId());
+        assertEquals("user@example.com", result.getReplyEmail());
+        assertEquals("WAITING", result.getStatus());
+    }
+
+    @Test
+    @DisplayName("관리자가 답변하면 공백을 제거해 저장하고 ANSWERED 상세를 반환한다")
+    void should_updateAnswerAndReturnDetail_when_adminAnswers() {
+        when(inquiryMapper.updateAnswer(INQUIRY_ID, "확인 후 조치했습니다.")).thenReturn(1);
+        when(inquiryMapper.findById(INQUIRY_ID))
+                .thenReturn(inquiryDetailRow("ANSWERED", "확인 후 조치했습니다."));
+        when(inquiryMapper.findAttachmentsByInquiryId(INQUIRY_ID)).thenReturn(List.of());
+
+        InquiryDetailResponse result = service.answerInquiry(INQUIRY_ID, "  확인 후 조치했습니다.  ");
+
+        verify(inquiryMapper).updateAnswer(INQUIRY_ID, "확인 후 조치했습니다.");
+        assertEquals("ANSWERED", result.getStatus());
+        assertEquals("확인 후 조치했습니다.", result.getAnswer());
+    }
+
+    @Test
+    @DisplayName("존재하지 않는 문의에 답변하면 404 예외를 던진다")
+    void should_throwNotFound_when_adminAnswersMissingInquiry() {
+        when(inquiryMapper.updateAnswer(INQUIRY_ID, "답변")).thenReturn(0);
+
+        BusinessException ex = assertThrows(BusinessException.class,
+                () -> service.answerInquiry(INQUIRY_ID, "답변"));
+
+        assertEquals(org.springframework.http.HttpStatus.NOT_FOUND, ex.getStatus());
+        verify(inquiryMapper, never()).findById(any());
+    }
+
+    @Test
+    @DisplayName("빈 답변은 저장하지 않고 400 예외를 던진다")
+    void should_throwBadRequest_when_adminAnswerIsBlank() {
+        BusinessException ex = assertThrows(BusinessException.class,
+                () -> service.answerInquiry(INQUIRY_ID, "   "));
+
+        assertEquals(org.springframework.http.HttpStatus.BAD_REQUEST, ex.getStatus());
+        verify(inquiryMapper, never()).updateAnswer(any(), any());
+    }
+
+    private Map<String, Object> inquiryDetailRow(String status, String answer) {
+        Map<String, Object> row = new HashMap<>();
+        row.put("inquiry_id", INQUIRY_ID);
+        row.put("inquiry_number", "AEW-20260824-0025");
+        row.put("category", "기타");
+        row.put("title", "제목");
+        row.put("content", "내용");
+        row.put("reply_email", "user@example.com");
+        row.put("status", status);
+        row.put("answer", answer);
+        return row;
     }
 
     private Map<String, Object> inquiryListRow(String inquiryId) {

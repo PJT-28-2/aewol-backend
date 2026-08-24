@@ -38,12 +38,19 @@ public class PetServiceImpl implements PetService {
     private static final String DOCUMENT_SUB_DIR = "pet-documents";
     private static final int MAX_DOCUMENT_NAME_LENGTH = 100;
     private static final Set<String> ALLOWED_DOCUMENT_EXTENSIONS =
-            Set.of("jpg", "jpeg", "png", "pdf");
+            Set.of("jpg", "jpeg", "png", "webp", "pdf");
     private static final byte[] JPEG_SIGNATURE = {(byte) 0xFF, (byte) 0xD8, (byte) 0xFF};
     private static final byte[] PNG_SIGNATURE = {
             (byte) 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A
     };
     private static final byte[] PDF_SIGNATURE = {0x25, 0x50, 0x44, 0x46, 0x2D};
+    // WEBP는 "RIFF"(0~3바이트) + 파일 크기(4~7바이트, 가변값이라 검증 대상 아님) + "WEBP"(8~11바이트)
+    // 구조라, 다른 포맷처럼 앞에서부터 이어지는 고정 바이트열 하나로는 못 걸러낸다 — 두 구간을
+    // 따로 검사해야 한다.
+    private static final byte[] WEBP_RIFF_SIGNATURE = {0x52, 0x49, 0x46, 0x46};
+    private static final byte[] WEBP_FORMAT_SIGNATURE = {0x57, 0x45, 0x42, 0x50};
+    private static final int WEBP_FORMAT_SIGNATURE_OFFSET = 8;
+    private static final int SIGNATURE_HEADER_LENGTH = WEBP_FORMAT_SIGNATURE_OFFSET + WEBP_FORMAT_SIGNATURE.length;
 
     private final PetMapper petMapper;
     private final PetDocumentMapper petDocumentMapper;
@@ -276,19 +283,23 @@ public class PetServiceImpl implements PetService {
                 ? originalFilename.substring(originalFilename.lastIndexOf('.') + 1).toLowerCase(Locale.ROOT)
                 : "";
         if (!ALLOWED_DOCUMENT_EXTENSIONS.contains(extension) || !hasMatchingFileSignature(file, extension)) {
-            throw new BusinessException("JPEG, PNG, PDF 파일만 업로드할 수 있습니다.");
+            throw new BusinessException("JPEG, PNG, WEBP, PDF 파일만 업로드할 수 있습니다.");
         }
         return "jpeg".equals(extension) ? "jpg" : extension;
     }
 
     private boolean hasMatchingFileSignature(MultipartFile file, String extension) {
         try {
-            byte[] header = file.getInputStream().readNBytes(PNG_SIGNATURE.length);
+            byte[] header = file.getInputStream().readNBytes(SIGNATURE_HEADER_LENGTH);
             if ("jpg".equals(extension) || "jpeg".equals(extension)) {
                 return startsWith(header, JPEG_SIGNATURE);
             }
             if ("png".equals(extension)) {
                 return startsWith(header, PNG_SIGNATURE);
+            }
+            if ("webp".equals(extension)) {
+                return startsWith(header, WEBP_RIFF_SIGNATURE)
+                        && matchesAt(header, WEBP_FORMAT_SIGNATURE_OFFSET, WEBP_FORMAT_SIGNATURE);
             }
             return "pdf".equals(extension) && startsWith(header, PDF_SIGNATURE);
         } catch (IOException e) {
@@ -297,9 +308,13 @@ public class PetServiceImpl implements PetService {
     }
 
     private boolean startsWith(byte[] bytes, byte[] signature) {
-        if (bytes.length < signature.length) return false;
+        return matchesAt(bytes, 0, signature);
+    }
+
+    private boolean matchesAt(byte[] bytes, int offset, byte[] signature) {
+        if (bytes.length < offset + signature.length) return false;
         for (int i = 0; i < signature.length; i++) {
-            if (bytes[i] != signature[i]) return false;
+            if (bytes[offset + i] != signature[i]) return false;
         }
         return true;
     }
@@ -355,7 +370,7 @@ public class PetServiceImpl implements PetService {
         try {
             fileStorage.delete(fileUrl);
         } catch (RuntimeException e) {
-            log.warn("반려동물 문서 파일 삭제 실패 - fileUrl: {}", fileUrl, e);
+            log.warn("반려동물 문서 파일 삭제 실패 - cause: {}", e.getClass().getSimpleName());
         }
     }
 

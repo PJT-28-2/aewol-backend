@@ -109,8 +109,8 @@ public class HomeInsightServiceImpl implements HomeInsightService {
         try {
             return collector.collect(memberId, petId);
         } catch (RuntimeException e) {
-            log.warn("[Insight] 카드 재료 수집 실패 - type: {}, memberId: {}, reason: {}",
-                    collector.type(), memberId, e.getMessage());
+            log.warn("[Insight] 카드 재료 수집 실패 - type: {}, cause: {}",
+                    collector.type(), e.getClass().getSimpleName());
             return null;
         }
     }
@@ -174,7 +174,7 @@ public class HomeInsightServiceImpl implements HomeInsightService {
                 byType.put(String.valueOf(row.get("card_type")), row);
             }
         } catch (RuntimeException e) {
-            log.warn("[Insight] 카드 캐시 조회 실패 - memberId: {}, reason: {}", memberId, e.getMessage());
+            log.warn("[Insight] 카드 캐시 조회 실패 - cause: {}", e.getClass().getSimpleName());
         }
         return byType;
     }

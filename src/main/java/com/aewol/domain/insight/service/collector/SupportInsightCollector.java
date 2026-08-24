@@ -39,7 +39,7 @@ public class SupportInsightCollector implements InsightCardCollector {
         try {
             matched = supportService.getMatchedPrograms(memberId, petId);
         } catch (RuntimeException e) {
-            log.debug("[Insight] 지원정책 조회 실패 - memberId: {}, reason: {}", memberId, e.getMessage());
+            log.debug("[Insight] 지원정책 조회 실패 - cause: {}", e.getClass().getSimpleName());
             return null;
         }
         if (matched == null || matched.getPrograms() == null) {
