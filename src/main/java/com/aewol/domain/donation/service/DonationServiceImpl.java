@@ -12,6 +12,7 @@ import java.util.*;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -58,17 +59,8 @@ public class DonationServiceImpl implements DonationService {
 
         Map<String, Object> existing = donationMapper.findHistoryByIdempotencyKey(memberId, idempotencyKey);
         if (existing != null) {
-            if (decimal(existing, "amount").compareTo(request.getAmount()) != 0
-                    || !Objects.equals(text(existing, "campaign_id", "campaignId"),
-                    request.getCampaignId())) {
-                throw BusinessException.conflict(
-                        "동일한 중복 요청 방지 키에 다른 기부 금액이나 캠페인을 사용할 수 없습니다.");
-            }
-            Map<String, Object> currentPot = getOrCreatePot(memberId);
-            return DonationBalanceResponse.builder()
-                    .donationId(text(existing, "donation_id", "donationId"))
-                    .balance(decimal(currentPot, "balance"))
-                    .build();
+            return replayDonation(existing, getOrCreatePot(memberId),
+                    request.getAmount(), request.getCampaignId());
         }
 
         Map<String, Object> campaign = donationMapper.findCampaignById(request.getCampaignId());
@@ -81,21 +73,37 @@ public class DonationServiceImpl implements DonationService {
     private DonationBalanceResponse donateToCampaign(String memberId, Map<String, Object> campaign,
                                                        BigDecimal amount, String idempotencyKey) {
         Map<String, Object> pot = getOrCreatePotForUpdate(memberId);
-        String walletId = text(pot, "wallet_id", "walletId");
-        if (donationMapper.decreasePotBalance(walletId, amount) != 1) {
-            throw new BusinessException("저금통 잔액이 부족합니다.");
+        // 저금통 행을 잡은 뒤에 다시 본다. 같은 키의 동시 요청은 락에서 직렬화되므로
+        // 두 번째는 이미 커밋된 기부 내역을 읽을 수 있다.
+        Map<String, Object> existing = donationMapper.findHistoryByIdempotencyKey(memberId, idempotencyKey);
+        String campaignId = text(campaign, "campaign_id", "campaignId");
+        if (existing != null) {
+            return replayDonation(existing, pot, amount, campaignId);
         }
 
+        String walletId = text(pot, "wallet_id", "walletId");
         Map<String, Object> history = new HashMap<>();
         history.put("walletId", walletId);
         history.put("organizationId", text(campaign, "organization_id", "organizationId"));
-        history.put("campaignId", text(campaign, "campaign_id", "campaignId"));
+        history.put("campaignId", campaignId);
         history.put("channelId", text(campaign, "channel_id", "channelId"));
         history.put("amount", amount);
         history.put("recipientName", text(campaign, "organization_name", "organizationName"));
         history.put("idempotencyKey", idempotencyKey);
-        donationMapper.insertHistory(history);
-        String campaignId = text(campaign, "campaign_id", "campaignId");
+        try {
+            donationMapper.insertHistory(history);
+        } catch (DuplicateKeyException e) {
+            Map<String, Object> concurrent = donationMapper
+                    .findHistoryByIdempotencyKey(memberId, idempotencyKey);
+            if (concurrent == null) {
+                throw BusinessException.conflict("동일한 기부 요청이 처리 중입니다.");
+            }
+            return replayDonation(concurrent, pot, amount, campaignId);
+        }
+
+        if (donationMapper.decreasePotBalance(walletId, amount) != 1) {
+            throw new BusinessException("저금통 잔액이 부족합니다.");
+        }
         if (donationMapper.increaseCampaignResult(campaignId, amount) != 1) {
             throw BusinessException.conflict("캠페인 모금액을 반영하지 못했습니다.");
         }
@@ -104,6 +112,19 @@ public class DonationServiceImpl implements DonationService {
         return DonationBalanceResponse.builder()
                 .donationId(text(history, "donationId"))
                 .balance(decimal(updatedPot, "balance"))
+                .build();
+    }
+
+    private DonationBalanceResponse replayDonation(Map<String, Object> existing, Map<String, Object> pot,
+                                                   BigDecimal amount, String campaignId) {
+        if (decimal(existing, "amount").compareTo(amount) != 0
+                || !Objects.equals(text(existing, "campaign_id", "campaignId"), campaignId)) {
+            throw BusinessException.conflict(
+                    "동일한 중복 요청 방지 키에 다른 기부 금액이나 캠페인을 사용할 수 없습니다.");
+        }
+        return DonationBalanceResponse.builder()
+                .donationId(text(existing, "donation_id", "donationId"))
+                .balance(decimal(pot, "balance"))
                 .build();
     }
 
