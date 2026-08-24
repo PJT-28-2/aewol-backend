@@ -4,6 +4,8 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
 import com.aewol.common.exception.BusinessException;
+import com.aewol.domain.donation.PotTransfer;
+import com.aewol.domain.donation.dto.DonationDepositRequest;
 import com.aewol.domain.donation.dto.DonationHistoryResponse;
 import com.aewol.domain.donation.dto.DonationRequest;
 import com.aewol.domain.donation.dto.DonationSettingRequest;
@@ -18,9 +20,11 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
+import org.springframework.transaction.support.TransactionOperations;
 
 @ExtendWith(MockitoExtension.class)
 class DonationServiceImplTest {
@@ -210,10 +214,17 @@ class DonationServiceImplTest {
         ReflectionTestUtils.setField(service, "allowDemoDonations", false);
         when(donationMapper.findMonthlyAutoDonationCandidates("2026-08")).thenReturn(List.of(map(
                 "memberId", "member-1", "campaignId", "demo-1")));
+        when(donationMapper.findSettings("member-1")).thenReturn(autoSettings("demo-1", null));
+        when(donationMapper.findMainWalletForUpdate("member-1")).thenReturn(map("wallet_id", "wallet-1"));
+        when(donationMapper.findSettingsForUpdate("member-1")).thenReturn(autoSettings("demo-1", null));
         when(donationMapper.findHistoryByIdempotencyKey("member-1", "auto-member-1-2026-08"))
                 .thenReturn(null);
         when(donationMapper.findCampaignById("demo-1")).thenReturn(map(
                 "campaign_id", "demo-1", "title", "[시연] 유기동물 구조·입양 활동 지원"));
+        when(donationMapper.findPotByMemberId("member-1"))
+                .thenReturn(map("wallet_id", "pot-1", "balance", new BigDecimal("12400")));
+        when(donationMapper.findPotForUpdate("member-1"))
+                .thenReturn(map("wallet_id", "pot-1", "balance", new BigDecimal("12400")));
 
         int completedCount = service.processMonthlyAutoDonations("2026-08");
 
@@ -431,7 +442,7 @@ class DonationServiceImplTest {
     void should_transferOnce_when_withdrawRequestIsRetried() {
         DonationServiceImpl service = service();
         DonationWithdrawRequest request = withdrawRequest("2000", "withdraw-1");
-        when(donationMapper.findMainWalletByMemberId("member-1")).thenReturn(map("wallet_id", "wallet-1"));
+        when(donationMapper.findMainWalletForUpdate("member-1")).thenReturn(map("wallet_id", "wallet-1"));
         when(donationMapper.findPotByMemberId("member-1"))
                 .thenReturn(map("wallet_id", "pot-1", "balance", new BigDecimal("12400")),
                         map("wallet_id", "pot-1", "balance", new BigDecimal("10400")),
@@ -439,19 +450,22 @@ class DonationServiceImplTest {
         when(donationMapper.findPotForUpdate("member-1"))
                 .thenReturn(map("wallet_id", "pot-1", "balance", new BigDecimal("12400")),
                         map("wallet_id", "pot-1", "balance", new BigDecimal("10400")));
-        when(donationMapper.findWithdrawalByIdempotencyKey("member-1", "withdraw-1"))
-                .thenReturn(null, map("price", new BigDecimal("2000")));
-        when(donationMapper.decreasePotBalance("pot-1", new BigDecimal("2000"))).thenReturn(1);
-        when(donationMapper.increaseWalletBalance("wallet-1", new BigDecimal("2000"))).thenReturn(1);
+        when(donationMapper.findWithdrawalByIdempotencyKey("member-1", PotTransfer.withdrawKey("withdraw-1")))
+                .thenReturn(null, map("price", money("2000")));
+        when(donationMapper.decreasePotBalance("pot-1", money("2000"))).thenReturn(1);
+        when(donationMapper.increaseWalletBalance("wallet-1", money("2000"))).thenReturn(1);
 
         var firstResult = service.withdraw("member-1", request);
         var retriedResult = service.withdraw("member-1", request);
 
         ArgumentCaptor<Map<String, Object>> captor = ArgumentCaptor.forClass(Map.class);
-        verify(donationMapper, times(1)).decreasePotBalance("pot-1", new BigDecimal("2000"));
-        verify(donationMapper, times(1)).increaseWalletBalance("wallet-1", new BigDecimal("2000"));
+        verify(donationMapper, times(1)).decreasePotBalance("pot-1", money("2000"));
+        verify(donationMapper, times(1)).increaseWalletBalance("wallet-1", money("2000"));
         verify(donationMapper, times(1)).insertWalletTransaction(captor.capture());
-        assertEquals("withdraw-1", captor.getValue().get("idempotencyKey"));
+        assertEquals(PotTransfer.withdrawKey("withdraw-1"), captor.getValue().get("idempotencyKey"));
+        assertEquals(PotTransfer.PURPOSE_WITHDRAW, captor.getValue().get("transferPurpose"));
+        assertEquals("pot-1", captor.getValue().get("sourceWalletId"));
+        assertEquals("wallet-1", captor.getValue().get("counterWalletId"));
         assertEquals(new BigDecimal("10400"), firstResult.getBalance());
         assertEquals(new BigDecimal("10400"), retriedResult.getBalance());
     }
@@ -461,18 +475,73 @@ class DonationServiceImplTest {
     void should_throwConflict_when_sameWithdrawalKeyHasDifferentAmount() {
         DonationServiceImpl service = service();
         DonationWithdrawRequest request = withdrawRequest("3000", "withdraw-1");
+        when(donationMapper.findMainWalletForUpdate("member-1")).thenReturn(map("wallet_id", "wallet-1"));
         when(donationMapper.findPotByMemberId("member-1"))
                 .thenReturn(map("wallet_id", "pot-1", "balance", new BigDecimal("10400")));
         when(donationMapper.findPotForUpdate("member-1"))
                 .thenReturn(map("wallet_id", "pot-1", "balance", new BigDecimal("10400")));
-        when(donationMapper.findWithdrawalByIdempotencyKey("member-1", "withdraw-1"))
-                .thenReturn(map("price", new BigDecimal("2000")));
+        when(donationMapper.findWithdrawalByIdempotencyKey("member-1", PotTransfer.withdrawKey("withdraw-1")))
+                .thenReturn(map("price", money("2000")));
 
         BusinessException exception = assertThrows(BusinessException.class,
                 () -> service.withdraw("member-1", request));
 
         assertEquals(409, exception.getStatus().value());
         verify(donationMapper, never()).decreasePotBalance(any(), any());
+        verify(donationMapper, never()).insertWalletTransaction(anyMap());
+    }
+
+    @Test
+    @DisplayName("넣기 응답이 유실되어 같은 키로 재시도해도 한 번만 이체한다")
+    void should_transferOnce_when_depositRequestIsRetried() {
+        DonationServiceImpl service = service();
+        DonationDepositRequest request = depositRequest("2000", "deposit-1");
+        when(donationMapper.findMainWalletForUpdate("member-1")).thenReturn(map("wallet_id", "wallet-1"));
+        when(donationMapper.findPotByMemberId("member-1"))
+                .thenReturn(map("wallet_id", "pot-1", "balance", new BigDecimal("12400")),
+                        map("wallet_id", "pot-1", "balance", new BigDecimal("14400")),
+                        map("wallet_id", "pot-1", "balance", new BigDecimal("14400")));
+        when(donationMapper.findPotForUpdate("member-1"))
+                .thenReturn(map("wallet_id", "pot-1", "balance", new BigDecimal("12400")),
+                        map("wallet_id", "pot-1", "balance", new BigDecimal("14400")));
+        when(donationMapper.findDepositByIdempotencyKey("member-1", PotTransfer.depositKey("deposit-1")))
+                .thenReturn(null, map("price", money("2000")));
+        when(donationMapper.decreaseMainWalletBalance("wallet-1", money("2000"))).thenReturn(1);
+        when(donationMapper.increasePotBalance("pot-1", money("2000"))).thenReturn(1);
+
+        var firstResult = service.deposit("member-1", request);
+        var retriedResult = service.deposit("member-1", request);
+
+        ArgumentCaptor<Map<String, Object>> captor = ArgumentCaptor.forClass(Map.class);
+        verify(donationMapper, times(1)).decreaseMainWalletBalance("wallet-1", money("2000"));
+        verify(donationMapper, times(1)).increasePotBalance("pot-1", money("2000"));
+        verify(donationMapper, times(1)).insertWalletTransaction(captor.capture());
+        assertEquals(PotTransfer.depositKey("deposit-1"), captor.getValue().get("idempotencyKey"));
+        assertEquals(PotTransfer.PURPOSE_DEPOSIT, captor.getValue().get("transferPurpose"));
+        assertEquals("wallet-1", captor.getValue().get("sourceWalletId"));
+        assertEquals("pot-1", captor.getValue().get("counterWalletId"));
+        assertEquals(new BigDecimal("14400"), firstResult.getBalance());
+        assertEquals(new BigDecimal("14400"), retriedResult.getBalance());
+    }
+
+    @Test
+    @DisplayName("지갑 잔액이 부족하면 저금통에 넣지 않는다")
+    void should_throwException_when_walletBalanceIsInsufficientForDeposit() {
+        DonationServiceImpl service = service();
+        DonationDepositRequest request = depositRequest("3000", "deposit-1");
+        when(donationMapper.findMainWalletForUpdate("member-1")).thenReturn(map("wallet_id", "wallet-1"));
+        when(donationMapper.findPotByMemberId("member-1"))
+                .thenReturn(map("wallet_id", "pot-1", "balance", new BigDecimal("1000")));
+        when(donationMapper.findPotForUpdate("member-1"))
+                .thenReturn(map("wallet_id", "pot-1", "balance", new BigDecimal("1000")));
+        when(donationMapper.findDepositByIdempotencyKey("member-1", PotTransfer.depositKey("deposit-1"))).thenReturn(null);
+        when(donationMapper.decreaseMainWalletBalance("wallet-1", money("3000"))).thenReturn(0);
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.deposit("member-1", request));
+
+        assertEquals("지갑 잔액이 부족합니다.", exception.getMessage());
+        verify(donationMapper, never()).increasePotBalance(any(), any());
         verify(donationMapper, never()).insertWalletTransaction(anyMap());
     }
 
@@ -506,6 +575,9 @@ class DonationServiceImplTest {
         DonationServiceImpl service = service();
         when(donationMapper.findMonthlyAutoDonationCandidates("2026-08")).thenReturn(List.of(map(
                 "memberId", "member-1", "campaignId", "campaign-1")));
+        when(donationMapper.findSettings("member-1")).thenReturn(autoSettings("campaign-1", null));
+        when(donationMapper.findMainWalletForUpdate("member-1")).thenReturn(map("wallet_id", "wallet-1"));
+        when(donationMapper.findSettingsForUpdate("member-1")).thenReturn(autoSettings("campaign-1", null));
         when(donationMapper.findHistoryByIdempotencyKey("member-1", "auto-member-1-2026-08"))
                 .thenReturn(null);
         when(donationMapper.findCampaignById("campaign-1")).thenReturn(map(
@@ -529,6 +601,78 @@ class DonationServiceImplTest {
         assertEquals("auto-member-1-2026-08", captor.getValue().get("idempotencyKey"));
         assertEquals(new BigDecimal("12400"), captor.getValue().get("amount"));
         assertEquals(1, completedCount);
+
+        InOrder lockOrder = inOrder(donationMapper);
+        lockOrder.verify(donationMapper).findSettings("member-1");
+        lockOrder.verify(donationMapper).findMainWalletForUpdate("member-1");
+        lockOrder.verify(donationMapper).findPotForUpdate("member-1");
+        lockOrder.verify(donationMapper).findSettingsForUpdate("member-1");
+    }
+
+    @Test
+    @DisplayName("수동 넣기는 자동 절삭 키와 같아도 네임스페이스를 붙여 별도 거래로 저장한다")
+    void should_namespaceDepositKey_when_clientSendsSpareTrimKey() {
+        DonationServiceImpl service = service();
+        String spareTrimKey = PotTransfer.spareTrimKey("member-1", java.time.LocalDate.parse("2026-08-25"));
+        DonationDepositRequest request = depositRequest("2000", spareTrimKey);
+        when(donationMapper.findMainWalletForUpdate("member-1")).thenReturn(map("wallet_id", "wallet-1"));
+        when(donationMapper.findPotByMemberId("member-1"))
+                .thenReturn(map("wallet_id", "pot-1", "balance", new BigDecimal("1000")),
+                        map("wallet_id", "pot-1", "balance", new BigDecimal("3000")));
+        when(donationMapper.findPotForUpdate("member-1"))
+                .thenReturn(map("wallet_id", "pot-1", "balance", new BigDecimal("1000")));
+        when(donationMapper.findDepositByIdempotencyKey("member-1", PotTransfer.depositKey(spareTrimKey)))
+                .thenReturn(null);
+        when(donationMapper.decreaseMainWalletBalance("wallet-1", money("2000"))).thenReturn(1);
+        when(donationMapper.increasePotBalance("pot-1", money("2000"))).thenReturn(1);
+
+        service.deposit("member-1", request);
+
+        ArgumentCaptor<Map<String, Object>> captor = ArgumentCaptor.forClass(Map.class);
+        verify(donationMapper).insertWalletTransaction(captor.capture());
+        assertEquals(PotTransfer.depositKey(spareTrimKey), captor.getValue().get("idempotencyKey"));
+        assertEquals(PotTransfer.PURPOSE_DEPOSIT, captor.getValue().get("transferPurpose"));
+        verify(donationMapper).findDepositByIdempotencyKey("member-1", PotTransfer.depositKey(spareTrimKey));
+        verify(donationMapper, never()).findDepositByIdempotencyKey("member-1", spareTrimKey);
+    }
+
+    @Test
+    @DisplayName("소수점 셋째 자리 넣기 금액은 서비스에서도 거절한다")
+    void should_rejectDeposit_when_amountHasThreeDecimalPlaces() {
+        DonationServiceImpl service = service();
+        DonationDepositRequest request = depositRequest("1.001", "deposit-1");
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.deposit("member-1", request));
+
+        assertEquals("넣을 금액은 소수점 둘째 자리까지만 입력할 수 있습니다.", exception.getMessage());
+        verify(donationMapper, never()).findMainWalletForUpdate(any());
+    }
+
+    @Test
+    @DisplayName("DECIMAL(15,2) 범위를 넘는 넣기 금액은 거절한다")
+    void should_rejectDeposit_when_amountExceedsDatabasePrecision() {
+        DonationServiceImpl service = service();
+        DonationDepositRequest request = depositRequest("10000000000000.00", "deposit-1");
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.deposit("member-1", request));
+
+        assertEquals("넣을 금액이 허용 범위를 초과했습니다.", exception.getMessage());
+        verify(donationMapper, never()).findMainWalletForUpdate(any());
+    }
+
+    @Test
+    @DisplayName("소수점 셋째 자리 출금 금액은 서비스에서도 거절한다")
+    void should_rejectWithdraw_when_amountHasThreeDecimalPlaces() {
+        DonationServiceImpl service = service();
+        DonationWithdrawRequest request = withdrawRequest("1.001", "withdraw-1");
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.withdraw("member-1", request));
+
+        assertEquals("출금 금액은 소수점 둘째 자리까지만 입력할 수 있습니다.", exception.getMessage());
+        verify(donationMapper, never()).findMainWalletForUpdate(any());
     }
 
     private DonationRequest donationRequest(String amount, String campaignId, String key) {
@@ -546,13 +690,31 @@ class DonationServiceImplTest {
         return request;
     }
 
+    private DonationDepositRequest depositRequest(String amount, String key) {
+        DonationDepositRequest request = new DonationDepositRequest();
+        ReflectionTestUtils.setField(request, "amount", new BigDecimal(amount));
+        ReflectionTestUtils.setField(request, "idempotencyKey", key);
+        return request;
+    }
+
     private Map<String, Object> settings(boolean piggyBank, String savingUnit, boolean autoDonate) {
         return map("piggyBankEnabled", piggyBank, "savingUnit", new BigDecimal(savingUnit),
                 "autoDonate", autoDonate);
     }
 
+    private Map<String, Object> autoSettings(String campaignId, String lastYearMonth) {
+        return map("piggyBankEnabled", true, "savingUnit", new BigDecimal("1000"),
+                "autoDonate", true, "auto_donate_enabled", 1,
+                "autoDonateCampaignId", campaignId, "auto_donate_campaign_id", campaignId,
+                "last_auto_donated_year_month", lastYearMonth);
+    }
+
     private DonationServiceImpl service() {
-        return new DonationServiceImpl(donationMapper);
+        return new DonationServiceImpl(donationMapper, TransactionOperations.withoutTransaction());
+    }
+
+    private static BigDecimal money(String value) {
+        return new BigDecimal(value).setScale(2);
     }
 
     private static Map<String, Object> map(Object... values) {
