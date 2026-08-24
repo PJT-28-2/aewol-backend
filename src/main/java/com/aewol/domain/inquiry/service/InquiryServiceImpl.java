@@ -7,6 +7,7 @@ import com.aewol.domain.inquiry.dto.InquiryDetailResponse;
 import com.aewol.domain.inquiry.dto.InquiryListItemResponse;
 import com.aewol.domain.inquiry.dto.InquiryListResponse;
 import com.aewol.domain.inquiry.mapper.InquiryMapper;
+import com.aewol.domain.share.mapper.CareDiaryMapper;
 import java.io.IOException;
 import java.sql.Timestamp;
 import java.time.LocalDate;
@@ -48,6 +49,7 @@ public class InquiryServiceImpl implements InquiryService {
 
     private final InquiryMapper inquiryMapper;
     private final FileStorage fileStorage;
+    private final CareDiaryMapper careDiaryMapper;
 
     @Override
     @Transactional
@@ -193,16 +195,20 @@ public class InquiryServiceImpl implements InquiryService {
 
     @Override
     @Transactional
-    public InquiryDetailResponse answerInquiry(String inquiryId, String answer) {
+    public InquiryDetailResponse answerInquiry(String adminId, String inquiryId, String answer) {
         if (answer == null || answer.isBlank()) {
             throw new BusinessException("답변을 입력해주세요");
         }
         if (answer.trim().length() > MAX_ANSWER_LENGTH) {
             throw new BusinessException("답변은 5000자 이하로 입력해주세요");
         }
-        if (inquiryMapper.updateAnswer(inquiryId, answer.trim()) == 0) {
+        String trimmedAnswer = answer.trim();
+        if (inquiryMapper.updateAnswer(inquiryId, trimmedAnswer) == 0) {
             throw BusinessException.notFound("문의를 찾을 수 없어요");
         }
+        // 문의 답변만으로 글을 복원하지 않는다. 연결된 신고는 숨김 유지로 끝낸다.
+        careDiaryMapper.resolvePendingReportsByInquiryId(
+                inquiryId, "KEEP_HIDDEN", trimmedAnswer, adminId);
         return getAdminInquiry(inquiryId);
     }
 

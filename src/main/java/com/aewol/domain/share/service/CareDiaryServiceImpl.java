@@ -382,6 +382,8 @@ public class CareDiaryServiceImpl implements CareDiaryService {
                 diaryId, resolution, adminNote, adminId) == 0) {
             throw BusinessException.conflict("처리할 신고가 없습니다.");
         }
+        String inquiryAnswer = adminNote != null ? adminNote : "신고가 처리되었습니다.";
+        inquiryMapper.answerWaitingLinkedToDiary(diaryId, inquiryAnswer);
         return toAdminReportDetail(findAdminReport(reportId));
     }
 

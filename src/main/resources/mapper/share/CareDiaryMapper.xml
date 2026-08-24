@@ -199,6 +199,17 @@
           AND status = 'PENDING'
     </update>
 
+    <update id="resolvePendingReportsByInquiryId">
+        UPDATE diary_report
+           SET status = 'RESOLVED',
+               resolution = #{resolution},
+               admin_note = #{adminNote},
+               resolved_by = #{resolvedBy},
+               resolved_at = NOW()
+        WHERE inquiry_id = #{inquiryId}
+          AND status = 'PENDING'
+    </update>
+
     <update id="restoreByReport">
         UPDATE care_diary
            SET hidden_by_report_at = NULL

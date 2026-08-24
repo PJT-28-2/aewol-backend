@@ -55,6 +55,11 @@ public interface CareDiaryMapper {
                                      @Param("adminNote") String adminNote,
                                      @Param("resolvedBy") String resolvedBy);
 
+    int resolvePendingReportsByInquiryId(@Param("inquiryId") String inquiryId,
+                                         @Param("resolution") String resolution,
+                                         @Param("adminNote") String adminNote,
+                                         @Param("resolvedBy") String resolvedBy);
+
     int restoreByReport(@Param("diaryId") String diaryId);
 
     int softDelete(@Param("diaryId") String diaryId);
