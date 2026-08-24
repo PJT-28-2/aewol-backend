@@ -36,7 +36,6 @@ public class PetServiceImpl implements PetService {
     private static final Set<String> UPLOADABLE_DOCUMENT_TYPES =
             Set.of(VACCINATION, MEDICAL_CONFIRMATION);
     private static final String DOCUMENT_SUB_DIR = "pet-documents";
-    private static final int MAX_DOCUMENT_NAME_LENGTH = 100;
     private static final Set<String> ALLOWED_DOCUMENT_EXTENSIONS =
             Set.of("jpg", "jpeg", "png", "webp", "pdf");
     private static final byte[] JPEG_SIGNATURE = {(byte) 0xFF, (byte) 0xD8, (byte) 0xFF};
@@ -192,7 +191,7 @@ public class PetServiceImpl implements PetService {
         assertOwner(memberId, petId);
         String normalizedDocType = normalizeDocumentType(docType);
         String storageExtension = validateDocument(file);
-        String originalFilename = extractOriginalFilename(file);
+        String docName = documentDisplayName(normalizedDocType, issuedDate);
         String newFileUrl;
         try {
             newFileUrl = fileStorage.store(file.getBytes(), DOCUMENT_SUB_DIR, storageExtension);
@@ -202,7 +201,7 @@ public class PetServiceImpl implements PetService {
 
         Map<String, Object> document = new HashMap<>();
         document.put("petId", petId);
-        document.put("docName", originalFilename);
+        document.put("docName", docName);
         document.put("docType", normalizedDocType);
         document.put("fileUrl", newFileUrl);
         document.put("issuedDate", issuedDate);
@@ -319,22 +318,14 @@ public class PetServiceImpl implements PetService {
         return true;
     }
 
-    private String extractOriginalFilename(MultipartFile file) {
-        String originalFilename = file.getOriginalFilename();
-        if (originalFilename == null) {
-            throw new BusinessException("파일명이 올바르지 않습니다.");
-        }
-
-        String normalized = originalFilename.replace('\\', '/');
-        String filename = normalized.substring(normalized.lastIndexOf('/') + 1).trim();
-        if (filename.isBlank() || filename.equals(".") || filename.equals("..")
-                || filename.chars().anyMatch(Character::isISOControl)) {
-            throw new BusinessException("파일명이 올바르지 않습니다.");
-        }
-        if (filename.length() > MAX_DOCUMENT_NAME_LENGTH) {
-            throw new BusinessException("파일명은 100자 이하만 사용할 수 있습니다.");
-        }
-        return filename;
+    /**
+     * 화면에 보여줄 문서 이름. 휴대폰 촬영본 등은 원본 파일명이 숫자 나열이라 그대로 쓰면
+     * 목록에서 구분이 안 되므로, 문서 유형 + 발급일(없으면 업로드일)로 이름을 만든다.
+     */
+    private String documentDisplayName(String docType, LocalDate issuedDate) {
+        String typeName = VACCINATION.equals(docType) ? "접종증명서" : "진료확인서";
+        LocalDate date = issuedDate != null ? issuedDate : LocalDate.now();
+        return typeName + "_" + date;
     }
 
     /** insert 이후 커밋 전에 트랜잭션이 롤백되면(DB 삽입은 되돌아가도 파일시스템 쓰기는 안 되므로) 방금 올린 파일을 지운다. */
