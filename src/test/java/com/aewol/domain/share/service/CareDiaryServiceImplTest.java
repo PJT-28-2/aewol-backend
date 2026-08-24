@@ -452,6 +452,28 @@ class CareDiaryServiceImplTest {
     }
 
     @Test
+    @DisplayName("Already public diary with public copies skips publish workflow")
+    void should_skipPublishWorkflow_when_alreadyPublicWithCopies() {
+        CareDiaryServiceImpl service = service();
+        givenPetOwnedBy("pet-1", "owner-1");
+        when(careDiaryMapper.findById("diary-1"))
+                .thenReturn(publicDiaryRow("owner-1"), publicDiaryRow("owner-1"));
+        when(careDiaryMapper.findImagesForPublish("diary-1")).thenReturn(List.of(
+                map("imageId", "img-1", "imageUrl", "diary/a.png", "publicImageKey", "public/a.png")));
+        when(careDiaryMapper.findImagesByDiaryIds(List.of("diary-1"))).thenReturn(List.of(
+                map("diaryId", "diary-1", "imageUrl", "diary/a.png")));
+
+        CareDiaryResponse result = service.changeVisibility(
+                "owner-1", "diary-1", visibilityRequest("PUBLIC"));
+
+        assertEquals("PUBLIC", result.getVisibility());
+        verify(fileStorage, never()).publish(anyString(), anyString());
+        verify(careDiaryMapper, never()).updatePublicImageKey(anyString(), nullable(String.class));
+        verify(careDiaryMapper, never()).updateVisibility(eq("diary-1"), anyString());
+        verify(careDiaryMapper, never()).updateVisibilityIfCurrent(anyString(), anyString(), anyString());
+    }
+
+    @Test
     @DisplayName("비공개로 되돌리면 공개 사본을 지우고 키를 비운다")
     void should_removePublicImageCopy_when_unpublishing() {
         CareDiaryServiceImpl service = service();
