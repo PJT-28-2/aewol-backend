@@ -6,8 +6,6 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.core.env.Environment;
-import org.springframework.core.env.Profiles;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
@@ -32,7 +30,6 @@ public class CodefClient {
     private final RestTemplate codefRestTemplate;
     private final RedisTemplate<String, String> redisTemplate;
     private final RedisRateLimiter redisRateLimiter;
-    private final Environment environment;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     // develop 병합으로 공용 restTemplate()에 @Primary가 붙으면서, 필드명을 빈 이름과
@@ -41,12 +38,10 @@ public class CodefClient {
     // 이미 쓰고 있는 것과 같은 방식으로 @Qualifier를 명시한다.
     public CodefClient(@Qualifier("codefRestTemplate") RestTemplate codefRestTemplate,
                         RedisTemplate<String, String> redisTemplate,
-                        RedisRateLimiter redisRateLimiter,
-                        Environment environment) {
+                        RedisRateLimiter redisRateLimiter) {
         this.codefRestTemplate = codefRestTemplate;
         this.redisTemplate = redisTemplate;
         this.redisRateLimiter = redisRateLimiter;
-        this.environment = environment;
     }
 
     @Value("${external.codef.client-id:}")
@@ -231,22 +226,9 @@ public class CodefClient {
             throw new BusinessException(HttpStatus.BAD_GATEWAY, "1원 인증 요청에 실패했어요. 다시 시도해주세요");
         }
 
-        // 운영 로그에 실제 인증 값(authCode)을 남기면, 로그 열람 권한만 있어도 실제
-        // 입금 확인 없이 인증을 통과시킬 수 있다(CodeRabbit 지적, 2026-08-07).
-        // [TEST] 접두사만으로는 로그 레벨/환경을 제한하지 못하므로, local/test/dev
-        // 프로필에서만 실제 값을 남기고 운영에서는 계좌 식별 정보(마스킹)만 남긴다.
-        //
-        // dev는 여기(로그)만 포함하고 AccountServiceImpl.isTestExposureAllowed()의
-        // API 응답 노출 범위에는 포함하지 않는다(2026-08-19, PR #236 리뷰) — 로그는
-        // 로그 열람 권한이 있는 사람으로 접근이 제한되지만 API 응답은 dev 서버 API를
-        // 호출할 수 있는 누구에게나 노출되어 위험도가 다르다. dev도 CODEF 데모 서버만
-        // 쓰기 때문에 값 자체는 안전하고, 이 로그가 공유 dev 서버에서 로그 열람 권한이
-        // 있는 팀원이 계좌 연동을 테스트하는 마지막 확인 수단이 된다.
-        if (environment.acceptsProfiles(Profiles.of("local", "test", "dev"))) {
-            log.info("[TEST] 1원인증 입금자명 = {}", authCode);
-        } else {
-            log.info("1원인증 요청 완료 - bankCode: {}, account: {}", bankCode, maskAccountNumber(accountNumber));
-        }
+        // 인증값은 프로필과 무관하게 로그에 남기지 않는다. 공유 개발 로그도 운영 로그와
+        // 동일하게 취급하고, 테스트용 값이 필요하면 데모 서버 응답 경로에서만 전달한다.
+        log.info("1원인증 요청 완료 - bankCode: {}", bankCode);
         return authCode;
     }
 
@@ -295,14 +277,6 @@ public class CodefClient {
     // 내부 구현
     // ------------------------------------------------------------------
 
-    /** 운영 로그용 계좌번호 마스킹 — 뒤 4자리만 남긴다 */
-    private static String maskAccountNumber(String accountNumber) {
-        if (accountNumber == null || accountNumber.length() <= 4) {
-            return "****";
-        }
-        return "*".repeat(accountNumber.length() - 4) + accountNumber.substring(accountNumber.length() - 4);
-    }
-
     /**
      * Redis 락 키에 계좌번호 원문을 그대로 쓰면 Redis 모니터링/로그/스냅샷에 계좌번호가
      * 그대로 노출된다(CodeRabbit 지적, 2026-08-07). SHA-256으로 해시해서 같은 계좌면
@@ -332,7 +306,7 @@ public class CodefClient {
         try {
             rawResponse = codefRestTemplate.postForObject(apiBaseUrl + path, entity, String.class);
         } catch (Exception e) {
-            log.error("CODEF API 호출 실패 - path: {}", path, e);
+            log.error("CODEF API 호출 실패 - path: {}, cause: {}", path, e.getClass().getSimpleName());
             throw new BusinessException(HttpStatus.BAD_GATEWAY, "은행 인증 서비스와 통신에 실패했어요");
         }
 
@@ -345,7 +319,7 @@ public class CodefClient {
         String code = result != null ? (String) result.get("code") : null;
         if (!"CF-00000".equals(code)) {
             String message = result != null ? (String) result.get("message") : "알 수 없는 오류";
-            log.warn("CODEF 오류 응답 - code: {}, message: {}", code, message);
+            log.warn("CODEF 오류 응답 - code: {}", code);
             throw new BusinessException(HttpStatus.BAD_GATEWAY, "계좌 확인에 실패했어요: " + message);
         }
         return response;
@@ -366,7 +340,7 @@ public class CodefClient {
             String decoded = URLDecoder.decode(raw, StandardCharsets.UTF_8);
             return objectMapper.readValue(decoded, Map.class);
         } catch (Exception e) {
-            log.error("CODEF 응답 파싱 실패 - raw: {}", raw, e);
+            log.error("CODEF 응답 파싱 실패 - cause: {}", e.getClass().getSimpleName());
             throw new BusinessException(HttpStatus.BAD_GATEWAY, "은행 인증 서비스 응답을 처리하지 못했어요");
         }
     }
@@ -394,7 +368,7 @@ public class CodefClient {
             String decoded = URLDecoder.decode(raw, StandardCharsets.UTF_8);
             return objectMapper.readValue(decoded, Map.class);
         } catch (Exception e) {
-            log.error("CODEF 토큰 응답 파싱 실패 - raw: {}", raw, e);
+            log.error("CODEF 토큰 응답 파싱 실패 - cause: {}", e.getClass().getSimpleName());
             throw new BusinessException(HttpStatus.BAD_GATEWAY, "은행 인증 토큰 응답을 처리하지 못했어요");
         }
     }
@@ -443,7 +417,7 @@ public class CodefClient {
         try {
             rawResponse = codefRestTemplate.postForObject(oauthUrl, entity, String.class);
         } catch (Exception e) {
-            log.error("CODEF accessToken 발급 실패", e);
+            log.error("CODEF accessToken 발급 실패 - cause: {}", e.getClass().getSimpleName());
             throw new BusinessException(HttpStatus.BAD_GATEWAY, "은행 인증 서비스 연결에 실패했어요");
         }
 

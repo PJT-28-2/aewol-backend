@@ -37,15 +37,14 @@ public class PaddleOcrClient {
         log.info("PaddleOCR 영수증 추출 호출 - imageSize: {}, mimeType: {}", imageBytes.length, mimeType);
         try {
             String responseBody = callOcrService(imageBytes, mimeType);
-            log.info("PaddleOCR 원본 응답 - {}", responseBody);
             return validateJsonObject(responseBody);
         } catch (RestClientException e) {
-            log.error("[PADDLEOCR_FAILED] PaddleOCR 서비스 호출 실패 - imageSize: {}, mimeType: {}",
-                    imageBytes.length, mimeType, e);
+            log.error("[PADDLEOCR_FAILED] PaddleOCR 서비스 호출 실패 - imageSize: {}, mimeType: {}, cause: {}",
+                    imageBytes.length, mimeType, e.getClass().getSimpleName());
             return "{}";
         } catch (Exception e) {
-            log.error("[PADDLEOCR_FAILED] PaddleOCR 응답 파싱 실패 - imageSize: {}, mimeType: {}",
-                    imageBytes.length, mimeType, e);
+            log.error("[PADDLEOCR_FAILED] PaddleOCR 응답 파싱 실패 - imageSize: {}, mimeType: {}, cause: {}",
+                    imageBytes.length, mimeType, e.getClass().getSimpleName());
             return "{}";
         }
     }
@@ -76,7 +75,7 @@ public class PaddleOcrClient {
     private String validateJsonObject(String responseBody) throws Exception {
         JsonNode node = objectMapper.readTree(responseBody);
         if (!node.isObject()) {
-            throw new IllegalStateException("PaddleOCR 응답이 JSON 객체가 아닙니다: " + responseBody);
+            throw new IllegalStateException("PaddleOCR 응답이 JSON 객체가 아닙니다.");
         }
         return responseBody;
     }

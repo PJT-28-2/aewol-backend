@@ -164,7 +164,7 @@ class CodefClientTest {
      * 생성자 인자는 모두 null로 두고 @Value 필드만 리플렉션으로 채운다.
      */
     private static CodefClient codefClientWithApiBaseUrl(String apiBaseUrl) {
-        CodefClient client = new CodefClient(null, null, null, null);
+        CodefClient client = new CodefClient(null, null, null);
         ReflectionTestUtils.setField(client, "apiBaseUrl", apiBaseUrl);
         return client;
     }

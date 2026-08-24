@@ -137,7 +137,7 @@ class TossChargeServiceTest {
 
         assertEquals(HttpStatus.BAD_GATEWAY, ex.getStatus());
         verify(tossPaymentClaim, never()).release(anyString());
-        verify(auditLogger).confirmIndeterminate(PAYMENT_KEY, ORDER_ID, MEMBER_ID, "확인 불가");
+        verify(auditLogger).confirmIndeterminate();
     }
 
     @Test
@@ -154,7 +154,7 @@ class TossChargeServiceTest {
 
         assertEquals(HttpStatus.CONFLICT, ex.getStatus());
         verify(tossPaymentClaim, never()).release(anyString());
-        verify(auditLogger).alreadyApproved(PAYMENT_KEY, ORDER_ID, MEMBER_ID, "이미 처리됨");
+        verify(auditLogger).alreadyApproved();
     }
 
     @Test
@@ -180,7 +180,7 @@ class TossChargeServiceTest {
         assertEquals("지갑 충전 기록 실패로 인한 자동 취소", cancelReason);
         assertFalse(cancelReason.contains("MySQLSyntaxErrorException"));
         assertFalse(cancelReason.contains("secret_column"));
-        verify(auditLogger).compensated(PAYMENT_KEY, ORDER_ID, MEMBER_ID, cause.getMessage());
+        verify(auditLogger).compensated();
     }
 
     @Test
@@ -199,7 +199,7 @@ class TossChargeServiceTest {
                 () -> service.charge(MEMBER_ID, request(new BigDecimal("10000"))));
 
         assertEquals(HttpStatus.INTERNAL_SERVER_ERROR, ex.getStatus());
-        verify(auditLogger).compensationFailed(eq(PAYMENT_KEY), eq(ORDER_ID), eq(MEMBER_ID), anyString());
+        verify(auditLogger).compensationFailed();
     }
 
     @Test

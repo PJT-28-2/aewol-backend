@@ -119,7 +119,7 @@ public class TossPaymentsClient {
      * WAITING_FOR_DEPOSIT 등) 승인으로 보지 않는다.
      */
     public TossConfirmResult confirmPayment(String paymentKey, String orderId, long amount) {
-        log.info("TossPayments 결제 승인 요청 - paymentKey: {}, orderId: {}, amount: {}", paymentKey, orderId, amount);
+        log.info("TossPayments 결제 승인 요청 - orderId: {}", orderId);
 
         Map<String, Object> requestBody = Map.of(
                 "paymentKey", paymentKey,
@@ -147,7 +147,7 @@ public class TossPaymentsClient {
 
         Map<String, Object> body = parseJson(rawResponse);
         if (body == null) {
-            log.error("TossPayments confirm 응답 파싱 실패 - orderId: {}, raw: {}", orderId, rawResponse);
+            log.error("TossPayments confirm 응답 파싱 실패 - orderId: {}", orderId);
             return TossConfirmResult.of(TossConfirmOutcome.INDETERMINATE, null, null, null);
         }
 
@@ -155,7 +155,7 @@ public class TossPaymentsClient {
         if (STATUS_DONE.equals(status)) {
             Number totalAmount = (Number) body.get("totalAmount");
             if (totalAmount == null) {
-                log.error("TossPayments confirm 응답에 totalAmount가 없음 - orderId: {}, raw: {}", orderId, rawResponse);
+                log.error("TossPayments confirm 응답에 totalAmount가 없음 - orderId: {}", orderId);
                 return TossConfirmResult.of(TossConfirmOutcome.INDETERMINATE, null, "missing totalAmount", body);
             }
             return TossConfirmResult.success(totalAmount.longValue(), body);
@@ -175,13 +175,13 @@ public class TossPaymentsClient {
             // 사례가 보여주듯 HTTP 상태만으로는 설정 오류와 카드 거절을 구분할 수 없으므로,
             // 본문이 없을 때 상태코드로 되돌아가 추정하면 이 클라이언트가 막으려는 바로 그
             // 오분류를 재현하게 된다. 상태코드와 무관하게 항상 불확정으로 처리한다.
-            log.error("TossPayments confirm 에러 응답 파싱 실패 - orderId: {}, raw: {}", orderId, rawBody);
+            log.error("TossPayments confirm 에러 응답 파싱 실패 - orderId: {}", orderId);
             return TossConfirmResult.of(TossConfirmOutcome.INDETERMINATE, null, null, null);
         }
 
         String code = (String) body.get("code");
         String message = (String) body.get("message");
-        log.warn("TossPayments confirm 에러 응답 - orderId: {}, code: {}, message: {}", orderId, code, message);
+        log.warn("TossPayments confirm 에러 응답 - orderId: {}, code: {}", orderId, code);
 
         if (code == null) {
             return TossConfirmResult.of(TossConfirmOutcome.INDETERMINATE, null, message, body);
@@ -207,14 +207,14 @@ public class TossPaymentsClient {
      * 가리지 않기 위해 항상 {@link TossCancelResult}로 결과를 반환한다.
      */
     public TossCancelResult cancelPayment(String paymentKey, String cancelReason) {
-        log.info("TossPayments 결제 취소(보상) 요청 - paymentKey: {}", paymentKey);
+        log.info("TossPayments 결제 취소(보상) 요청");
 
         Map<String, Object> requestBody = Map.of("cancelReason", cancelReason);
         HttpEntity<Map<String, Object>> entity = new HttpEntity<>(requestBody, authHeaders());
 
         try {
             restTemplate.postForObject(CANCEL_URL, entity, String.class, paymentKey);
-            log.info("TossPayments 결제 취소(보상) 성공 - paymentKey: {}", paymentKey);
+            log.info("TossPayments 결제 취소(보상) 성공");
             return TossCancelResult.success();
         } catch (HttpStatusCodeException e) {
             Map<String, Object> body = parseJson(e.getResponseBodyAsString());
@@ -224,14 +224,14 @@ public class TossPaymentsClient {
             if ("ALREADY_CANCELED_PAYMENT".equals(code)) {
                 // 이미 취소된 결제 — 목표(취소 상태)는 이미 달성되어 있으므로 보상 성공으로
                 // 흡수한다(.omc/research/toss-api-spec.md §3.3 권고).
-                log.info("TossPayments 취소 응답: 이미 취소된 결제 - paymentKey: {}", paymentKey);
+                log.info("TossPayments 취소 응답: 이미 취소된 결제");
                 return TossCancelResult.alreadyCanceled(code, message);
             }
-            log.error("TossPayments 결제 취소(보상) 실패 - paymentKey: {}, code: {}, message: {}",
-                    paymentKey, code, message);
+            log.error("TossPayments 결제 취소(보상) 실패 - code: {}", code);
             return TossCancelResult.failure(code, message);
         } catch (RestClientException e) {
-            log.error("TossPayments 결제 취소(보상) 호출 실패(네트워크/알 수 없음) - paymentKey: {}", paymentKey, e);
+            log.error("TossPayments 결제 취소(보상) 호출 실패 - cause: {}",
+                    e.getClass().getSimpleName());
             return TossCancelResult.failure(null, e.getMessage());
         }
     }

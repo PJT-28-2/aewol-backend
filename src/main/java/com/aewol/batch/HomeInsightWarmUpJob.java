@@ -48,7 +48,7 @@ public class HomeInsightWarmUpJob {
                 generated += homeInsightService.warmUp(memberId, null);
             } catch (Exception e) {
                 // 한 회원의 실패가 나머지 예열을 멈추지 않게 한다.
-                log.warn("[Batch] 홈 인사이트 예열 실패 - memberId: {}, reason: {}", memberId, e.getMessage());
+                log.warn("[Batch] 홈 인사이트 예열 실패 - cause: {}", e.getClass().getSimpleName());
             }
         }
         log.info("[Batch] 홈 인사이트 예열 완료 - 회원 {}명, 카드 {}건 생성", memberIds.size(), generated);
