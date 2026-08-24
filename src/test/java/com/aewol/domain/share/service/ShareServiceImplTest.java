@@ -10,6 +10,7 @@ import com.aewol.domain.pet.mapper.PetMapper;
 import com.aewol.domain.share.dto.ShareInviteRequest;
 import com.aewol.domain.share.dto.ShareInviteResponse;
 import com.aewol.domain.share.dto.ShareLinkInviteRequest;
+import com.aewol.domain.share.dto.ShareContributionResponse;
 import com.aewol.domain.share.mapper.ShareMapper;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
@@ -100,6 +101,42 @@ class ShareServiceImplTest {
                 () -> service.getMembers("member-2", "pet-1"));
 
         assertEquals(403, exception.getStatus().value());
+    }
+
+    @Test
+    @DisplayName("공동육아 기여율은 반올림 오차가 있어도 합계가 100%를 넘지 않는다")
+    void should_keepContributionPercentageTotalAt100_when_roundingWouldDrift() {
+        ShareServiceImpl service = service();
+        when(petMapper.findById("pet-1")).thenReturn(map("pet_id", "pet-1", "member_id", "owner-1"));
+        when(shareMapper.findMonthlyContributions("pet-1")).thenReturn(List.of(
+                map("id", "member-1", "name", "A", "amount", BigDecimal.ONE),
+                map("id", "member-2", "name", "B", "amount", BigDecimal.ONE),
+                map("id", "member-3", "name", "C", "amount", BigDecimal.ONE)));
+
+        List<ShareContributionResponse> result = service.getContributions("owner-1", "pet-1");
+
+        assertEquals(List.of(34, 33, 33), result.stream()
+                .map(ShareContributionResponse::getPercentage)
+                .toList());
+        assertEquals(100, result.stream()
+                .mapToInt(ShareContributionResponse::getPercentage)
+                .sum());
+    }
+
+    @Test
+    @DisplayName("공동육아 기여 금액이 없으면 기여율은 모두 0%다")
+    void should_returnZeroPercentages_when_contributionTotalIsZero() {
+        ShareServiceImpl service = service();
+        when(petMapper.findById("pet-1")).thenReturn(map("pet_id", "pet-1", "member_id", "owner-1"));
+        when(shareMapper.findMonthlyContributions("pet-1")).thenReturn(List.of(
+                map("id", "member-1", "name", "A", "amount", BigDecimal.ZERO),
+                map("id", "member-2", "name", "B", "amount", BigDecimal.ZERO)));
+
+        List<ShareContributionResponse> result = service.getContributions("owner-1", "pet-1");
+
+        assertEquals(List.of(0, 0), result.stream()
+                .map(ShareContributionResponse::getPercentage)
+                .toList());
     }
 
     private ShareLinkInviteRequest linkRequest(Integer expiresInMinutes) {
