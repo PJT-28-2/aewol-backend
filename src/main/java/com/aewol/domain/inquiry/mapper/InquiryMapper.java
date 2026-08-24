@@ -14,4 +14,9 @@ public interface InquiryMapper {
     List<Map<String, Object>> findByMemberId(@Param("memberId") String memberId, @Param("status") String status,
                                               @Param("limit") int limit, @Param("offset") int offset);
     Map<String, Object> findByIdAndMemberId(@Param("inquiryId") String inquiryId, @Param("memberId") String memberId);
+    List<Map<String, Object>> findAll(@Param("status") String status,
+                                      @Param("limit") int limit,
+                                      @Param("offset") int offset);
+    Map<String, Object> findById(@Param("inquiryId") String inquiryId);
+    int updateAnswer(@Param("inquiryId") String inquiryId, @Param("answer") String answer);
 }
