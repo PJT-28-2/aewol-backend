@@ -213,51 +213,6 @@ public class DonationServiceImpl implements DonationService {
 
     @Override
     @Transactional
-    public int processDailyRoundUps() {
-        int completedCount = 0;
-        for (Map<String, Object> candidate : donationMapper.findTodayRoundUpCandidates()) {
-            BigDecimal paymentAmount = decimal(candidate, "amount");
-            BigDecimal savingUnit = decimal(candidate, "savingUnit", "saving_unit");
-            if (paymentAmount.signum() < 0 || savingUnit.signum() <= 0) continue;
-
-            BigDecimal roundUpAmount = roundUpAmount(paymentAmount, savingUnit);
-            Map<String, Object> pot = getOrCreatePotForUpdate(text(candidate, "memberId", "member_id"));
-            String walletId = text(pot, "wallet_id", "walletId");
-            Map<String, Object> roundUp = new HashMap<>();
-            roundUp.put("sourceTxnId", text(candidate, "txnId", "txn_id"));
-            roundUp.put("walletId", walletId);
-            roundUp.put("savingUnit", savingUnit);
-            roundUp.put("roundupAmount", roundUpAmount);
-            roundUp.put("status", roundUpAmount.signum() == 0 ? "SKIPPED" : "PENDING");
-
-            if (donationMapper.insertRoundUp(roundUp) != 1 || roundUpAmount.signum() == 0) continue;
-            // roundup_id는 AUTO_INCREMENT — useGeneratedKeys가 파라미터 맵에 채워준다
-            if (donationMapper.increasePotBalance(walletId, roundUpAmount) != 1
-                    || donationMapper.completeRoundUp(text(roundUp, "roundupId")) != 1) {
-                throw BusinessException.conflict("잔돈 적립을 반영하지 못했습니다.");
-            }
-            completedCount++;
-        }
-        return completedCount;
-    }
-
-    /**
-     * 결제액을 적립 단위로 올렸을 때 생기는 차액.
-     *
-     * <p>34,800원을 1,000원 단위로 올리면 35,000원이고 차액은 200원이다. 이 200원이
-     * 저금통에 들어간다.
-     *
-     * <p>예전에는 나머지(800원)를 적립했다. 화면 문구가 "결제 잔돈 자동 적립"이라
-     * 올림 차액을 기대하게 되는데 실제로는 그 반대여서, 같은 결제에서 3배 넘게
-     * 차이가 났다. 딱 떨어지는 금액은 올릴 것이 없으므로 0을 준다(SKIPPED로 기록된다).
-     */
-    private static BigDecimal roundUpAmount(BigDecimal paymentAmount, BigDecimal savingUnit) {
-        BigDecimal remainder = paymentAmount.remainder(savingUnit);
-        return remainder.signum() == 0 ? BigDecimal.ZERO : savingUnit.subtract(remainder);
-    }
-
-    @Override
-    @Transactional
     public int processMonthlyAutoDonations(String yearMonth) {
         if (yearMonth == null || !yearMonth.matches("\\d{4}-(0[1-9]|1[0-2])")) {
             throw new BusinessException("자동 기부 기준 월 형식이 올바르지 않습니다.");

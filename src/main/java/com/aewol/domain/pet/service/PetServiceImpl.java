@@ -91,7 +91,7 @@ public class PetServiceImpl implements PetService {
         if (pet == null) {
             throw BusinessException.notFound("반려동물을 찾을 수 없습니다.");
         }
-        if (!isOwner(memberId, pet)) {
+        if (!isOwner(memberId, pet) && !petMapper.hasSharedAccess(petId, memberId)) {
             throw BusinessException.forbidden("반려동물을 조회할 권한이 없습니다.");
         }
         return toResponse(pet);
