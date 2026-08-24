@@ -72,4 +72,15 @@
         SET answer = #{answer}, status = 'ANSWERED', answered_at = CURRENT_TIMESTAMP
         WHERE inquiry_id = #{inquiryId}
     </update>
+
+    <!-- 같은 게시물의 신고를 처리하면 신고자가 열어 둔 문의도 답변 완료로 맞춘다. -->
+    <update id="answerWaitingLinkedToDiary">
+        UPDATE inquiry i
+        INNER JOIN diary_report r ON r.inquiry_id = i.inquiry_id
+        SET i.answer = #{answer},
+            i.status = 'ANSWERED',
+            i.answered_at = CURRENT_TIMESTAMP
+        WHERE r.diary_id = #{diaryId}
+          AND i.status = 'WAITING'
+    </update>
 </mapper>

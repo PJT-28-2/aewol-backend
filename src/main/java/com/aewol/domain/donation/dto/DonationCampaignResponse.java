@@ -17,4 +17,6 @@ public class DonationCampaignResponse {
     private final int participants;
     private final long daysLeft;
     private final boolean preferred;
+    private final boolean demo;
+    private final boolean donatable;
 }

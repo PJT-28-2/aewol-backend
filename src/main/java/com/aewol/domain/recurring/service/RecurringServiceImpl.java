@@ -5,12 +5,15 @@ import com.aewol.domain.pet.mapper.PetMapper;
 import com.aewol.domain.recurring.dto.RecurringCreateRequest;
 import com.aewol.domain.recurring.dto.RecurringResponse;
 import com.aewol.domain.recurring.mapper.RecurringMapper;
+import com.aewol.domain.transaction.mapper.TransactionMapper;
 import com.aewol.domain.wallet.mapper.WalletMapper;
 import lombok.RequiredArgsConstructor;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.time.YearMonth;
 import java.math.BigDecimal;
 import java.util.*;
@@ -23,6 +26,7 @@ public class RecurringServiceImpl implements RecurringService {
     private final RecurringMapper recurringMapper;
     private final WalletMapper walletMapper;
     private final PetMapper petMapper;
+    private final TransactionMapper transactionMapper;
 
     @Override
     @Transactional(readOnly = true)
@@ -37,21 +41,50 @@ public class RecurringServiceImpl implements RecurringService {
     @Override
     @Transactional
     public RecurringResponse createRecurring(String memberId, RecurringCreateRequest request) {
+        String idempotencyKey = requireIdempotencyKey(request.getIdempotencyKey());
         Map<String, Object> wallet = walletMapper.findByMemberId(memberId);
         if (wallet == null) throw BusinessException.notFound("지갑을 찾을 수 없습니다.");
         assertPetOwnership(memberId, request.getPetId());
 
         int paymentDay = request.getCycleDay();
+        LocalDate today = LocalDate.now();
+        String walletId = String.valueOf(wallet.get("wallet_id"));
+        BigDecimal price = request.getPrice();
+
+        Map<String, Object> existing = recurringMapper.findByWalletIdAndIdempotencyKey(walletId, idempotencyKey);
+        if (existing != null) {
+            return toResponse(existing);
+        }
 
         Map<String, Object> recurring = new HashMap<>();
-        recurring.put("walletId", wallet.get("wallet_id"));
+        recurring.put("walletId", walletId);
         recurring.put("petId", blankToNull(request.getPetId()));
         recurring.put("productName", request.getItemName().trim());
         recurring.put("category", request.getCategory());
-        recurring.put("price", request.getPrice());
+        recurring.put("price", price);
         recurring.put("paymentDay", paymentDay);
-        recurring.put("nextPaymentDate", nextPaymentDate(paymentDay));
-        recurringMapper.insert(recurring); // recurring_id AUTO_INCREMENT
+        recurring.put("nextPaymentDate", nextPaymentDateAfterFirstCharge(paymentDay, today));
+        recurring.put("idempotencyKey", idempotencyKey);
+        try {
+            recurringMapper.insert(recurring);
+        } catch (DuplicateKeyException e) {
+            // 같은 키의 동시 요청이 INSERT에서 막힌 경우다. 잔액 차감 전에 걸리므로
+            // 이미 성공한 등록을 그대로 돌려준다.
+            Map<String, Object> concurrent = recurringMapper
+                    .findByWalletIdAndIdempotencyKey(walletId, idempotencyKey);
+            if (concurrent == null) {
+                throw BusinessException.conflict("동일한 등록 요청이 처리 중입니다.");
+            }
+            return toResponse(concurrent);
+        }
+
+        // 첫 회차는 등록 즉시 받는다. 배치(매일 09:00)는 다음 달 결제일부터 돈다.
+        // 행을 먼저 넣어 유니크 제약이 재시도를 막은 뒤에 차감한다. 차감이 먼저면
+        // 동시 요청이 둘 다 잔액을 깎고 한쪽 INSERT만 실패할 수 있다.
+        if (walletMapper.deductBalance(walletId, price) == 0) {
+            throw new BusinessException("잔액이 부족합니다.");
+        }
+        recordFirstCharge(recurring, walletId, price);
         return toResponse(recurring);
     }
 
@@ -126,6 +159,30 @@ public class RecurringServiceImpl implements RecurringService {
         return paymentDate(currentMonth.plusMonths(1), paymentDay);
     }
 
+    /**
+     * 등록 때 이미 한 번 받았으므로, 배치 다음 결제는 다음 달 결제일이다.
+     * 이번 달 남은 결제일을 쓰면 며칠 뒤 배치가 또 받는다.
+     */
+    public static LocalDate nextPaymentDateAfterFirstCharge(int paymentDay, LocalDate chargedOn) {
+        return paymentDate(YearMonth.from(chargedOn).plusMonths(1), paymentDay);
+    }
+
+    private void recordFirstCharge(Map<String, Object> recurring, String walletId, BigDecimal price) {
+        Map<String, Object> txn = new HashMap<>();
+        txn.put("walletId", walletId);
+        txn.put("petId", recurring.get("petId"));
+        txn.put("recurringId", recurring.get("recurringId"));
+        txn.put("txnType", "PAYMENT");
+        txn.put("price", price);
+        txn.put("category", recurring.get("category"));
+        txn.put("merchantName", recurring.get("productName"));
+        txn.put("merchantCategoryCode", null);
+        txn.put("memo", "정기결제");
+        txn.put("autoTagged", "N");
+        txn.put("txnDate", LocalDateTime.now());
+        transactionMapper.insert(txn);
+    }
+
     private static LocalDate paymentDate(YearMonth month, int paymentDay) {
         return month.atDay(Math.min(paymentDay, month.lengthOfMonth()));
     }
@@ -180,5 +237,15 @@ public class RecurringServiceImpl implements RecurringService {
         if (value instanceof Boolean) return (Boolean) value;
         if (value instanceof Number) return ((Number) value).intValue() == 1;
         return "1".equals(String.valueOf(value)) || "true".equalsIgnoreCase(String.valueOf(value));
+    }
+
+    private static String requireIdempotencyKey(String idempotencyKey) {
+        if (idempotencyKey == null || idempotencyKey.isBlank()) {
+            throw new BusinessException("중복 요청 방지 키를 입력해 주세요.");
+        }
+        if (idempotencyKey.length() > 64) {
+            throw new BusinessException("중복 요청 방지 키는 64자 이하여야 합니다.");
+        }
+        return idempotencyKey;
     }
 }

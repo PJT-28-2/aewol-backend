@@ -10,8 +10,16 @@ import lombok.NoArgsConstructor;
 @JsonIgnoreProperties(ignoreUnknown = true)
 public class SolapiSendResponse {
 
-    private List<Object> failedMessageList;
+    private List<FailedMessage> failedMessageList;
     private GroupInfo groupInfo;
+
+    @Getter
+    @NoArgsConstructor
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public static class FailedMessage {
+        private String statusCode;
+        private String statusMessage;
+    }
 
     @Getter
     @NoArgsConstructor

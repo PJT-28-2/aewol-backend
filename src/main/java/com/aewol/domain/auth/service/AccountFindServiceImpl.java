@@ -9,6 +9,7 @@ import com.aewol.domain.auth.dto.AccountFindSendCodeRequest;
 import com.aewol.domain.auth.dto.AccountFindSendCodeResponse;
 import com.aewol.domain.auth.dto.AccountFindVerifyRequest;
 import com.aewol.domain.member.mapper.MemberMapper;
+import com.aewol.external.sms.SmsSendException;
 import com.aewol.external.sms.SmsSender;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -151,6 +152,12 @@ public class AccountFindServiceImpl implements AccountFindService {
                         List.of(activeKey, verificationKey), requestId);
             } catch (RuntimeException cleanupException) {
                 e.addSuppressed(cleanupException);
+            }
+            if (e instanceof SmsSendException) {
+                log.warn("계정 찾기 SMS 발송에 실패했습니다. reason={}",
+                        ((SmsSendException) e).getReason());
+            } else {
+                log.warn("계정 찾기 SMS 발송에 실패했습니다. reason=unexpected");
             }
             throw new BusinessException(HttpStatus.SERVICE_UNAVAILABLE, SMS_FAILURE_MESSAGE);
         }

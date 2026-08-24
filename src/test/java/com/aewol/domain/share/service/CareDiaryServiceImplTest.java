@@ -6,6 +6,7 @@ import static org.mockito.Mockito.*;
 
 import com.aewol.common.exception.BusinessException;
 import com.aewol.common.storage.FileStorage;
+import com.aewol.common.util.RedisRateLimiter;
 import com.aewol.domain.activity.mapper.ActivityLogMapper;
 import com.aewol.domain.pet.mapper.PetMapper;
 import com.aewol.domain.share.dto.CareDiaryReportRequest;
@@ -22,6 +23,7 @@ import java.time.LocalDate;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -29,8 +31,12 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.http.HttpStatus;
 import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.test.util.ReflectionTestUtils;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
+import org.springframework.transaction.support.TransactionSynchronizationUtils;
 import org.springframework.web.multipart.MultipartFile;
 
 @ExtendWith(MockitoExtension.class)
@@ -42,12 +48,21 @@ class CareDiaryServiceImplTest {
     @Mock ActivityLogMapper activityLogMapper;
     @Mock FileStorage fileStorage;
     @Mock InquiryMapper inquiryMapper;
+    @Mock RedisRateLimiter redisRateLimiter;
 
     @BeforeEach
     void setUp() {
         // signedUrl은 조회 시점에 붙는 임시 주소라, 키를 알아볼 수 있게만 흉내 낸다.
         lenient().when(fileStorage.signedUrl(anyString()))
                 .thenAnswer(invocation -> "signed:" + invocation.getArgument(0));
+        lenient().when(redisRateLimiter.incrementWithExpiry(anyString(), anyLong())).thenReturn(1L);
+    }
+
+    @AfterEach
+    void tearDown() {
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.clearSynchronization();
+        }
     }
 
     @Test
@@ -309,7 +324,8 @@ class CareDiaryServiceImplTest {
     // ── helpers ──────────────────────────────────────────────────
 
     private CareDiaryServiceImpl service() {
-        return new CareDiaryServiceImpl(careDiaryMapper, shareMapper, petMapper, activityLogMapper, fileStorage, inquiryMapper);
+        return new CareDiaryServiceImpl(careDiaryMapper, shareMapper, petMapper, activityLogMapper,
+                fileStorage, inquiryMapper, redisRateLimiter);
     }
 
     private void givenPetOwnedBy(String petId, String ownerId) {
@@ -422,23 +438,72 @@ class CareDiaryServiceImplTest {
         verify(fileStorage, never()).delete("diary/a.png");
     }
 
-    // 사본 만들기가 실패해도 공개 전환 자체는 진행된다. 그 글은 사진이 없어 피드에서 빠진다.
+    // 사본 없이 PUBLIC이면 피드에 빈 칸이 생긴다. 전환 자체를 막는다.
     @Test
-    @DisplayName("공개 사본 생성이 실패해도 공개 전환은 막지 않는다")
-    void should_notFail_when_publishReturnsNull() {
+    @DisplayName("공개 사본 생성이 실패하면 공개로 바꾸지 않는다")
+    void should_keepPrivate_when_publishReturnsNull() {
         CareDiaryServiceImpl service = service();
         givenPetOwnedBy("pet-1", "owner-1");
         when(careDiaryMapper.findById("diary-1"))
                 .thenReturn(diaryRow("diary-1", "pet-1", "owner-1", "2026-08-10", "산책"));
-        when(careDiaryMapper.findImagesByDiaryIds(List.of("diary-1"))).thenReturn(List.of(
-                map("diaryId", "diary-1", "imageUrl", "diary/a.png")));
-        when(careDiaryMapper.updateVisibility("diary-1", "PUBLIC")).thenReturn(1);
         when(careDiaryMapper.findImagesForPublish("diary-1")).thenReturn(List.of(
                 map("imageId", "img-1", "imageUrl", "diary/a.png")));
         when(fileStorage.publish("diary/a.png")).thenReturn(null);
 
-        assertDoesNotThrow(() -> service.changeVisibility("owner-1", "diary-1", visibilityRequest("PUBLIC")));
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.changeVisibility("owner-1", "diary-1", visibilityRequest("PUBLIC")));
+
+        assertEquals(409, exception.getStatus().value());
+        verify(careDiaryMapper, never()).updateVisibility(anyString(), anyString());
         verify(careDiaryMapper, never()).updatePublicImageKey(anyString(), anyString());
+    }
+
+    @Test
+    @DisplayName("여러 장 중 뒤 사진 공개가 실패하면 이미 만든 사본을 지운다")
+    void should_unpublishCreatedCopy_when_laterImagePublishFails() {
+        CareDiaryServiceImpl service = service();
+        givenPetOwnedBy("pet-1", "owner-1");
+        when(careDiaryMapper.findById("diary-1"))
+                .thenReturn(diaryRow("diary-1", "pet-1", "owner-1", "2026-08-10", "산책"));
+        when(careDiaryMapper.findImagesForPublish("diary-1")).thenReturn(List.of(
+                map("imageId", "img-1", "imageUrl", "diary/a.png"),
+                map("imageId", "img-2", "imageUrl", "diary/b.png")));
+        when(fileStorage.publish("diary/a.png")).thenReturn("public/a.png");
+        when(fileStorage.publish("diary/b.png")).thenReturn(null);
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.changeVisibility("owner-1", "diary-1", visibilityRequest("PUBLIC")));
+
+        assertEquals(409, exception.getStatus().value());
+        verify(fileStorage).unpublish("public/a.png");
+        verify(fileStorage, never()).unpublish("public/b.png");
+        verify(careDiaryMapper, never()).updateVisibility(anyString(), anyString());
+    }
+
+    @Test
+    @DisplayName("공개 사본을 만든 뒤 DB가 롤백되면 사본을 지운다")
+    void should_unpublishCreatedCopies_when_publishTransactionRollsBack() {
+        TransactionSynchronizationManager.initSynchronization();
+        CareDiaryServiceImpl service = service();
+        givenPetOwnedBy("pet-1", "owner-1");
+        when(careDiaryMapper.findById("diary-1"))
+                .thenReturn(diaryRow("diary-1", "pet-1", "owner-1", "2026-08-10", "산책"));
+        when(careDiaryMapper.findImagesForPublish("diary-1")).thenReturn(List.of(
+                map("imageId", "img-1", "imageUrl", "diary/a.png"),
+                map("imageId", "img-2", "imageUrl", "diary/b.png")));
+        when(fileStorage.publish("diary/a.png")).thenReturn("public/a.png");
+        when(fileStorage.publish("diary/b.png")).thenReturn("public/b.png");
+        when(careDiaryMapper.updateVisibility("diary-1", "PUBLIC")).thenReturn(0);
+
+        assertThrows(BusinessException.class,
+                () -> service.changeVisibility("owner-1", "diary-1", visibilityRequest("PUBLIC")));
+        verify(fileStorage, never()).unpublish(anyString());
+
+        TransactionSynchronizationUtils.triggerAfterCompletion(
+                TransactionSynchronization.STATUS_ROLLED_BACK);
+
+        verify(fileStorage).unpublish("public/a.png");
+        verify(fileStorage).unpublish("public/b.png");
     }
 
     // 원본만 지우면 CDN 사본은 주소를 아는 사람에게 영구히 보인다.
@@ -470,6 +535,7 @@ class CareDiaryServiceImplTest {
             return 1;
         });
         when(careDiaryMapper.hideByReport("diary-1")).thenReturn(1);
+        when(careDiaryMapper.countReportsByDiary("diary-1")).thenReturn(3);
         when(careDiaryMapper.findImagesForPublish("diary-1")).thenReturn(List.of(
                 map("imageId", "img-1", "imageUrl", "diary/a.png", "publicImageKey", "public/x.png")));
 
@@ -493,18 +559,19 @@ class CareDiaryServiceImplTest {
         return row;
     }
 
-    // 고객센터에 답변 API가 없어 처리까지 시간이 걸린다. 그동안 글이 계속 보이면 신고가
-    // 의미를 잃는다.
+    // 1건으로 내리면 오탐에도 글이 바로 사라진다. 서로 다른 신고가 3건 모이면 그때 내린다.
     @Test
-    @DisplayName("신고하면 즉시 노출을 멈추고 문의로 잇는다")
-    void should_hideImmediately_and_createInquiry() {
+    @DisplayName("신고가 임계치에 닿으면 노출을 멈추고 문의로 잇는다")
+    void should_hideWhenReportThresholdReached_and_createInquiry() {
         CareDiaryServiceImpl service = service();
         when(careDiaryMapper.findById("diary-1")).thenReturn(publicDiaryRow("author-1"));
         when(careDiaryMapper.insertReport(anyMap())).thenAnswer(invocation -> {
             ((Map<String, Object>) invocation.getArgument(0)).put("reportId", 77L);
             return 1;
         });
+        when(careDiaryMapper.countReportsByDiary("diary-1")).thenReturn(3);
         when(careDiaryMapper.hideByReport("diary-1")).thenReturn(1);
+        when(careDiaryMapper.findImagesForPublish("diary-1")).thenReturn(List.of());
         doAnswer(invocation -> {
             ((Map<String, Object>) invocation.getArgument(0)).put("inquiryId", 55L);
             return null;
@@ -519,6 +586,38 @@ class CareDiaryServiceImplTest {
     }
 
     @Test
+    @DisplayName("신고가 임계치 미만이면 접수만 하고 글을 내리지 않는다")
+    void should_keepVisible_when_reportCountBelowThreshold() {
+        CareDiaryServiceImpl service = service();
+        when(careDiaryMapper.findById("diary-1")).thenReturn(publicDiaryRow("author-1"));
+        when(careDiaryMapper.insertReport(anyMap())).thenAnswer(invocation -> {
+            ((Map<String, Object>) invocation.getArgument(0)).put("reportId", 77L);
+            return 1;
+        });
+        when(careDiaryMapper.countReportsByDiary("diary-1")).thenReturn(2);
+
+        CareDiaryReportResponse response = service.report("reporter-1", "diary-1", reportRequest("SPAM"));
+
+        assertFalse(response.isHidden());
+        verify(careDiaryMapper, never()).hideByReport(anyString());
+        verify(fileStorage, never()).unpublish(anyString());
+    }
+
+    @Test
+    @DisplayName("짧은 시간에 신고가 너무 많으면 429로 막는다")
+    void should_rejectReport_when_rateLimited() {
+        CareDiaryServiceImpl service = service();
+        when(careDiaryMapper.findById("diary-1")).thenReturn(publicDiaryRow("author-1"));
+        when(redisRateLimiter.incrementWithExpiry(anyString(), anyLong())).thenReturn(6L);
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.report("reporter-1", "diary-1", reportRequest("SPAM")));
+
+        assertEquals(HttpStatus.TOO_MANY_REQUESTS, exception.getStatus());
+        verify(careDiaryMapper, never()).insertReport(anyMap());
+    }
+
+    @Test
     @DisplayName("같은 사람이 다시 신고하면 409로 막는다")
     void should_rejectDuplicateReport() {
         CareDiaryServiceImpl service = service();
@@ -530,6 +629,7 @@ class CareDiaryServiceImplTest {
 
         assertEquals(409, exception.getStatus().value());
         verify(careDiaryMapper, never()).hideByReport(anyString());
+        verify(redisRateLimiter).rollback(startsWith("rate:diary-report:"));
     }
 
     // 신고로 내리면 관리자만 되돌릴 수 있어 스스로를 잠그는 셈이 된다.
@@ -566,7 +666,9 @@ class CareDiaryServiceImplTest {
             ((Map<String, Object>) invocation.getArgument(0)).put("reportId", 77L);
             return 1;
         });
+        when(careDiaryMapper.countReportsByDiary("diary-1")).thenReturn(3);
         when(careDiaryMapper.hideByReport("diary-1")).thenReturn(1);
+        when(careDiaryMapper.findImagesForPublish("diary-1")).thenReturn(List.of());
         doThrow(new RuntimeException("DB 장애")).when(inquiryMapper).insert(anyMap());
 
         CareDiaryReportResponse response = service.report("reporter-1", "diary-1", reportRequest("ABUSE"));
@@ -590,8 +692,10 @@ class CareDiaryServiceImplTest {
                 .thenReturn(diaryRow("diary-1", "pet-1", "member-2", "2026-08-10", "산책"));
         when(careDiaryMapper.findImagesForPublish("diary-1")).thenReturn(List.of(
                 map("imageId", "img-1", "imageUrl", "diary/a.png")));
+        when(fileStorage.publish("diary/a.png")).thenReturn("public/xyz.png");
         when(careDiaryMapper.updateVisibility("diary-1", "PUBLIC")).thenReturn(1);
         when(shareMapper.findAcceptedAccess("pet-1", "member-2")).thenReturn(map("access_id", "access-1"));
+        when(careDiaryMapper.findImagesByDiaryIds(List.of("diary-1"))).thenReturn(List.of());
 
         service.changeVisibility("member-2", "diary-1", visibilityRequest("PUBLIC"));
 
@@ -719,6 +823,7 @@ class CareDiaryServiceImplTest {
         assertEquals("RESTORE", result.getResolution());
         verify(careDiaryMapper).updatePublicImageKey("image-1", "public/restored.png");
         verify(careDiaryMapper).restoreByReport("diary-1");
+        verify(inquiryMapper).answerWaitingLinkedToDiary("diary-1", "오탐");
     }
 
     @Test
@@ -737,6 +842,7 @@ class CareDiaryServiceImplTest {
 
         verify(careDiaryMapper, never()).restoreByReport(anyString());
         verify(fileStorage, never()).publish(anyString());
+        verify(inquiryMapper).answerWaitingLinkedToDiary("diary-1", "신고가 처리되었습니다.");
     }
 
     @Test
@@ -757,6 +863,30 @@ class CareDiaryServiceImplTest {
         verify(careDiaryMapper, never()).restoreByReport(anyString());
         verify(careDiaryMapper, never()).resolvePendingReportsByDiary(
                 anyString(), anyString(), any(), anyString());
+    }
+
+    @Test
+    @DisplayName("복원 중 뒤 사진 사본이 실패하면 이미 만든 사본만 지운다")
+    void should_unpublishRestoredCopy_when_laterImageRestoreFails() {
+        CareDiaryServiceImpl service = service();
+        when(careDiaryMapper.findAdminReportById("report-1"))
+                .thenReturn(adminReportRow("PENDING", null));
+        when(careDiaryMapper.findImagesForPublish("diary-1")).thenReturn(List.of(
+                map("imageId", "image-1", "imageUrl", "diary/a.png",
+                        "publicImageKey", "public/existing.png"),
+                map("imageId", "image-2", "imageUrl", "diary/b.png"),
+                map("imageId", "image-3", "imageUrl", "diary/c.png")));
+        when(fileStorage.publish("diary/b.png")).thenReturn("public/b.png");
+        when(fileStorage.publish("diary/c.png")).thenReturn(null);
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.resolveAdminReport(
+                        "admin-1", "report-1", resolutionRequest("RESTORE", null)));
+
+        assertEquals(409, exception.getStatus().value());
+        verify(fileStorage).unpublish("public/b.png");
+        verify(fileStorage, never()).unpublish("public/existing.png");
+        verify(careDiaryMapper, never()).restoreByReport(anyString());
     }
 
     @Test

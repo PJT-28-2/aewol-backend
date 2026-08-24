@@ -18,7 +18,6 @@ import org.springframework.util.StringUtils;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
-import java.util.Date;
 import java.util.List;
 import java.util.Map;
 
@@ -58,7 +57,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                 throw e;
             }
 
-            if (!canAuthenticate(authState, claims.getIssuedAt())) {
+            if (!MemberAuthStateCache.canAuthenticate(authState, claims.getIssuedAt())) {
                 filterChain.doFilter(request, response);
                 return;
             }
@@ -81,18 +80,6 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         filterChain.doFilter(request, response);
     }
 
-    private boolean canAuthenticate(Map<String, Object> authState, Date issuedAt) {
-        if (authState == null || !isActive(authState.get("is_active")) || issuedAt == null) {
-            return false;
-        }
-        Object withdrawnAtEpoch = authState.get("withdrawn_at_epoch");
-        if (withdrawnAtEpoch == null) {
-            return true;
-        }
-        // 마지막 탈퇴 시각과 같거나 이전에 발급된 토큰은 복구 후에도 다시 사용할 수 없다.
-        return issuedAt.getTime() / 1000L > ((Number) withdrawnAtEpoch).longValue();
-    }
-
     /**
      * 권한은 DB의 현재 role을 쓴다. 토큰 claim만 보면 강등 후에도 access TTL(30분) 동안
      * ADMIN API가 살아 있다. DB에 role이 아직 없는 테스트/레거시 행만 claim으로 보조한다.
@@ -110,13 +97,6 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             return null;
         }
         return claimRole.trim();
-    }
-
-    private boolean isActive(Object value) {
-        if (value instanceof Boolean) {
-            return (Boolean) value;
-        }
-        return value instanceof Number && ((Number) value).intValue() == 1;
     }
 
     private String resolveToken(HttpServletRequest request) {

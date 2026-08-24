@@ -90,13 +90,16 @@ public class ExploreServiceImpl implements ExploreService {
         List<Map<String, Object>> pageRows = hasNext ? rows.subList(0, limit) : rows;
         Map<String, List<String>> imagesByDiaryId = loadImages(pageRows);
 
-        // 사진이 없으면 그리드에 빈 칸이 생긴다. 공개 사본이 아직 없는 글(#309 배포 전이거나
-        // 복사가 실패한 글)도 여기로 걸러져, 깨진 피드가 나가지 않는다.
+        // 사진이 없으면 그리드에 빈 칸이 생긴다. 조회 SQL이 공개 사본 있는 글만 주지만,
+        // publicUrl이 비면 원본 서명 URL로 대체하고, 그마저 없으면 여기서 한 번 더 걸러
+        // 깨진 피드가 나가지 않게 한다.
         List<ExplorePostResponse> posts = pageRows.stream()
                 .map(row -> toPost(row, imagesByDiaryId))
                 .filter(post -> post.getImageUrl() != null)
                 .collect(Collectors.toList());
 
+        // 커서는 조회한 마지막 행 기준이다. 필터로 목록이 비어도 nextCursor는 남긴다.
+        // 화면이 sentinel을 유지해야 다음 장을 이어서 부를 수 있다.
         String nextCursor = null;
         if (hasNext && !pageRows.isEmpty()) {
             Map<String, Object> last = pageRows.get(pageRows.size() - 1);
@@ -127,14 +130,15 @@ public class ExploreServiceImpl implements ExploreService {
         List<String> diaryIds = rows.stream().map(row -> text(row, "diaryId")).collect(Collectors.toList());
         Map<String, List<String>> grouped = new HashMap<>();
         for (Map<String, Object> row : exploreMapper.findImagesByDiaryIds(diaryIds)) {
-            // 공개 사본이 있으면 만료 없는 CDN 주소를 쓴다. 서명 URL은 피드에서 곧 깨진다.
-            // 사본이 아직 없는 사진은 아예 내보내지 않는다 — 깨진 이미지를 보여주느니
-            // 그 글을 그리드에서 빼는 편이 낫다.
+            // 공개 사본이 있으면 만료 없는 CDN 주소를 우선한다. 다만 운영 설정 누락이나
+            // 일시적인 S3 복사 실패로 공개 사본이 없을 수 있다. 조회 행은 이미 PUBLIC 조건을
+            // 통과했으므로 이때 원본의 만료형 서명 URL을 반환해도 비공개 글이 노출되지는 않는다.
             String publicKey = text(row, "publicImageKey");
-            if (publicKey == null) {
-                continue;
+            String url = publicKey == null ? null : fileStorage.publicUrl(publicKey);
+            if (url == null) {
+                String originalKey = text(row, "imageUrl");
+                url = originalKey == null ? null : fileStorage.signedUrl(originalKey);
             }
-            String url = fileStorage.publicUrl(publicKey);
             if (url != null) {
                 grouped.computeIfAbsent(text(row, "diaryId"), key -> new ArrayList<>()).add(url);
             }

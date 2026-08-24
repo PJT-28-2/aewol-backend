@@ -5,9 +5,9 @@
     <insert id="insert" parameterType="map" useGeneratedKeys="true"
             keyProperty="notificationId" keyColumn="notification_id">
         INSERT INTO notification
-            (member_id, type, title, message, target_path)
+            (member_id, type, title, message, target_path, event_key)
         VALUES
-            (#{memberId}, #{type}, #{title}, #{message}, #{targetPath})
+            (#{memberId}, #{type}, #{title}, #{message}, #{targetPath}, #{eventKey})
     </insert>
 
     <select id="findByMemberId" resultType="map">
