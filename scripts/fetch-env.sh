@@ -48,6 +48,21 @@ if [ "$COUNT" -lt 10 ]; then
     exit 1
 fi
 
+# SMS는 값이 비어도 서버가 기동되고 요청 시점에만 503이 난다. 배포 전에 필수값을 막는다.
+require_env_value() {
+    local key="$1"
+    local line
+    line="$(grep -E "^${key}=" "$TMP" || true)"
+    if [ -z "$line" ] || [ "${line#*=}" = "" ]; then
+        echo "필수 SSM 파라미터 ${key}가 없거나 비어 있습니다. 경로(${PARAM_PATH})를 확인하세요." >&2
+        exit 1
+    fi
+}
+
+require_env_value SOLAPI_API_KEY
+require_env_value SOLAPI_API_SECRET
+require_env_value SOLAPI_SENDER
+
 mv "$TMP" "$OUT"
 chmod 600 "$OUT"
 echo "생성 완료: ${OUT} (${COUNT}개 항목)"

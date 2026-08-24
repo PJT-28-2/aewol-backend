@@ -15,6 +15,7 @@ import com.aewol.domain.auth.dto.TokenResponse;
 import com.aewol.domain.member.mapper.MemberMapper;
 import com.aewol.domain.notification.mapper.NotificationSettingMapper;
 import com.aewol.domain.wallet.mapper.WalletMapper;
+import com.aewol.external.sms.SmsSendException;
 import com.aewol.external.sms.SmsSender;
 import java.util.HashMap;
 import java.util.Map;
@@ -85,6 +86,12 @@ public class KakaoSignupServiceImpl implements KakaoSignupService {
                 phoneVerificationStore.discard(issued);
             } catch (RuntimeException ignored) {
                 // 오류 메시지나 Redis key를 로그에 남기지 않고 OTP TTL 만료에 맡긴다.
+            }
+            if (e instanceof SmsSendException) {
+                log.warn("카카오 회원가입 SMS 발송에 실패했습니다. reason={}",
+                        ((SmsSendException) e).getReason());
+            } else {
+                log.warn("카카오 회원가입 SMS 발송에 실패했습니다. reason=unexpected");
             }
             throw new BusinessException(HttpStatus.SERVICE_UNAVAILABLE, SMS_FAILURE_MESSAGE);
         }
