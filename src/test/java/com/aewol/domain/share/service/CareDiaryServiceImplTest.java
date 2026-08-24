@@ -806,6 +806,7 @@ class CareDiaryServiceImplTest {
         assertEquals("RESTORE", result.getResolution());
         verify(careDiaryMapper).updatePublicImageKey("image-1", "public/restored.png");
         verify(careDiaryMapper).restoreByReport("diary-1");
+        verify(inquiryMapper).answerWaitingLinkedToDiary("diary-1", "오탐");
     }
 
     @Test
@@ -824,6 +825,7 @@ class CareDiaryServiceImplTest {
 
         verify(careDiaryMapper, never()).restoreByReport(anyString());
         verify(fileStorage, never()).publish(anyString());
+        verify(inquiryMapper).answerWaitingLinkedToDiary("diary-1", "신고가 처리되었습니다.");
     }
 
     @Test

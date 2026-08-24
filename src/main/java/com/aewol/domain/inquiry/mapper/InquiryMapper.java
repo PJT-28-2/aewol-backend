@@ -19,4 +19,5 @@ public interface InquiryMapper {
                                       @Param("offset") int offset);
     Map<String, Object> findById(@Param("inquiryId") String inquiryId);
     int updateAnswer(@Param("inquiryId") String inquiryId, @Param("answer") String answer);
+    int answerWaitingLinkedToDiary(@Param("diaryId") String diaryId, @Param("answer") String answer);
 }

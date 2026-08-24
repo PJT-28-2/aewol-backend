@@ -10,6 +10,7 @@ import com.aewol.domain.inquiry.dto.InquiryCreateResponse;
 import com.aewol.domain.inquiry.dto.InquiryDetailResponse;
 import com.aewol.domain.inquiry.dto.InquiryListResponse;
 import com.aewol.domain.inquiry.mapper.InquiryMapper;
+import com.aewol.domain.share.mapper.CareDiaryMapper;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -28,6 +29,7 @@ class InquiryServiceImplTest {
     @Mock InquiryMapper inquiryMapper;
     @Mock FileStorage fileStorage;
     @Mock RedisRateLimiter redisRateLimiter;
+    @Mock CareDiaryMapper careDiaryMapper;
     @InjectMocks InquiryServiceImpl service;
 
     private static final String MEMBER_ID = "9001";
@@ -288,11 +290,48 @@ class InquiryServiceImplTest {
                 .thenReturn(inquiryDetailRow("ANSWERED", "확인 후 조치했습니다."));
         when(inquiryMapper.findAttachmentsByInquiryId(INQUIRY_ID)).thenReturn(List.of());
 
-        InquiryDetailResponse result = service.answerInquiry(INQUIRY_ID, "  확인 후 조치했습니다.  ");
+        InquiryDetailResponse result = service.answerInquiry("admin-1", INQUIRY_ID, "  확인 후 조치했습니다.  ");
 
         verify(inquiryMapper).updateAnswer(INQUIRY_ID, "확인 후 조치했습니다.");
+        verify(careDiaryMapper, never()).resolvePendingReportsByInquiryId(any(), any(), any(), any());
         assertEquals("ANSWERED", result.getStatus());
         assertEquals("확인 후 조치했습니다.", result.getAnswer());
+    }
+
+    @Test
+    @DisplayName("신고 1건으로 게시물이 아직 공개 중이면 문의 답변은 DISMISS로 신고만 끝낸다")
+    void should_dismissLinkedReport_when_diaryIsStillPublic() {
+        when(inquiryMapper.updateAnswer(INQUIRY_ID, "확인 후 조치했습니다.")).thenReturn(1);
+        when(careDiaryMapper.findLinkedReportDiaryByInquiryId(INQUIRY_ID))
+                .thenReturn(linkedDiary("diary-1", null));
+        when(inquiryMapper.findById(INQUIRY_ID))
+                .thenReturn(inquiryDetailRow("ANSWERED", "확인 후 조치했습니다."));
+        when(inquiryMapper.findAttachmentsByInquiryId(INQUIRY_ID)).thenReturn(List.of());
+
+        service.answerInquiry("admin-1", INQUIRY_ID, "확인 후 조치했습니다.");
+
+        verify(careDiaryMapper).resolvePendingReportsByInquiryId(
+                INQUIRY_ID, "DISMISS", "확인 후 조치했습니다.", "admin-1");
+        verify(careDiaryMapper, never()).hideByReport(any());
+        verify(careDiaryMapper, never()).restoreByReport(any());
+    }
+
+    @Test
+    @DisplayName("이미 신고로 숨겨진 게시물의 문의에 답하면 숨김을 유지한다")
+    void should_keepHidden_when_linkedDiaryIsAlreadyHidden() {
+        when(inquiryMapper.updateAnswer(INQUIRY_ID, "확인 후 조치했습니다.")).thenReturn(1);
+        when(careDiaryMapper.findLinkedReportDiaryByInquiryId(INQUIRY_ID))
+                .thenReturn(linkedDiary("diary-1", java.sql.Timestamp.valueOf("2026-08-21 10:00:00")));
+        when(inquiryMapper.findById(INQUIRY_ID))
+                .thenReturn(inquiryDetailRow("ANSWERED", "확인 후 조치했습니다."));
+        when(inquiryMapper.findAttachmentsByInquiryId(INQUIRY_ID)).thenReturn(List.of());
+
+        service.answerInquiry("admin-1", INQUIRY_ID, "확인 후 조치했습니다.");
+
+        verify(careDiaryMapper).resolvePendingReportsByInquiryId(
+                INQUIRY_ID, "KEEP_HIDDEN", "확인 후 조치했습니다.", "admin-1");
+        verify(careDiaryMapper, never()).restoreByReport(any());
+        verify(careDiaryMapper, never()).hideByReport(any());
     }
 
     @Test
@@ -301,20 +340,23 @@ class InquiryServiceImplTest {
         when(inquiryMapper.updateAnswer(INQUIRY_ID, "답변")).thenReturn(0);
 
         BusinessException ex = assertThrows(BusinessException.class,
-                () -> service.answerInquiry(INQUIRY_ID, "답변"));
+                () -> service.answerInquiry("admin-1", INQUIRY_ID, "답변"));
 
         assertEquals(org.springframework.http.HttpStatus.NOT_FOUND, ex.getStatus());
         verify(inquiryMapper, never()).findById(any());
+        verify(careDiaryMapper, never()).findLinkedReportDiaryByInquiryId(any());
+        verify(careDiaryMapper, never()).resolvePendingReportsByInquiryId(any(), any(), any(), any());
     }
 
     @Test
     @DisplayName("빈 답변은 저장하지 않고 400 예외를 던진다")
     void should_throwBadRequest_when_adminAnswerIsBlank() {
         BusinessException ex = assertThrows(BusinessException.class,
-                () -> service.answerInquiry(INQUIRY_ID, "   "));
+                () -> service.answerInquiry("admin-1", INQUIRY_ID, "   "));
 
         assertEquals(org.springframework.http.HttpStatus.BAD_REQUEST, ex.getStatus());
         verify(inquiryMapper, never()).updateAnswer(any(), any());
+        verify(careDiaryMapper, never()).resolvePendingReportsByInquiryId(any(), any(), any(), any());
     }
 
     private Map<String, Object> inquiryDetailRow(String status, String answer) {
@@ -327,6 +369,13 @@ class InquiryServiceImplTest {
         row.put("reply_email", "user@example.com");
         row.put("status", status);
         row.put("answer", answer);
+        return row;
+    }
+
+    private Map<String, Object> linkedDiary(String diaryId, Object hiddenByReportAt) {
+        Map<String, Object> row = new HashMap<>();
+        row.put("diaryId", diaryId);
+        row.put("hiddenByReportAt", hiddenByReportAt);
         return row;
     }
 

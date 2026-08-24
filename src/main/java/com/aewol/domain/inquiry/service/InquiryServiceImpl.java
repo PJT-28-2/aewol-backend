@@ -8,6 +8,7 @@ import com.aewol.domain.inquiry.dto.InquiryDetailResponse;
 import com.aewol.domain.inquiry.dto.InquiryListItemResponse;
 import com.aewol.domain.inquiry.dto.InquiryListResponse;
 import com.aewol.domain.inquiry.mapper.InquiryMapper;
+import com.aewol.domain.share.mapper.CareDiaryMapper;
 import java.io.IOException;
 import java.sql.Timestamp;
 import java.time.LocalDate;
@@ -40,6 +41,8 @@ public class InquiryServiceImpl implements InquiryService {
     private static final int MAX_ATTACHMENTS = 3;
     private static final long MAX_ATTACHMENT_SIZE_BYTES = 10L * 1024 * 1024;
     private static final int MAX_ANSWER_LENGTH = 5000;
+    private static final String RESOLUTION_KEEP_HIDDEN = "KEEP_HIDDEN";
+    private static final String RESOLUTION_DISMISS = "DISMISS";
     private static final int MAX_TITLE_LENGTH = 200;
     private static final int MAX_CONTENT_LENGTH = 5000;
     private static final int MAX_REPLY_EMAIL_LENGTH = 100;
@@ -58,6 +61,7 @@ public class InquiryServiceImpl implements InquiryService {
     private final InquiryMapper inquiryMapper;
     private final FileStorage fileStorage;
     private final RedisRateLimiter redisRateLimiter;
+    private final CareDiaryMapper careDiaryMapper;
 
     @Override
     @Transactional
@@ -217,17 +221,34 @@ public class InquiryServiceImpl implements InquiryService {
 
     @Override
     @Transactional
-    public InquiryDetailResponse answerInquiry(String inquiryId, String answer) {
+    public InquiryDetailResponse answerInquiry(String adminId, String inquiryId, String answer) {
         if (answer == null || answer.isBlank()) {
             throw new BusinessException("답변을 입력해주세요");
         }
         if (answer.trim().length() > MAX_ANSWER_LENGTH) {
             throw new BusinessException("답변은 5000자 이하로 입력해주세요");
         }
-        if (inquiryMapper.updateAnswer(inquiryId, answer.trim()) == 0) {
+        String trimmedAnswer = answer.trim();
+        if (inquiryMapper.updateAnswer(inquiryId, trimmedAnswer) == 0) {
             throw BusinessException.notFound("문의를 찾을 수 없어요");
         }
+        resolveLinkedReport(adminId, inquiryId, trimmedAnswer);
         return getAdminInquiry(inquiryId);
+    }
+
+    /**
+     * 문의 답변만으로 글을 복원하거나 내리지 않는다. 이미 신고 임계치로 숨겨진 글만
+     * KEEP_HIDDEN으로 두고, 아직 공개 중이면 DISMISS로 신고만 끝낸다.
+     */
+    private void resolveLinkedReport(String adminId, String inquiryId, String answer) {
+        Map<String, Object> linked = careDiaryMapper.findLinkedReportDiaryByInquiryId(inquiryId);
+        if (linked == null || linked.get("diaryId") == null) {
+            return;
+        }
+        String resolution = linked.get("hiddenByReportAt") == null
+                ? RESOLUTION_DISMISS
+                : RESOLUTION_KEEP_HIDDEN;
+        careDiaryMapper.resolvePendingReportsByInquiryId(inquiryId, resolution, answer, adminId);
     }
 
     private Map<String, Object> findAdminInquiry(String inquiryId) {
