@@ -24,6 +24,8 @@ public interface MemberMapper {
     Map<String, Object> findInactiveKakaoByProviderIdForUpdate(
             @Param("providerId") String providerId);
     Map<String, Object> findLatestInactiveByEmailForUpdate(@Param("email") String email);
+    List<Long> findRetentionCleanupCandidateIds();
+    Map<String, Object> findRetentionCleanupTargetForUpdate(@Param("memberId") Long memberId);
     void insert(Map<String, Object> member);
     int restoreLocalMember(Map<String, Object> member);
     int restoreKakaoMember(@Param("memberId") Long memberId);
@@ -31,4 +33,13 @@ public interface MemberMapper {
     void updateProfile(Map<String, Object> member);
     int updatePassword(@Param("memberId") String memberId, @Param("password") String password);
     int updateSimplePassword(@Param("memberId") String memberId, @Param("simplePassword") String simplePassword);
+    int anonymizeLinkedAccounts(@Param("memberId") Long memberId);
+    int deleteAccountVerifications(@Param("memberId") Long memberId);
+    int deleteNotifications(@Param("memberId") Long memberId);
+    int deleteNotificationSetting(@Param("memberId") Long memberId);
+    int deleteDonationSetting(@Param("memberId") Long memberId);
+    int deleteDonationPreferences(@Param("memberId") Long memberId);
+    int deleteSupportProgramInterests(@Param("memberId") Long memberId);
+    int deleteHomeInsights(@Param("memberId") Long memberId);
+    int purgeMemberIdentity(@Param("memberId") Long memberId);
 }

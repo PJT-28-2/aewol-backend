@@ -196,6 +196,61 @@ class AuthServiceImplSignupTest {
     }
 
     @Test
+    void localMemberWithdrawnTwentyNineDaysAgoRemainsRecoverable() {
+        stubCompletedVerification();
+        when(passwordEncoder.encode(anyString())).thenReturn("encoded");
+        when(memberMapper.existsActiveByEmail(EMAIL)).thenReturn(false);
+        when(memberMapper.findLatestInactiveByEmailForUpdate(EMAIL))
+                .thenReturn(inactive("LOCAL", 29L, true));
+        when(memberMapper.restoreLocalMember(any())).thenReturn(1);
+
+        SignupResponse response = authService.signup(request(false));
+
+        assertEquals(29L, response.getUserId());
+        verify(memberMapper).restoreLocalMember(any());
+        verify(memberMapper, never()).insert(any());
+    }
+
+    @Test
+    void localMemberAtExactlyThirtyDaysRemainsRecoverable() {
+        stubCompletedVerification();
+        when(passwordEncoder.encode(anyString())).thenReturn("encoded");
+        when(memberMapper.existsActiveByEmail(EMAIL)).thenReturn(false);
+        when(memberMapper.findLatestInactiveByEmailForUpdate(EMAIL))
+                .thenReturn(inactive("LOCAL", 30L, true));
+        when(memberMapper.restoreLocalMember(any())).thenReturn(1);
+
+        SignupResponse response = authService.signup(request(false));
+
+        assertEquals(30L, response.getUserId());
+        verify(memberMapper).restoreLocalMember(any());
+        verify(memberMapper, never()).insert(any());
+    }
+
+    @Test
+    void purgedLocalIdentityCreatesNewMemberInsteadOfRestoringOldMemberId() {
+        long purgedMemberId = 9L;
+        long newMemberId = 10L;
+        stubCompletedVerification();
+        when(passwordEncoder.encode(anyString())).thenReturn("encoded");
+        when(memberMapper.existsActiveByEmail(EMAIL)).thenReturn(false);
+        // cleanup 뒤 과거 email은 NULL이므로 inactive identity lookup에 노출되지 않는다.
+        when(memberMapper.findLatestInactiveByEmailForUpdate(EMAIL)).thenReturn(null);
+        doAnswer(invocation -> {
+            ((Map<String, Object>) invocation.getArgument(0)).put("memberId", newMemberId);
+            return null;
+        }).when(memberMapper).insert(any());
+
+        SignupResponse response = authService.signup(request(false));
+
+        assertEquals(newMemberId, response.getUserId());
+        assertTrue(response.getUserId() != purgedMemberId);
+        verify(memberMapper, never()).restoreLocalMember(any());
+        verify(walletMapper).insert(argThat(wallet ->
+                Long.valueOf(newMemberId).equals(wallet.get("memberId"))));
+    }
+
+    @Test
     void recoveryDoesNotDependOnRedisCredentialCleanup() {
         stubCompletedVerification();
         when(passwordEncoder.encode(anyString())).thenReturn("encoded");
