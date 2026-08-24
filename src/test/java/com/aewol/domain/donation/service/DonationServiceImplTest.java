@@ -196,7 +196,8 @@ class DonationServiceImplTest {
                 () -> service.donate("member-1", request));
 
         assertEquals("저금통 잔액이 부족합니다.", exception.getMessage());
-        verify(donationMapper, never()).insertHistory(anyMap());
+        verify(donationMapper).insertHistory(anyMap());
+        verify(donationMapper, never()).increaseCampaignResult(any(), any());
     }
 
     @Test
@@ -262,6 +263,58 @@ class DonationServiceImplTest {
         assertEquals(409, exception.getStatus().value());
         verify(donationMapper, never()).decreasePotBalance(any(), any());
         verify(donationMapper, never()).insertHistory(anyMap());
+    }
+
+    @Test
+    @DisplayName("저금통 잠금 뒤에 같은 키가 있으면 차감 없이 기존 기부를 반환한다")
+    void should_returnExistingDonation_whenKeyAppearsAfterPotLock() {
+        DonationServiceImpl service = service();
+        DonationRequest request = donationRequest("3000", "campaign-1", "request-1");
+        when(donationMapper.findHistoryByIdempotencyKey("member-1", "request-1"))
+                .thenReturn(null)
+                .thenReturn(map("donation_id", "donation-1", "amount", new BigDecimal("3000"),
+                        "campaign_id", "campaign-1"));
+        when(donationMapper.findCampaignById("campaign-1")).thenReturn(map(
+                "campaign_id", "campaign-1", "organization_id", "organization-1",
+                "organization_name", "테스트 보호소", "channel_id", "channel-1"));
+        when(donationMapper.findPotByMemberId("member-1"))
+                .thenReturn(map("wallet_id", "pot-1", "balance", new BigDecimal("9400")));
+        when(donationMapper.findPotForUpdate("member-1"))
+                .thenReturn(map("wallet_id", "pot-1", "balance", new BigDecimal("9400")));
+
+        var result = service.donate("member-1", request);
+
+        assertEquals("donation-1", result.getDonationId());
+        assertEquals(new BigDecimal("9400"), result.getBalance());
+        verify(donationMapper, never()).decreasePotBalance(any(), any());
+        verify(donationMapper, never()).insertHistory(anyMap());
+    }
+
+    @Test
+    @DisplayName("기부 내역 유니크 충돌이면 오류 대신 기존 기부를 반환한다")
+    void should_returnExistingDonation_whenConcurrentInsertHitsUniqueKey() {
+        DonationServiceImpl service = service();
+        DonationRequest request = donationRequest("3000", "campaign-1", "request-1");
+        when(donationMapper.findHistoryByIdempotencyKey("member-1", "request-1"))
+                .thenReturn(null)
+                .thenReturn(null)
+                .thenReturn(map("donation_id", "donation-1", "amount", new BigDecimal("3000"),
+                        "campaign_id", "campaign-1"));
+        when(donationMapper.findCampaignById("campaign-1")).thenReturn(map(
+                "campaign_id", "campaign-1", "organization_id", "organization-1",
+                "organization_name", "테스트 보호소", "channel_id", "channel-1"));
+        when(donationMapper.findPotByMemberId("member-1"))
+                .thenReturn(map("wallet_id", "pot-1", "balance", new BigDecimal("9400")));
+        when(donationMapper.findPotForUpdate("member-1"))
+                .thenReturn(map("wallet_id", "pot-1", "balance", new BigDecimal("9400")));
+        doThrow(new org.springframework.dao.DuplicateKeyException("duplicate"))
+                .when(donationMapper).insertHistory(anyMap());
+
+        var result = service.donate("member-1", request);
+
+        assertEquals("donation-1", result.getDonationId());
+        assertEquals(new BigDecimal("9400"), result.getBalance());
+        verify(donationMapper, never()).decreasePotBalance(any(), any());
     }
 
     @Test
