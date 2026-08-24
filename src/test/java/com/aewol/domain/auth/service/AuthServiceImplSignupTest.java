@@ -22,6 +22,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.dao.DuplicateKeyException;
+import org.springframework.data.redis.RedisConnectionFailureException;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
 import org.springframework.data.redis.core.script.RedisScript;
@@ -137,7 +138,7 @@ class AuthServiceImplSignupTest {
     @Test
     void completedVerificationRedisReadFailureReturnsServiceUnavailable() {
         when(valueOperations.get(COMPLETED_KEY))
-                .thenThrow(new RuntimeException("redis unavailable"));
+                .thenThrow(new RedisConnectionFailureException("redis unavailable"));
 
         BusinessException exception = assertThrows(BusinessException.class,
                 () -> authService.signup(request(false)));

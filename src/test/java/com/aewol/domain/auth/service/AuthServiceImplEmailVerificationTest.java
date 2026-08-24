@@ -19,6 +19,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.data.redis.RedisConnectionFailureException;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
 import org.springframework.data.redis.core.script.RedisScript;
@@ -176,7 +177,7 @@ class AuthServiceImplEmailVerificationTest {
         when(memberMapper.existsActiveByEmail(EMAIL)).thenReturn(false);
         when(redisRateLimiter.incrementWithExpiry(RATE_LIMIT_KEY, 1800L)).thenReturn(1L);
         when(redisTemplate.opsForValue()).thenReturn(valueOperations);
-        doThrow(new RuntimeException("redis unavailable")).when(valueOperations).set(
+        doThrow(new RedisConnectionFailureException("redis unavailable")).when(valueOperations).set(
                 eq(VERIFICATION_KEY), anyString(), eq(300L), eq(TimeUnit.SECONDS));
 
         BusinessException exception = assertThrows(BusinessException.class,
@@ -313,7 +314,7 @@ class AuthServiceImplEmailVerificationTest {
         SignupEmailVerificationRequest request = verificationRequest(EMAIL, "123456");
         when(redisTemplate.execute(
                 any(RedisScript.class), anyList(), anyString(), anyString(), anyString()))
-                .thenThrow(new RuntimeException("redis unavailable"))
+                .thenThrow(new RedisConnectionFailureException("redis unavailable"))
                 .thenReturn(null);
 
         for (int attempt = 0; attempt < 2; attempt++) {

@@ -30,6 +30,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
+import org.springframework.dao.DataAccessException;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -185,7 +186,8 @@ public class AuthServiceImpl implements AuthService {
             redisTemplate.opsForValue().set(
                     verificationKey, verificationValue,
                     SIGNUP_VERIFICATION_TTL_SECONDS, TimeUnit.SECONDS);
-        } catch (RuntimeException e) {
+        } catch (DataAccessException e) {
+            log.warn("Redis 회원가입 이메일 인증 정보 저장 중 오류가 발생했습니다.", e);
             throw authenticationServiceUnavailable();
         }
 
@@ -216,7 +218,8 @@ public class AuthServiceImpl implements AuthService {
                     request.getVerificationCode(),
                     String.valueOf(SIGNUP_MAX_VERIFICATION_ATTEMPTS),
                     String.valueOf(SIGNUP_VERIFICATION_TTL_SECONDS));
-        } catch (RuntimeException e) {
+        } catch (DataAccessException e) {
+            log.warn("Redis 회원가입 이메일 인증 처리 중 오류가 발생했습니다.", e);
             throw authenticationServiceUnavailable();
         }
 
@@ -257,7 +260,8 @@ public class AuthServiceImpl implements AuthService {
                     verificationValue,
                     PASSWORD_RESET_VERIFICATION_TTL_SECONDS,
                     TimeUnit.SECONDS);
-        } catch (RuntimeException e) {
+        } catch (DataAccessException e) {
+            log.warn("Redis 비밀번호 재설정 인증 정보 저장 중 오류가 발생했습니다.", e);
             throw authenticationServiceUnavailable();
         }
 
@@ -296,7 +300,8 @@ public class AuthServiceImpl implements AuthService {
                     String.valueOf(PASSWORD_RESET_MAX_VERIFICATION_ATTEMPTS),
                     String.valueOf(member.get("member_id")),
                     String.valueOf(PASSWORD_RESET_TOKEN_TTL_SECONDS));
-        } catch (RuntimeException e) {
+        } catch (DataAccessException e) {
+            log.warn("Redis 비밀번호 재설정 인증 처리 중 오류가 발생했습니다.", e);
             throw authenticationServiceUnavailable();
         }
 
@@ -328,7 +333,8 @@ public class AuthServiceImpl implements AuthService {
                     CLAIM_PASSWORD_RESET_TOKEN_SCRIPT,
                     List.of(tokenKey),
                     claimPrefix);
-        } catch (RuntimeException e) {
+        } catch (DataAccessException e) {
+            log.warn("Redis 비밀번호 재설정 토큰 처리 중 오류가 발생했습니다.", e);
             throw authenticationServiceUnavailable();
         }
         if (memberId == null) {
@@ -361,7 +367,8 @@ public class AuthServiceImpl implements AuthService {
         String completedValue;
         try {
             completedValue = redisTemplate.opsForValue().get(completedKey);
-        } catch (RuntimeException e) {
+        } catch (DataAccessException e) {
+            log.warn("Redis 회원가입 인증 완료 정보 조회 중 오류가 발생했습니다.", e);
             throw authenticationServiceUnavailable();
         }
         validateCompletedVerification(completedValue, request.getVerificationCode());

@@ -6,6 +6,8 @@ import com.aewol.domain.member.mapper.MemberMapper;
 import java.time.Duration;
 import java.util.Map;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.dao.DataAccessException;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -17,6 +19,7 @@ import org.springframework.stereotype.Service;
  */
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class SimplePasswordVerificationService {
     private static final int MAX_FAILURES = 5;
     private static final long LOCK_SECONDS = 60;
@@ -62,7 +65,8 @@ public class SimplePasswordVerificationService {
         Boolean present;
         try {
             present = redisTemplate.hasKey(key);
-        } catch (RuntimeException e) {
+        } catch (DataAccessException e) {
+            log.warn("Redis 간편 비밀번호 잠금 상태 조회 중 오류가 발생했습니다.", e);
             throw serviceUnavailable();
         }
         if (present == null) {
@@ -72,17 +76,14 @@ public class SimplePasswordVerificationService {
     }
 
     private long incrementFailures(String key) {
-        try {
-            return redisRateLimiter.incrementWithExpiry(key, LOCK_SECONDS);
-        } catch (RuntimeException e) {
-            throw serviceUnavailable();
-        }
+        return redisRateLimiter.incrementWithExpiry(key, LOCK_SECONDS);
     }
 
     private void setLock(String key) {
         try {
             redisTemplate.opsForValue().set(key, "1", Duration.ofSeconds(LOCK_SECONDS));
-        } catch (RuntimeException e) {
+        } catch (DataAccessException e) {
+            log.warn("Redis 간편 비밀번호 잠금 정보 저장 중 오류가 발생했습니다.", e);
             throw serviceUnavailable();
         }
     }
@@ -91,7 +92,8 @@ public class SimplePasswordVerificationService {
         Boolean deleted;
         try {
             deleted = redisTemplate.delete(key);
-        } catch (RuntimeException e) {
+        } catch (DataAccessException e) {
+            log.warn("Redis 간편 비밀번호 실패 정보 삭제 중 오류가 발생했습니다.", e);
             throw serviceUnavailable();
         }
         if (deleted == null) {

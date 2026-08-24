@@ -21,6 +21,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.data.redis.RedisConnectionFailureException;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -100,7 +101,7 @@ class SimplePasswordVerificationServiceTest {
     @Test
     void should_returnServiceUnavailable_when_lockLookupFails() {
         when(redisTemplate.hasKey("simple-password:lock:1"))
-                .thenThrow(new RuntimeException("redis unavailable"));
+                .thenThrow(new RedisConnectionFailureException("redis unavailable"));
 
         assertServiceUnavailable(() -> service.verify("1", "482913"));
         verify(memberMapper, never()).findById("1");
@@ -131,7 +132,7 @@ class SimplePasswordVerificationServiceTest {
         when(passwordEncoder.matches("000000", "encoded")).thenReturn(false);
         when(redisRateLimiter.incrementWithExpiry("simple-password:failures:1", 60)).thenReturn(5L);
         when(redisTemplate.opsForValue()).thenReturn(valueOperations);
-        doThrow(new RuntimeException("redis unavailable")).when(valueOperations)
+        doThrow(new RedisConnectionFailureException("redis unavailable")).when(valueOperations)
                 .set("simple-password:lock:1", "1", Duration.ofSeconds(60));
 
         assertServiceUnavailable(() -> service.verify("1", "000000"));
@@ -143,7 +144,7 @@ class SimplePasswordVerificationServiceTest {
         when(memberMapper.findById("1")).thenReturn(memberWithPin("encoded"));
         when(passwordEncoder.matches("482913", "encoded")).thenReturn(true);
         when(redisTemplate.delete("simple-password:failures:1"))
-                .thenThrow(new RuntimeException("redis unavailable"));
+                .thenThrow(new RedisConnectionFailureException("redis unavailable"));
 
         assertServiceUnavailable(() -> service.verify("1", "482913"));
     }

@@ -10,12 +10,14 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.data.redis.RedisConnectionFailureException;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
 import org.springframework.data.redis.core.script.RedisScript;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
@@ -78,7 +80,7 @@ class AuthCredentialStoreTest {
     @Test
     void redisFailuresForStoreRotateAndDeleteAreConvertedToUncodedServiceUnavailable() {
         when(redisTemplate.opsForValue()).thenReturn(valueOperations);
-        doThrow(new RuntimeException("store failure")).when(valueOperations)
+        doThrow(new RedisConnectionFailureException("store failure")).when(valueOperations)
                 .set(eq("refresh:member-1"), eq("r1"), eq(0L), eq(TimeUnit.MILLISECONDS));
 
         BusinessException storeFailure = assertThrows(BusinessException.class,
@@ -86,12 +88,12 @@ class AuthCredentialStoreTest {
 
         when(redisTemplate.execute(any(RedisScript.class), eq(List.of("refresh:member-1")),
                 eq("r1"), eq("r2"), eq("0")))
-                .thenThrow(new RuntimeException("rotate failure"));
+                .thenThrow(new RedisConnectionFailureException("rotate failure"));
         BusinessException rotateFailure = assertThrows(BusinessException.class,
                 () -> store.rotateRefreshAtomically("member-1", "r1", "r2"));
 
         when(redisTemplate.delete("refresh:member-1"))
-                .thenThrow(new RuntimeException("delete failure"));
+                .thenThrow(new RedisConnectionFailureException("delete failure"));
         BusinessException deleteFailure = assertThrows(BusinessException.class,
                 () -> store.deleteRefresh("member-1"));
 
@@ -118,5 +120,18 @@ class AuthCredentialStoreTest {
 
         assertEquals(503, rotateNull.getStatus().value());
         assertEquals(503, deleteNull.getStatus().value());
+    }
+
+    @Test
+    void nonRedisRuntimeFailureIsNotDisguisedAsServiceUnavailable() {
+        when(redisTemplate.opsForValue()).thenReturn(valueOperations);
+        IllegalStateException programmingFailure = new IllegalStateException("programming failure");
+        doThrow(programmingFailure).when(valueOperations)
+                .set(eq("refresh:member-1"), eq("r1"), eq(0L), eq(TimeUnit.MILLISECONDS));
+
+        IllegalStateException thrown = assertThrows(IllegalStateException.class,
+                () -> store.storeRefresh("member-1", "r1"));
+
+        assertSame(programmingFailure, thrown);
     }
 }

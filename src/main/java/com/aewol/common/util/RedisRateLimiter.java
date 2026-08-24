@@ -2,6 +2,7 @@ package com.aewol.common.util;
 
 import com.aewol.common.exception.BusinessException;
 import java.util.List;
+import org.springframework.dao.DataAccessException;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.data.redis.core.script.RedisScript;
@@ -62,7 +63,8 @@ public class RedisRateLimiter {
         try {
             count = redisTemplate.execute(
                     incrementAndExpireScript, List.of(key), String.valueOf(ttlSeconds));
-        } catch (RuntimeException e) {
+        } catch (DataAccessException e) {
+            log.warn("Redis 요청 제한 처리 중 오류가 발생했습니다.", e);
             throw serviceUnavailable();
         }
         if (count == null) {

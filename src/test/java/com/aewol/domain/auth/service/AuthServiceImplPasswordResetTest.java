@@ -26,6 +26,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.data.redis.RedisConnectionFailureException;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
 import org.springframework.data.redis.core.script.RedisScript;
@@ -175,7 +176,7 @@ class AuthServiceImplPasswordResetTest {
 
         when(memberMapper.findActiveByEmail(EMAIL)).thenReturn(member("LOCAL", true, "old-hash"));
         when(redisTemplate.opsForValue()).thenReturn(valueOperations);
-        doThrow(new RuntimeException("redis unavailable")).when(valueOperations).set(
+        doThrow(new RedisConnectionFailureException("redis unavailable")).when(valueOperations).set(
                 eq("password:reset:verify:" + EMAIL), anyString(),
                 eq(300L), eq(TimeUnit.SECONDS));
         BusinessException storeFailure = assertThrows(BusinessException.class,
@@ -304,7 +305,7 @@ class AuthServiceImplPasswordResetTest {
         when(memberMapper.findActiveByEmail(EMAIL)).thenReturn(member("LOCAL", true, "old-hash"));
         when(redisTemplate.execute(
                 any(RedisScript.class), anyList(), anyString(), anyString(), anyString(), anyString()))
-                .thenThrow(new RuntimeException("redis unavailable"))
+                .thenThrow(new RedisConnectionFailureException("redis unavailable"))
                 .thenReturn(null);
 
         for (int attempt = 0; attempt < 2; attempt++) {
@@ -384,7 +385,7 @@ class AuthServiceImplPasswordResetTest {
     @Test
     void resetTokenClaimRedisFailureReturnsServiceUnavailable() {
         when(redisTemplate.execute(any(RedisScript.class), anyList(), anyString()))
-                .thenThrow(new RuntimeException("redis unavailable"));
+                .thenThrow(new RedisConnectionFailureException("redis unavailable"));
 
         BusinessException exception = assertThrows(BusinessException.class,
                 () -> service.resetPassword(resetRequest("token", "new-password")));
