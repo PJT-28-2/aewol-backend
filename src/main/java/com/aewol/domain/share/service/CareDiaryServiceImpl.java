@@ -263,18 +263,8 @@ public class CareDiaryServiceImpl implements CareDiaryService {
 
     /** 사본을 모두 만든 뒤에만 호출부가 PUBLIC으로 바꾼다. 하나라도 실패하면 공개하지 않는다. */
     private void publishPublicImagesOrThrow(List<Map<String, Object>> images) {
-        for (Map<String, Object> image : images) {
-            String imageId = text(image, "imageId");
-            String publicKey = text(image, "publicImageKey");
-            if (publicKey != null) {
-                continue;
-            }
-            String created = fileStorage.publish(text(image, "imageUrl"));
-            if (created == null) {
-                throw BusinessException.conflict("사진을 공개하지 못했어요. 잠시 후 다시 시도해 주세요.");
-            }
-            careDiaryMapper.updatePublicImageKey(imageId, created);
-        }
+        publishMissingPublicCopiesOrThrow(
+                images, "사진을 공개하지 못했어요. 잠시 후 다시 시도해 주세요.");
     }
 
     /**
@@ -422,13 +412,33 @@ public class CareDiaryServiceImpl implements CareDiaryService {
         if (images.isEmpty()) {
             throw BusinessException.conflict("복원할 게시물 사진을 찾을 수 없습니다.");
         }
-        for (Map<String, Object> image : images) {
-            if (text(image, "publicImageKey") != null) continue;
-            String publicKey = fileStorage.publish(text(image, "imageUrl"));
-            if (publicKey == null) {
-                throw BusinessException.conflict("게시물 사진을 복원하지 못했습니다. 잠시 후 다시 시도해 주세요.");
+        publishMissingPublicCopiesOrThrow(
+                images, "게시물 사진을 복원하지 못했습니다. 잠시 후 다시 시도해 주세요.");
+    }
+
+    /**
+     * 없는 공개 사본만 만들고, 만든 키를 추적한다. 중간 실패나 이후 DB 롤백 때
+     * 이미 만든 사본을 지우지 않으면 공개 URL을 가진 고아 파일이 남는다.
+     */
+    private void publishMissingPublicCopiesOrThrow(
+            List<Map<String, Object>> images, String conflictMessage) {
+        List<String> createdKeys = new ArrayList<>();
+        try {
+            for (Map<String, Object> image : images) {
+                if (text(image, "publicImageKey") != null) {
+                    continue;
+                }
+                String created = fileStorage.publish(text(image, "imageUrl"));
+                if (created == null) {
+                    throw BusinessException.conflict(conflictMessage);
+                }
+                createdKeys.add(created);
+                careDiaryMapper.updatePublicImageKey(text(image, "imageId"), created);
             }
-            careDiaryMapper.updatePublicImageKey(text(image, "imageId"), publicKey);
+            arrangeRollbackPublicCleanup(createdKeys);
+        } catch (RuntimeException e) {
+            createdKeys.forEach(this::unpublishQuietly);
+            throw e;
         }
     }
 
@@ -606,6 +616,21 @@ public class CareDiaryServiceImpl implements CareDiaryService {
         });
     }
 
+    /** DB가 롤백되면 방금 만든 공개 사본은 참조가 없으므로 지운다. */
+    private void arrangeRollbackPublicCleanup(List<String> publicKeys) {
+        if (publicKeys.isEmpty() || !TransactionSynchronizationManager.isSynchronizationActive()) {
+            return;
+        }
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCompletion(int status) {
+                if (status != STATUS_COMMITTED) {
+                    publicKeys.forEach(CareDiaryServiceImpl.this::unpublishQuietly);
+                }
+            }
+        });
+    }
+
     /** 삭제 트랜잭션이 확정된 뒤에만 실제 파일을 제거한다. */
     /** 공개 사본 정리. 원본 정리와 같은 이유로 커밋 이후에 돌린다. */
     private void arrangeCommittedPublicCleanup(List<String> publicKeys) {
@@ -642,6 +667,15 @@ public class CareDiaryServiceImpl implements CareDiaryService {
             fileStorage.delete(key);
         } catch (RuntimeException e) {
             log.warn("[CARE_DIARY_FILE_CLEANUP_FAILED] 이미지 정리 실패 - key: {}", key, e);
+        }
+    }
+
+    private void unpublishQuietly(String publicKey) {
+        if (publicKey == null || publicKey.isBlank()) return;
+        try {
+            fileStorage.unpublish(publicKey);
+        } catch (RuntimeException e) {
+            log.warn("[CARE_DIARY_PUBLIC_CLEANUP_FAILED] 공개 사본 정리 실패 - key: {}", publicKey, e);
         }
     }
 
