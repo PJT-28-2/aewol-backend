@@ -225,6 +225,9 @@ public class CareDiaryServiceImpl implements CareDiaryService {
             if (images.isEmpty()) {
                 throw new BusinessException("사진이 있는 일기만 공개할 수 있어요. 사진을 추가한 뒤 다시 시도해 주세요.");
             }
+            if (PUBLIC.equals(text(row, "visibility")) && hasPublicCopies(images)) {
+                return getDetail(memberId, diaryId);
+            }
         } else if (!isAuthor && !isPetOwner) {
             throw BusinessException.forbidden("작성자 또는 대표 보호자만 일기를 비공개로 바꿀 수 있습니다.");
         }
@@ -268,6 +271,14 @@ public class CareDiaryServiceImpl implements CareDiaryService {
             cancelPublishing(diaryId, copies);
             throw e;
         }
+    }
+
+    private boolean hasPublicCopies(List<Map<String, Object>> images) {
+        return images.stream()
+                .allMatch(image -> {
+                    String publicKey = text(image, "publicImageKey");
+                    return publicKey != null && !publicKey.isBlank();
+                });
     }
 
     /**
