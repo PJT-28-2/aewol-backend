@@ -91,10 +91,9 @@ class DonationServiceImplTest {
     }
 
     @Test
-    @DisplayName("운영에서는 [시연] 캠페인을 목록과 기부 대상에서 뺀다")
-    void should_hideDemoCampaigns_when_flagDisabled() {
+    @DisplayName("[시연] 접두어가 있는 캠페인도 목록에 그대로 보여 준다")
+    void should_includeDemoPrefixedCampaigns_inOverview() {
         DonationServiceImpl service = service();
-        ReflectionTestUtils.setField(service, "showDemoCampaigns", false);
         when(donationMapper.findPotByMemberId("member-1"))
                 .thenReturn(map("wallet_id", "pot-1", "balance", new BigDecimal("12400")));
         when(donationMapper.findSettings("member-1")).thenReturn(settings(true, "1000", false));
@@ -110,8 +109,9 @@ class DonationServiceImplTest {
                         "endsAt", LocalDateTime.now().plusDays(8), "preferred", 1)));
 
         var overview = service.getOverview("member-1");
-        assertEquals(1, overview.getCampaigns().size());
-        assertEquals("난방비 지원", overview.getCampaigns().get(0).getTitle());
+        assertEquals(2, overview.getCampaigns().size());
+        assertEquals("[시연] 유기동물 구조·입양 활동 지원", overview.getCampaigns().get(0).getTitle());
+        assertEquals("난방비 지원", overview.getCampaigns().get(1).getTitle());
     }
 
     @Test
