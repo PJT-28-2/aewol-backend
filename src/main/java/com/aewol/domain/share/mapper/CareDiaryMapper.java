@@ -34,6 +34,10 @@ public interface CareDiaryMapper {
     int updateVisibility(@Param("diaryId") String diaryId,
                          @Param("visibility") String visibility);
 
+    int updateVisibilityIfCurrent(@Param("diaryId") String diaryId,
+                                  @Param("currentVisibility") String currentVisibility,
+                                  @Param("visibility") String visibility);
+
     /** @return 1이면 새 신고, 0이면 같은 사람이 이미 신고한 건 (UNIQUE 제약) */
     int insertReport(Map<String, Object> report);
 

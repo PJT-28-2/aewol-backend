@@ -64,6 +64,20 @@ public interface FileStorage {
     String publish(String key);
 
     /**
+     * Returns the public-copy key without creating the public copy.
+     */
+    default String createPublicKey(String key) {
+        return null;
+    }
+
+    /**
+     * Creates a public copy at a previously reserved public key.
+     */
+    default boolean publish(String key, String publicKey) {
+        return false;
+    }
+
+    /**
      * 공개 사본을 지운다.
      *
      * <p>{@link #delete(String)}과 같은 계약이다. 예외를 던지지 않는다. 비공개로 되돌리는

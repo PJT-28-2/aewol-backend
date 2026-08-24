@@ -48,6 +48,8 @@ import org.springframework.web.multipart.MultipartFile;
 public class CareDiaryServiceImpl implements CareDiaryService {
 
     private static final String PUBLIC = "PUBLIC";
+    private static final String PRIVATE = "PRIVATE";
+    private static final String PUBLISHING = "PUBLISHING";
     private static final int MAX_CONTENT_LENGTH = 500;
     private static final String UPLOAD_SUB_DIR = "diary";
     /** 서로 다른 신고가 이 수에 닿아야 글을 내린다. 1건으로 내리면 오탐에도 바로 사라진다. */
@@ -242,17 +244,26 @@ public class CareDiaryServiceImpl implements CareDiaryService {
     /** 사본을 모두 만든 뒤에만 호출부가 PUBLIC으로 바꾼다. 하나라도 실패하면 공개하지 않는다. */
     private void publishPublicImagesAndChangeVisibility(
             String diaryId, List<Map<String, Object>> images) {
-        Map<String, String> createdByImageId = publishMissingPublicCopies(
+        List<PublicImageCopy> copies = preparePublicImageCopies(
                 images, "사진을 공개하지 못했어요. 잠시 후 다시 시도해 주세요.");
+        List<String> publishedPublicKeys = new ArrayList<>();
         try {
             runInTransaction(() -> {
-                createdByImageId.forEach(careDiaryMapper::updatePublicImageKey);
-                if (careDiaryMapper.updateVisibility(diaryId, PUBLIC) != 1) {
+                reserveMissingPublicImageKeys(copies);
+                if (careDiaryMapper.updateVisibility(diaryId, PUBLISHING) != 1) {
+                    throw BusinessException.notFound("공개 여부를 바꿀 일기를 찾을 수 없습니다.");
+                }
+            });
+            publishPublicCopies(copies, publishedPublicKeys,
+                    "사진을 공개하지 못했어요. 잠시 후 다시 시도해 주세요.");
+            runInTransaction(() -> {
+                if (careDiaryMapper.updateVisibilityIfCurrent(diaryId, PUBLISHING, PUBLIC) != 1) {
                     throw BusinessException.notFound("공개 여부를 바꿀 일기를 찾을 수 없습니다.");
                 }
             });
         } catch (RuntimeException e) {
-            createdByImageId.values().forEach(this::unpublishQuietly);
+            publishedPublicKeys.forEach(this::unpublishQuietly);
+            cancelPublishing(diaryId, copies);
             throw e;
         }
     }
@@ -399,40 +410,96 @@ public class CareDiaryServiceImpl implements CareDiaryService {
         if (images.isEmpty()) {
             throw BusinessException.conflict("복원할 게시물 사진을 찾을 수 없습니다.");
         }
-        Map<String, String> createdByImageId = publishMissingPublicCopies(
+        List<PublicImageCopy> copies = preparePublicImageCopies(
                 images, "게시물 사진을 복원하지 못했습니다. 잠시 후 다시 시도해 주세요.");
+        List<String> publishedPublicKeys = new ArrayList<>();
         try {
+            runInTransaction(() -> reserveMissingPublicImageKeys(copies));
+            publishPublicCopies(copies, publishedPublicKeys,
+                    "게시물 사진을 복원하지 못했습니다. 잠시 후 다시 시도해 주세요.");
             runInTransaction(() -> {
-                createdByImageId.forEach(careDiaryMapper::updatePublicImageKey);
                 if (careDiaryMapper.restoreByReport(diaryId) != 1) {
                     throw BusinessException.conflict("게시물을 복원할 수 없습니다.");
                 }
                 resolvePendingReports(diaryId, resolution, adminNote, adminId);
             });
         } catch (RuntimeException e) {
-            createdByImageId.values().forEach(this::unpublishQuietly);
+            publishedPublicKeys.forEach(this::unpublishQuietly);
+            clearReservedPublicImageKeys(copies);
             throw e;
         }
     }
 
-    private Map<String, String> publishMissingPublicCopies(
+    private List<PublicImageCopy> preparePublicImageCopies(
             List<Map<String, Object>> images, String conflictMessage) {
-        Map<String, String> createdByImageId = new LinkedHashMap<>();
-        try {
-            for (Map<String, Object> image : images) {
-                if (text(image, "publicImageKey") != null) {
-                    continue;
-                }
-                String created = fileStorage.publish(text(image, "imageUrl"));
-                if (created == null) {
+        List<PublicImageCopy> copies = new ArrayList<>();
+        for (Map<String, Object> image : images) {
+            String imageId = text(image, "imageId");
+            String imageUrl = text(image, "imageUrl");
+            String publicKey = text(image, "publicImageKey");
+            boolean reserved = false;
+            if (publicKey == null) {
+                publicKey = fileStorage.createPublicKey(imageUrl);
+                if (publicKey == null) {
                     throw BusinessException.conflict(conflictMessage);
                 }
-                createdByImageId.put(text(image, "imageId"), created);
+                reserved = true;
             }
-            return createdByImageId;
-        } catch (RuntimeException e) {
-            createdByImageId.values().forEach(this::unpublishQuietly);
-            throw e;
+            copies.add(new PublicImageCopy(imageId, imageUrl, publicKey, reserved));
+        }
+        return copies;
+    }
+
+    private void reserveMissingPublicImageKeys(List<PublicImageCopy> copies) {
+        for (PublicImageCopy copy : copies) {
+            if (copy.reserved()) {
+                updatePublicImageKeyOrThrow(copy.imageId(), copy.publicKey());
+            }
+        }
+    }
+
+    private void publishPublicCopies(
+            List<PublicImageCopy> copies, List<String> publishedPublicKeys, String conflictMessage) {
+        for (PublicImageCopy copy : copies) {
+            if (!fileStorage.publish(copy.imageUrl(), copy.publicKey())) {
+                throw BusinessException.conflict(conflictMessage);
+            }
+            if (copy.reserved()) {
+                publishedPublicKeys.add(copy.publicKey());
+            }
+        }
+    }
+
+    private void updatePublicImageKeyOrThrow(String imageId, String publicKey) {
+        if (careDiaryMapper.updatePublicImageKey(imageId, publicKey) != 1) {
+            throw BusinessException.conflict("공개 사진 정보를 반영할 수 없습니다. 다시 조회한 뒤 시도해 주세요.");
+        }
+    }
+
+    private void cancelPublishing(String diaryId, List<PublicImageCopy> copies) {
+        try {
+            runInTransaction(() -> {
+                clearReservedPublicImageKeysInTransaction(copies);
+                careDiaryMapper.updateVisibilityIfCurrent(diaryId, PUBLISHING, PRIVATE);
+            });
+        } catch (RuntimeException cleanupFailure) {
+            log.warn("[CARE_DIARY_PUBLISH_CANCEL_FAILED] publish cancel failed - diaryId: {}", diaryId, cleanupFailure);
+        }
+    }
+
+    private void clearReservedPublicImageKeys(List<PublicImageCopy> copies) {
+        try {
+            runInTransaction(() -> clearReservedPublicImageKeysInTransaction(copies));
+        } catch (RuntimeException cleanupFailure) {
+            log.warn("[CARE_DIARY_PUBLIC_KEY_CLEAR_FAILED] reserved public key cleanup failed", cleanupFailure);
+        }
+    }
+
+    private void clearReservedPublicImageKeysInTransaction(List<PublicImageCopy> copies) {
+        for (PublicImageCopy copy : copies) {
+            if (copy.reserved()) {
+                careDiaryMapper.updatePublicImageKey(copy.imageId(), null);
+            }
         }
     }
 
@@ -442,7 +509,7 @@ public class CareDiaryServiceImpl implements CareDiaryService {
             String imageId = text(image, "imageId");
             String publicKey = text(image, "publicImageKey");
             if (publicKey != null) {
-                careDiaryMapper.updatePublicImageKey(imageId, null);
+                updatePublicImageKeyOrThrow(imageId, null);
                 publicKeys.add(publicKey);
             }
         }
@@ -459,6 +526,10 @@ public class CareDiaryServiceImpl implements CareDiaryService {
 
     private void runInTransaction(Runnable task) {
         new TransactionTemplate(transactionManager).executeWithoutResult(status -> task.run());
+    }
+
+    private record PublicImageCopy(
+            String imageId, String imageUrl, String publicKey, boolean reserved) {
     }
 
     private AdminDiaryReportListItemResponse toAdminReportListItem(Map<String, Object> row) {
