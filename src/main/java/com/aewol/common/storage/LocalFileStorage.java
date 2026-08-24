@@ -75,6 +75,16 @@ public class LocalFileStorage implements FileStorage {
         return normalize(key);
     }
 
+    @Override
+    public String createPublicKey(String key) {
+        return normalize(key);
+    }
+
+    @Override
+    public boolean publish(String key, String publicKey) {
+        return publicKey != null && publicKey.equals(normalize(key));
+    }
+
     /** 사본을 만들지 않았으므로 지울 것도 없다. 원본을 지우면 일기 자체가 깨진다. */
     @Override
     public void unpublish(String publicKey) {

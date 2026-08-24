@@ -173,6 +173,38 @@ public class S3FileStorage implements FileStorage {
     }
 
     @Override
+    public String createPublicKey(String key) {
+        if (!StringUtils.hasText(publicBaseUrl)) {
+            log.warn("[FILE_PUBLISH_DISABLED] public base URL is empty, public copy cannot be reserved");
+            return null;
+        }
+        String source = normalize(key);
+        String extension = source.contains(".") ? source.substring(source.lastIndexOf('.')) : "";
+        return publicPrefix + "/" + UUID.randomUUID() + extension;
+    }
+
+    @Override
+    public boolean publish(String key, String publicKey) {
+        if (!StringUtils.hasText(publicBaseUrl) || !StringUtils.hasText(publicKey)) {
+            log.warn("[FILE_PUBLISH_DISABLED] public base URL or public key is empty");
+            return false;
+        }
+        String source = normalize(key);
+        try {
+            s3.copyObject(CopyObjectRequest.builder()
+                    .sourceBucket(bucket)
+                    .sourceKey(source)
+                    .destinationBucket(bucket)
+                    .destinationKey(normalize(publicKey))
+                    .build());
+            return true;
+        } catch (SdkException e) {
+            log.error("[FILE_PUBLISH_FAILED] public copy failed - key: {}, publicKey: {}", key, publicKey, e);
+            return false;
+        }
+    }
+
+    @Override
     public void unpublish(String publicKey) {
         // delete와 같은 계약이다. 비공개로 되돌리는 것이 사본 삭제 실패로 막히면 안 된다.
         if (!StringUtils.hasText(publicKey)) {

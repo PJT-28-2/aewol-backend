@@ -104,7 +104,18 @@
            SET visibility = #{visibility}
         WHERE diary_id = #{diaryId}
           AND deleted_at IS NULL
-          <if test="visibility == 'PUBLIC'">
+          <if test="visibility == 'PUBLIC' or visibility == 'PUBLISHING'">
+          AND hidden_by_report_at IS NULL
+          </if>
+    </update>
+
+    <update id="updateVisibilityIfCurrent">
+        UPDATE care_diary
+           SET visibility = #{visibility}
+        WHERE diary_id = #{diaryId}
+          AND visibility = #{currentVisibility}
+          AND deleted_at IS NULL
+          <if test="visibility == 'PUBLIC' or visibility == 'PUBLISHING'">
           AND hidden_by_report_at IS NULL
           </if>
     </update>
