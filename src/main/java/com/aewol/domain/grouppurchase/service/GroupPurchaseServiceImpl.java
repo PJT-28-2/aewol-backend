@@ -506,7 +506,7 @@ public class GroupPurchaseServiceImpl implements GroupPurchaseService {
         txn.put("txnType", "REFUND");
         txn.put("price", amount);
         txn.put("category", toTxnCategory((String) gp.get("category")));
-        txn.put("merchantName", gp.get("product_name"));
+        txn.put("merchantName", "공동구매 환불");
         txn.put("merchantCategoryCode", null);
         txn.put("memo", memo);
         txn.put("autoTagged", "N");
@@ -540,7 +540,7 @@ public class GroupPurchaseServiceImpl implements GroupPurchaseService {
         txn.put("txnType", "PAYMENT");
         txn.put("price", amount);
         txn.put("category", toTxnCategory((String) gp.get("category")));
-        txn.put("merchantName", gp.get("product_name"));
+        txn.put("merchantName", "공동구매 결제");
         txn.put("merchantCategoryCode", null);
         txn.put("memo", memo);
         txn.put("autoTagged", "N");

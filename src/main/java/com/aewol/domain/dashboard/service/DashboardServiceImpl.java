@@ -77,7 +77,7 @@ public class DashboardServiceImpl implements DashboardService {
     private List<Map<String, Object>> groupByCategory(List<Map<String, Object>> rows) {
         Map<String, Map<String, Object>> grouped = new LinkedHashMap<>();
         for (Map<String, Object> row : rows) {
-            String category = String.valueOf(row.get("category"));
+            String category = normalizeCategory(row.get("category"));
             Map<String, Object> item = grouped.computeIfAbsent(category, key -> {
                 Map<String, Object> value = new LinkedHashMap<>();
                 value.put("category", key);
@@ -88,7 +88,7 @@ public class DashboardServiceImpl implements DashboardService {
             BigDecimal amount = number(row.get("amount"));
             item.put("amount", number(item.get("amount")).add(amount));
             if (row.get("pet_id") != null) {
-                petBreakdown(item).add(petItem(row, amount));
+                mergePetBreakdown(item, row, amount);
             }
         }
         return new ArrayList<>(grouped.values());
@@ -111,6 +111,27 @@ public class DashboardServiceImpl implements DashboardService {
     @SuppressWarnings("unchecked")
     private List<Map<String, Object>> petBreakdown(Map<String, Object> item) {
         return (List<Map<String, Object>>) item.get("petBreakdown");
+    }
+
+    private void mergePetBreakdown(Map<String, Object> item, Map<String, Object> row, BigDecimal amount) {
+        String petId = String.valueOf(row.get("pet_id"));
+        Map<String, Object> existing = petBreakdown(item).stream()
+                .filter(pet -> petId.equals(String.valueOf(pet.get("petId"))))
+                .findFirst()
+                .orElse(null);
+        if (existing == null) {
+            petBreakdown(item).add(petItem(row, amount));
+            return;
+        }
+        existing.put("amount", number(existing.get("amount")).add(amount));
+    }
+
+    private String normalizeCategory(Object category) {
+        if (category == null || String.valueOf(category).isBlank()
+                || "null".equalsIgnoreCase(String.valueOf(category))) {
+            return "ETC";
+        }
+        return String.valueOf(category);
     }
 
     private Map<String, Object> petItem(Map<String, Object> row, BigDecimal amount) {
