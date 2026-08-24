@@ -164,6 +164,10 @@ public class HomeInsightServiceImpl implements HomeInsightService {
                 .ctaLabel(card.getCtaLabel())
                 .ctaPath(card.getCtaPath())
                 .fallback(true)
+                // 추천 상품·도넛 데이터는 캐시가 아니라 매 요청 자바에서 계산한 값이다.
+                // 캐시 미스라고 빼면 도넛 차트만 사라진 카드가 내려간다.
+                .recommendedProducts(card.getRecommendedProducts())
+                .categoryBreakdown(card.getCategoryBreakdown())
                 .build();
     }
 
