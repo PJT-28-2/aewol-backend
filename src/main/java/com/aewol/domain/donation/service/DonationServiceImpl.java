@@ -11,10 +11,13 @@ import java.time.temporal.ChronoUnit;
 import java.util.*;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionOperations;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class DonationServiceImpl implements DonationService {
@@ -23,6 +26,7 @@ public class DonationServiceImpl implements DonationService {
             BigDecimal.TEN, BigDecimal.valueOf(100), BigDecimal.valueOf(1000));
 
     private final DonationMapper donationMapper;
+    private final TransactionOperations transactionOperations;
     @Value("${donation.show-demo-campaigns:true}")
     private boolean showDemoCampaigns = true;
 
@@ -231,8 +235,17 @@ public class DonationServiceImpl implements DonationService {
                 .build();
     }
 
+    /**
+     * 월말 자동기부 후보를 회원마다 따로 커밋한다.
+     *
+     * <p>한 트랜잭션에 전원 넣으면 뒤쪽 회원 한 명의 잔액·캠페인 오류가 앞에서 끝난 기부까지
+     * 되돌린다. 배치는 월 1회라 그달 기부를 전원 놓치게 된다. 잔돈 적립이 건별 트랜잭션인
+     * 것과 같은 이유다.
+     *
+     * <p>후보 목록 조회는 트랜잭션 밖이고, 기부·완료 표시만 회원 단위로 묶는다. 한 명이
+     * 실패해도 다음 회원을 계속 처리한다.
+     */
     @Override
-    @Transactional
     public int processMonthlyAutoDonations(String yearMonth) {
         if (yearMonth == null || !yearMonth.matches("\\d{4}-(0[1-9]|1[0-2])")) {
             throw new BusinessException("자동 기부 기준 월 형식이 올바르지 않습니다.");
@@ -240,23 +253,44 @@ public class DonationServiceImpl implements DonationService {
         int completedCount = 0;
         for (Map<String, Object> candidate : donationMapper.findMonthlyAutoDonationCandidates(yearMonth)) {
             String memberId = text(candidate, "memberId", "member_id");
-            String campaignId = text(candidate, "campaignId", "campaign_id");
-            String idempotencyKey = "auto-" + memberId + "-" + yearMonth;
-            Map<String, Object> existing = donationMapper.findHistoryByIdempotencyKey(memberId, idempotencyKey);
-            if (existing == null) {
-                Map<String, Object> campaign = donationMapper.findCampaignById(campaignId);
-                if (campaign == null || !visibleCampaign(campaign)) continue;
-                Map<String, Object> pot = getOrCreatePotForUpdate(memberId);
-                BigDecimal amount = decimal(pot, "balance");
-                if (amount.signum() <= 0) continue;
-                donateToCampaign(memberId, campaign, amount, idempotencyKey);
-                completedCount++;
-            }
-            if (donationMapper.markAutoDonationCompleted(memberId, yearMonth) != 1) {
-                throw BusinessException.conflict("월말 자동 기부 상태를 반영하지 못했습니다.");
+            try {
+                Integer donated = transactionOperations.execute(status ->
+                        processOneMonthlyAutoDonation(candidate, yearMonth));
+                if (donated != null && donated == 1) {
+                    completedCount++;
+                }
+            } catch (RuntimeException e) {
+                log.error("[Batch] 월말 자동 기부 처리 실패 — memberId={}, yearMonth={}",
+                        memberId, yearMonth, e);
             }
         }
         return completedCount;
+    }
+
+    /** @return 이번에 저금통 전액을 기부했으면 1, 건너뛰었으면 0 */
+    private Integer processOneMonthlyAutoDonation(Map<String, Object> candidate, String yearMonth) {
+        String memberId = text(candidate, "memberId", "member_id");
+        String campaignId = text(candidate, "campaignId", "campaign_id");
+        String idempotencyKey = "auto-" + memberId + "-" + yearMonth;
+        Map<String, Object> existing = donationMapper.findHistoryByIdempotencyKey(memberId, idempotencyKey);
+        int donated = 0;
+        if (existing == null) {
+            Map<String, Object> campaign = donationMapper.findCampaignById(campaignId);
+            if (campaign == null || !visibleCampaign(campaign)) {
+                return 0;
+            }
+            Map<String, Object> pot = getOrCreatePotForUpdate(memberId);
+            BigDecimal amount = decimal(pot, "balance");
+            if (amount.signum() <= 0) {
+                return 0;
+            }
+            donateToCampaign(memberId, campaign, amount, idempotencyKey);
+            donated = 1;
+        }
+        if (donationMapper.markAutoDonationCompleted(memberId, yearMonth) != 1) {
+            throw BusinessException.conflict("월말 자동 기부 상태를 반영하지 못했습니다.");
+        }
+        return donated;
     }
 
     private Map<String, Object> getOrCreatePot(String memberId) {
