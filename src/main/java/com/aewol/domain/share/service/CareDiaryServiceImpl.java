@@ -37,6 +37,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
@@ -233,7 +234,7 @@ public class CareDiaryServiceImpl implements CareDiaryService {
         }
 
         if (PUBLIC.equals(visibility)) {
-            publishPublicImagesAndChangeVisibility(diaryId, images);
+            publishPublicImagesAndChangeVisibility(diaryId, text(row, "visibility"), images);
             return getDetail(memberId, diaryId);
         }
 
@@ -246,19 +247,30 @@ public class CareDiaryServiceImpl implements CareDiaryService {
         return getDetail(memberId, diaryId);
     }
 
-    /** 사본을 모두 만든 뒤에만 호출부가 PUBLIC으로 바꾼다. 하나라도 실패하면 공개하지 않는다. */
+    /**
+     * 사본을 모두 만든 뒤에만 호출부가 PUBLIC으로 바꾼다. 하나라도 실패하면 공개하지 않는다.
+     *
+     * <p>PRIVATE/PUBLIC(부분 공개) → PUBLISHING 전이는 {@code fromVisibility}를 조건으로 하는
+     * CAS로 건다. 같은 일기에 대한 중복 요청(더블클릭, 재시도)이 동시에 들어오면 둘 다 같은
+     * 사본 키를 예약(reserve)하려 들 수 있는데, CAS에서 진 요청은 이 트랜잭션 전체가
+     * 롤백되어 예약도 함께 취소되므로 이긴 요청이 만든 키를 건드리지 않는다. 즉 이 전이에서
+     * 진 요청은 자신이 PUBLISHING을 소유한 적이 없으므로 별도 취소(cancelPublishing) 없이
+     * 그대로 예외를 전달한다.
+     */
     private void publishPublicImagesAndChangeVisibility(
-            String diaryId, List<Map<String, Object>> images) {
+            String diaryId, String fromVisibility, List<Map<String, Object>> images) {
         List<PublicImageCopy> copies = preparePublicImageCopies(
                 images, "사진을 공개하지 못했어요. 잠시 후 다시 시도해 주세요.");
+        runInTransaction(() -> {
+            reserveMissingPublicImageKeys(copies);
+            if (careDiaryMapper.updateVisibilityIfCurrent(diaryId, fromVisibility, PUBLISHING) != 1) {
+                throw BusinessException.conflict(
+                        "다른 요청이 이미 처리 중이에요. 잠시 후 다시 시도해 주세요.");
+            }
+        });
+
         List<String> publishedPublicKeys = new ArrayList<>();
         try {
-            runInTransaction(() -> {
-                reserveMissingPublicImageKeys(copies);
-                if (careDiaryMapper.updateVisibility(diaryId, PUBLISHING) != 1) {
-                    throw BusinessException.notFound("공개 여부를 바꿀 일기를 찾을 수 없습니다.");
-                }
-            });
             publishPublicCopies(copies, publishedPublicKeys,
                     "사진을 공개하지 못했어요. 잠시 후 다시 시도해 주세요.");
             runInTransaction(() -> {
@@ -471,15 +483,17 @@ public class CareDiaryServiceImpl implements CareDiaryService {
         }
     }
 
+    /** 이미 공개 사본이 있던(reserved=false) 이미지는 건너뛴다. 새로 예약한 것만 S3에 복사하면 된다. */
     private void publishPublicCopies(
             List<PublicImageCopy> copies, List<String> publishedPublicKeys, String conflictMessage) {
         for (PublicImageCopy copy : copies) {
+            if (!copy.reserved()) {
+                continue;
+            }
             if (!fileStorage.publish(copy.imageUrl(), copy.publicKey())) {
                 throw BusinessException.conflict(conflictMessage);
             }
-            if (copy.reserved()) {
-                publishedPublicKeys.add(copy.publicKey());
-            }
+            publishedPublicKeys.add(copy.publicKey());
         }
     }
 
@@ -539,8 +553,14 @@ public class CareDiaryServiceImpl implements CareDiaryService {
         inquiryMapper.answerWaitingLinkedToDiary(diaryId, inquiryAnswer);
     }
 
+    /**
+     * 항상 새 트랜잭션을 연다. REQUIRED(기본값)를 쓰면 이미 {@code @Transactional} 메서드
+     * 안에서 호출됐을 때 이 분리가 조용히 무력화되어 S3 호출 동안 커넥션을 계속 물게 된다.
+     */
     private void runInTransaction(Runnable task) {
-        new TransactionTemplate(transactionManager).executeWithoutResult(status -> task.run());
+        TransactionTemplate template = new TransactionTemplate(transactionManager);
+        template.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+        template.executeWithoutResult(status -> task.run());
     }
 
     private record PublicImageCopy(

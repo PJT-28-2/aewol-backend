@@ -156,8 +156,7 @@ public class S3FileStorage implements FileStorage {
             return null;
         }
         String source = normalize(key);
-        String extension = source.contains(".") ? source.substring(source.lastIndexOf('.')) : "";
-        String publicKey = publicPrefix + "/" + UUID.randomUUID() + extension;
+        String publicKey = publicPrefix + "/" + UUID.randomUUID() + extractExtension(source);
         try {
             s3.copyObject(CopyObjectRequest.builder()
                     .sourceBucket(bucket)
@@ -179,8 +178,14 @@ public class S3FileStorage implements FileStorage {
             return null;
         }
         String source = normalize(key);
-        String extension = source.contains(".") ? source.substring(source.lastIndexOf('.')) : "";
-        return publicPrefix + "/" + UUID.randomUUID() + extension;
+        return publicPrefix + "/" + UUID.randomUUID() + extractExtension(source);
+    }
+
+    /** 마지막 '/' 이후 구간에서만 확장자를 찾는다. 디렉터리 이름에 점이 있어도 안전하다. */
+    private static String extractExtension(String path) {
+        int lastSlash = path.lastIndexOf('/');
+        int lastDot = path.lastIndexOf('.');
+        return lastDot > lastSlash ? path.substring(lastDot) : "";
     }
 
     @Override

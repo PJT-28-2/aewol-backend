@@ -63,7 +63,8 @@ class CareDiaryServiceImplTest {
         });
         lenient().when(fileStorage.publish(anyString(), anyString())).thenReturn(true);
         lenient().when(careDiaryMapper.updatePublicImageKey(anyString(), nullable(String.class))).thenReturn(1);
-        lenient().when(careDiaryMapper.updateVisibility(anyString(), eq("PUBLISHING"))).thenReturn(1);
+        lenient().when(careDiaryMapper.updateVisibilityIfCurrent(anyString(), eq("PRIVATE"), eq("PUBLISHING"))).thenReturn(1);
+        lenient().when(careDiaryMapper.updateVisibilityIfCurrent(anyString(), eq("PUBLIC"), eq("PUBLISHING"))).thenReturn(1);
         lenient().when(careDiaryMapper.updateVisibilityIfCurrent(anyString(), eq("PUBLISHING"), eq("PUBLIC"))).thenReturn(1);
         lenient().when(careDiaryMapper.updateVisibilityIfCurrent(anyString(), eq("PUBLISHING"), eq("PRIVATE"))).thenReturn(1);
     }
@@ -446,7 +447,7 @@ class CareDiaryServiceImplTest {
         assertEquals("PUBLIC", result.getVisibility());
         verify(careDiaryMapper).updatePublicImageKey("img-1", "public/a.png");
         var inOrder = inOrder(careDiaryMapper, fileStorage);
-        inOrder.verify(careDiaryMapper).updateVisibility("diary-1", "PUBLISHING");
+        inOrder.verify(careDiaryMapper).updateVisibilityIfCurrent("diary-1", "PRIVATE", "PUBLISHING");
         inOrder.verify(fileStorage).publish("diary/a.png", "public/a.png");
         inOrder.verify(careDiaryMapper).updateVisibilityIfCurrent("diary-1", "PUBLISHING", "PUBLIC");
     }
@@ -509,7 +510,7 @@ class CareDiaryServiceImplTest {
                 () -> service.changeVisibility("owner-1", "diary-1", visibilityRequest("PUBLIC")));
 
         assertEquals(409, exception.getStatus().value());
-        verify(careDiaryMapper).updateVisibility("diary-1", "PUBLISHING");
+        verify(careDiaryMapper).updateVisibilityIfCurrent("diary-1", "PRIVATE", "PUBLISHING");
         verify(careDiaryMapper).updateVisibilityIfCurrent("diary-1", "PUBLISHING", "PRIVATE");
         verify(careDiaryMapper, never()).updateVisibilityIfCurrent("diary-1", "PUBLISHING", "PUBLIC");
     }
@@ -530,7 +531,7 @@ class CareDiaryServiceImplTest {
 
         assertEquals(409, exception.getStatus().value());
         verify(fileStorage, never()).publish(anyString(), anyString());
-        verify(careDiaryMapper, never()).updateVisibility("diary-1", "PUBLISHING");
+        verify(careDiaryMapper, never()).updateVisibilityIfCurrent(eq("diary-1"), anyString(), eq("PUBLISHING"));
         verify(careDiaryMapper, never()).updateVisibilityIfCurrent("diary-1", "PUBLISHING", "PUBLIC");
     }
 
@@ -552,7 +553,7 @@ class CareDiaryServiceImplTest {
         assertEquals(409, exception.getStatus().value());
         verify(fileStorage).unpublish("public/a.png");
         verify(fileStorage, never()).unpublish("public/b.png");
-        verify(careDiaryMapper).updateVisibility("diary-1", "PUBLISHING");
+        verify(careDiaryMapper).updateVisibilityIfCurrent("diary-1", "PRIVATE", "PUBLISHING");
         verify(careDiaryMapper).updateVisibilityIfCurrent("diary-1", "PUBLISHING", "PRIVATE");
         verify(careDiaryMapper, never()).updateVisibilityIfCurrent("diary-1", "PUBLISHING", "PUBLIC");
     }
@@ -771,7 +772,7 @@ class CareDiaryServiceImplTest {
 
         service.changeVisibility("member-2", "diary-1", visibilityRequest("PUBLIC"));
 
-        verify(careDiaryMapper).updateVisibility("diary-1", "PUBLISHING");
+        verify(careDiaryMapper).updateVisibilityIfCurrent("diary-1", "PRIVATE", "PUBLISHING");
         verify(careDiaryMapper).updateVisibilityIfCurrent("diary-1", "PUBLISHING", "PUBLIC");
     }
 
@@ -1030,6 +1031,7 @@ class CareDiaryServiceImplTest {
                 "diaryDate", java.sql.Date.valueOf(diaryDate),
                 "content", content,
                 "version", 3L,
+                "visibility", "PRIVATE",
                 "createdAt", java.sql.Timestamp.valueOf(diaryDate + " 09:00:00"));
     }
 
