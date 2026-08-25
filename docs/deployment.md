@@ -303,6 +303,92 @@ OCR 추론 중 OOM으로 컨테이너가 죽는다.
   compose에서 `ports`를 추가할 때는 이 점을 염두에 둔다.
 - Redis에 인증이 걸려 있지 않다. compose 네트워크 밖으로 노출하게 된다면
   `requirepass` 설정이 반드시 선행되어야 한다.
+- Prometheus(9090)·Grafana(3000)는 **127.0.0.1에만** 연다. 보안그룹에 포트를 추가하지
+  않는다. 화면은 아래 SSM 포트 포워딩으로만 본다.
+
+## 운영 메트릭
+
+로컬과 같은 Prometheus·Grafana를 운영 EC2에도 띄울 수 있다. #343이 로컬만 넣었고,
+운영은 토큰과 비밀번호를 SSM에 둔 뒤에야 켜진다.
+
+### SSM 파라미터
+
+한 번만 넣는다. 값은 워크플로가 알지 못한다.
+
+```bash
+aws ssm put-parameter --name /aewol/prod/METRICS_TOKEN --type SecureString \
+  --value "$(openssl rand -hex 32)" --overwrite
+aws ssm put-parameter --name /aewol/prod/GRAFANA_ADMIN_USER --type String \
+  --value admin --overwrite
+aws ssm put-parameter --name /aewol/prod/GRAFANA_ADMIN_PASSWORD --type SecureString \
+  --value '<강한 비밀번호>' --overwrite
+```
+
+다음 배포부터 `deploy.sh`가 `--profile monitoring`을 붙인다. 두 값이 없으면 예전처럼
+앱만 뜬다.
+
+### 화면 보기 (발표·점검)
+
+보안그룹을 열지 않는다. 노트북에서 Grafana로 터널을 연다.
+
+```bash
+aws ssm start-session --target i-0b63ce3e8f7d98f9d \
+  --document-name AWS-StartPortForwardingSession \
+  --parameters '{"portNumber":["3000"],"localPortNumber":["3000"]}'
+```
+
+브라우저에서 http://localhost:3000 으로 들어가 SSM에 넣어 둔 Grafana 계정으로 로그인한다.
+대시보드 `애월 운영 지표`가 프로비저닝되어 있다. 환경 변수는 `prod`로 둔다.
+
+Prometheus가 필요하면 같은 방식으로 9090을 연다.
+
+### 발표에 쓰기 좋은 값
+
+| 화면 | 무엇을 보여 주나 |
+| --- | --- |
+| 커넥션 대기 | 0이면 풀이 버티고 있다. 1 이상이면 #338 같은 고갈 |
+| 사용 중 커넥션 | 최대 10 |
+| 배치 대기 | 0이면 스케줄러 풀이 충분하다. 1 이상이면 #348 |
+| HTTP 요청/초 · p95 | 트래픽과 API 지연 |
+| API별 요청 수 | 어느 경로가 불리는지 |
+
+OCR과 같이 두면 메모리를 더 쓴다. Prometheus·Grafana는 각각 384MB로 상한을 걸어 두었다.
+
+### 부하 테스트 (k6)
+
+k6는 운영 EC2에 올리지 않는다. 같은 머신에서 부하를 넣으면 앱 CPU와 테스트 CPU가
+섞인다. 노트북에서 `https://aewol.store`로 요청을 보내고, Prometheus remote write만
+터널로 넣는다.
+
+Grafana(3000)와 Prometheus(9090)를 각각 연다.
+
+```bash
+aws ssm start-session --target i-0b63ce3e8f7d98f9d \
+  --document-name AWS-StartPortForwardingSession \
+  --parameters '{"portNumber":["3000"],"localPortNumber":["3000"]}'
+
+aws ssm start-session --target i-0b63ce3e8f7d98f9d \
+  --document-name AWS-StartPortForwardingSession \
+  --parameters '{"portNumber":["9090"],"localPortNumber":["9090"]}'
+```
+
+k6가 설치되어 있으면 (PowerShell):
+
+```powershell
+$env:BASE_URL = "https://aewol.store"
+$env:ALLOW_PROD = "1"
+$env:K6_EMAIL = "<시연 계정>"
+$env:K6_PASSWORD = "<시연 비밀번호>"
+$env:K6_PROMETHEUS_RW_SERVER_URL = "http://127.0.0.1:9090/api/v1/write"
+$env:K6_PROMETHEUS_RW_TREND_STATS = "p(95),p(99),avg"
+k6 run -o experimental-prometheus-rw scripts/k6/read-path.js
+```
+
+Docker로 돌릴 때는 Prometheus가 compose 네트워크에 있으므로, 운영 터널 대신 로컬
+모니터링 스택을 쓰는 경우가 맞다. 운영 부하는 위의 호스트 k6가 맞다.
+
+Grafana에서 `애월 부하 테스트`를 연다. k6 VU가 올라갈 때 서버 p95·CPU·커넥션 대기가
+같이 움직이는지 본다.
 
 ## 파일 저장소 (S3)
 

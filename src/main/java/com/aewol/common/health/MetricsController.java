@@ -43,15 +43,30 @@ public class MetricsController {
 
     @GetMapping(value = "/api/metrics", produces = MediaType.TEXT_PLAIN_VALUE)
     public ResponseEntity<String> scrape(
-            @RequestHeader(value = "X-Metrics-Token", required = false) String token) {
+            @RequestHeader(value = "X-Metrics-Token", required = false) String headerToken,
+            @RequestHeader(value = "Authorization", required = false) String authorization) {
         if (!StringUtils.hasText(expectedToken)) {
             return ResponseEntity.notFound().build();
         }
-        if (!matches(token)) {
+        if (!matches(resolveToken(headerToken, authorization))) {
             // 토큰이 틀렸다는 사실도 알려주지 않는다. 존재 여부부터 숨긴다.
             return ResponseEntity.notFound().build();
         }
         return ResponseEntity.ok(registry.scrape());
+    }
+
+    /**
+     * 로컬 Prometheus는 커스텀 헤더를 쓰고, 운영은 {@code credentials_file}로 Bearer를 보낸다.
+     * 둘 다 같은 시크릿이다. 커스텀 헤더가 있으면 그쪽을 우선한다.
+     */
+    private static String resolveToken(String headerToken, String authorization) {
+        if (StringUtils.hasText(headerToken)) {
+            return headerToken;
+        }
+        if (authorization != null && authorization.regionMatches(true, 0, "Bearer ", 0, 7)) {
+            return authorization.substring(7);
+        }
+        return authorization;
     }
 
     /**

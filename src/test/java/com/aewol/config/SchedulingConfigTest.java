@@ -8,6 +8,7 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.config.BeanDefinition;
@@ -29,7 +30,7 @@ class SchedulingConfigTest {
     @Test
     @DisplayName("스케줄러 빈이 여러 스레드를 쓴다")
     void should_provideMultiThreadedScheduler() {
-        TaskScheduler scheduler = new SchedulingConfig().taskScheduler();
+        TaskScheduler scheduler = new SchedulingConfig().taskScheduler(new SimpleMeterRegistry());
 
         assertInstanceOf(ThreadPoolTaskScheduler.class, scheduler);
         ThreadPoolTaskScheduler pooled = (ThreadPoolTaskScheduler) scheduler;
@@ -51,7 +52,8 @@ class SchedulingConfigTest {
         Map<String, Integer> jobsByClass = scheduledJobs();
         int total = jobsByClass.values().stream().mapToInt(Integer::intValue).sum();
 
-        ThreadPoolTaskScheduler pooled = (ThreadPoolTaskScheduler) new SchedulingConfig().taskScheduler();
+        ThreadPoolTaskScheduler pooled = (ThreadPoolTaskScheduler) new SchedulingConfig()
+                .taskScheduler(new SimpleMeterRegistry());
 
         assertTrue(pooled.getPoolSize() >= total,
                 "배치가 " + total + "개인데 스레드는 " + pooled.getPoolSize() + "개다. "
@@ -93,7 +95,8 @@ class SchedulingConfigTest {
     @Test
     @DisplayName("긴 배치가 도는 동안에도 다른 배치가 시작한다")
     void should_notWaitForRunningJob_beforeStartingAnother() throws Exception {
-        ThreadPoolTaskScheduler pooled = (ThreadPoolTaskScheduler) new SchedulingConfig().taskScheduler();
+        ThreadPoolTaskScheduler pooled = (ThreadPoolTaskScheduler) new SchedulingConfig()
+                .taskScheduler(new SimpleMeterRegistry());
         pooled.initialize();
         try {
             CountDownLatch longJobStarted = new CountDownLatch(1);
@@ -117,6 +120,26 @@ class SchedulingConfigTest {
                     "긴 배치가 끝나기를 기다렸다 — 스레드가 부족하다.");
 
             releaseLongJob.countDown();
+        } finally {
+            pooled.shutdown();
+        }
+    }
+
+    @Test
+    @DisplayName("스케줄러 풀 상태를 메트릭으로 내보낸다")
+    void should_exportExecutorMetrics() {
+        SimpleMeterRegistry registry = new SimpleMeterRegistry();
+        ThreadPoolTaskScheduler pooled = (ThreadPoolTaskScheduler) new SchedulingConfig()
+                .taskScheduler(registry);
+        pooled.afterPropertiesSet();
+        try {
+            assertTrue(registry.getMeters().stream().anyMatch(meter ->
+                            meter.getId().getName().startsWith("executor")
+                                    && "batch".equals(meter.getId().getTag("name"))),
+                    "executor.queued가 있어야 풀 포화를 운영에서 볼 수 있다. 등록된 미터: "
+                            + registry.getMeters().stream()
+                            .map(meter -> meter.getId().toString())
+                            .toList());
         } finally {
             pooled.shutdown();
         }

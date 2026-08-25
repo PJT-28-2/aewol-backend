@@ -220,6 +220,7 @@ docker compose --profile monitoring up -d
 
 - Prometheus http://localhost:9090
 - Grafana http://localhost:3000 (로컬 전용이라 로그인 없이 열린다)
+- 대시보드 `애월 운영 지표`가 처음부터 붙어 있다
 
 무엇부터 보면 되는지.
 
@@ -228,11 +229,31 @@ docker compose --profile monitoring up -d
 | `hikaricp_connections_pending` | 커넥션을 못 얻고 기다리는 스레드. **0보다 크면 풀이 부족하거나 무언가 커넥션을 오래 쥐고 있다** |
 | `hikaricp_connections_active` | 사용 중인 커넥션. 최대 10개(`DataSourceConfig`) |
 | `http_server_requests_seconds` | API별 소요 시간. `uri` 태그는 `/api/pets/{petId}` 같은 패턴이다 |
+| `executor_queued_tasks{name="batch"}` | 스케줄러 대기. **0보다 크면 배치가 줄을 서고 있다** |
 
 Prometheus는 JWT를 갱신할 수 없어 `X-Metrics-Token` 헤더로 스크레이핑한다
 (`monitoring/prometheus.yml`).
 
-운영 환경 구성은 배포 담당과 상의가 필요해 아직 로컬까지만 있다.
+운영 EC2에도 같은 스택을 띄울 수 있다. 보안그룹은 늘리지 않고 127.0.0.1만 연다.
+`METRICS_TOKEN`과 `GRAFANA_ADMIN_PASSWORD`를 SSM에 두면 다음 배포부터 켜진다.
+보는 방법은 `docs/deployment.md`의 운영 메트릭을 따른다.
+
+## 부하 테스트 (k6 + Prometheus + Grafana)
+
+k6가 부하를 넣고, 같은 Prometheus에 remote write 한 뒤 Grafana에서 서버 CPU·힙·API
+지연과 한 화면으로 본다. 결제·충전·OCR·캐릭터 생성은 시나리오에 넣지 않았다.
+
+```bash
+METRICS_TOKEN=local-scrape-secret ./gradlew run
+docker compose --profile monitoring up -d
+docker compose --profile monitoring --profile loadtest run --rm k6
+```
+
+Grafana http://localhost:3000 의 `애월 부하 테스트` 대시보드를 연다. 새로고침은 5초다.
+
+운영을 치려면 k6는 **노트북에서** 돌린다. 앱과 같은 EC2에서 돌리면 CPU가 섞여 측정이
+무의미하다. `ALLOW_PROD=1`이 없으면 공개 호스트는 거절한다. 절차는
+`docs/deployment.md`를 따른다.
 
 ## 브랜치 전략
 

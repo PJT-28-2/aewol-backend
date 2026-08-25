@@ -1,6 +1,7 @@
 # 로컬에서 메트릭을 눈으로 보기 위한 최소 설정.
 #
-# 운영 환경 구성은 배포 담당과 상의가 필요해 여기서는 로컬까지만 다룬다.
+# k6 부하는 Prometheus remote write로 들어온다(compose의 --web.enable-remote-write-receiver).
+# 운영 스크레이프 대상은 docker-compose.prod.yml + prometheus.prod.yml 쪽이다.
 global:
   scrape_interval: 5s
   evaluation_interval: 15s

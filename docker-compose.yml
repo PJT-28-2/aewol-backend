@@ -57,6 +57,12 @@ services:
     ports:
       # 로컬 메트릭과 설정을 같은 네트워크의 다른 기기에 노출하지 않는다.
       - "127.0.0.1:${PROMETHEUS_PORT:-9090}:9090"
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --web.enable-lifecycle
+      # k6가 부하 중 지표를 같은 Prometheus로 밀어 넣는다.
+      - --web.enable-remote-write-receiver
     volumes:
       - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus-data:/prometheus
@@ -76,6 +82,28 @@ services:
     volumes:
       - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
       - grafana-data:/var/lib/grafana
+    depends_on:
+      - prometheus
+
+  # 한 번 돌리고 끝낸다. 앱과 같은 머신에서 상시 up 하지 않는다.
+  #   docker compose --profile monitoring up -d
+  #   docker compose --profile monitoring --profile loadtest run --rm k6
+  k6:
+    image: grafana/k6:0.54.0
+    container_name: aewol-k6
+    profiles: ["loadtest"]
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      BASE_URL: ${K6_BASE_URL:-http://host.docker.internal:8080}
+      K6_EMAIL: ${K6_EMAIL:-owner@example.test}
+      K6_PASSWORD: ${K6_PASSWORD:-test1234}
+      ALLOW_PROD: ${ALLOW_PROD:-0}
+      K6_PROMETHEUS_RW_SERVER_URL: http://prometheus:9090/api/v1/write
+      K6_PROMETHEUS_RW_TREND_STATS: p(95),p(99),avg
+    volumes:
+      - ./scripts/k6:/scripts:ro
+    command: ["run", "-o", "experimental-prometheus-rw", "/scripts/read-path.js"]
     depends_on:
       - prometheus
 

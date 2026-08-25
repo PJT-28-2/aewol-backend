@@ -41,6 +41,26 @@ aws ecr get-login-password --region "$REGION" \
 log "SSM에서 환경변수 내려받기"
 APP_IMAGE="$APP_IMAGE" OCR_IMAGE="$OCR_IMAGE" OUT="$APP_DIR/.env.prod" ./scripts/fetch-env.sh
 
+has_env_value() {
+    local line
+    line="$(grep -E "^${1}=" .env.prod || true)"
+    [ -n "$line" ] && [ "${line#*=}" != "" ]
+}
+
+# Prometheus·Grafana는 보안그룹에 포트를 추가하지 않는다. 토큰과 비밀번호가
+# 있을 때만 프로파일을 켠다. 없으면 예전처럼 앱만 뜬다.
+if has_env_value METRICS_TOKEN && has_env_value GRAFANA_ADMIN_PASSWORD; then
+    mkdir -p monitoring
+    umask 077
+    awk -F= '/^METRICS_TOKEN=/ { print substr($0, index($0, "=") + 1); exit }' .env.prod \
+        | tr -d '\r' > monitoring/metrics_token
+    chmod 600 monitoring/metrics_token
+    COMPOSE+=(--profile monitoring)
+    log "모니터링 프로파일 사용 (Prometheus·Grafana는 127.0.0.1만 연다)"
+else
+    log "모니터링 건너뜀 (METRICS_TOKEN 또는 GRAFANA_ADMIN_PASSWORD 없음)"
+fi
+
 # 마이그레이션 직전 백업. 스키마 변경은 되돌릴 수 없고(Flyway는 forward-only), DB가
 # 애플리케이션과 같은 인스턴스에 있어 별도 복제본이 없다. 실패하면 배포를 진행하지 않는다.
 if [ "${SKIP_BACKUP:-0}" = "1" ]; then

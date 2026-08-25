@@ -1,5 +1,7 @@
 package com.aewol.config;
 
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.binder.jvm.ExecutorServiceMetrics;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.scheduling.TaskScheduler;
@@ -9,7 +11,7 @@ import org.springframework.scheduling.concurrent.ThreadPoolTaskScheduler;
  * 스케줄 배치가 쓰는 스레드 풀.
  *
  * <p>빈을 두지 않으면 Spring은 <b>스레드 1개짜리</b> 스케줄러를 기본으로 쓴다. 지금 배치가
- * 스케줄 메서드가 9개라 하나가 길어지면 나머지가 전부 그 뒤에 줄을 선다.
+ * 스케줄 메서드가 10개라 하나가 길어지면 나머지가 전부 그 뒤에 줄을 선다.
  *
  * <p>실제로 겹칠 수 있는 조합이 있다. 홈 인사이트 예열(04:30)은 전 회원을 순회하며 회원당
  * LLM을 1~2초씩 호출하므로, 회원이 만 명이면 서너 시간이 걸린다. 그동안 09시 정기결제가
@@ -36,11 +38,19 @@ public class SchedulingConfig {
      * <p>잡을 추가하면 이 값도 같이 올려야 한다. 주석으로만 남기면 놓치기 쉬워
      * {@code SchedulingConfigTest}가 실제 {@code @Scheduled} 개수를 세어 확인한다.
      */
-    private static final int POOL_SIZE = 9;
+    private static final int POOL_SIZE = 10;
 
     @Bean
-    public TaskScheduler taskScheduler() {
-        ThreadPoolTaskScheduler scheduler = new ThreadPoolTaskScheduler();
+    public TaskScheduler taskScheduler(MeterRegistry registry) {
+        ThreadPoolTaskScheduler scheduler = new ThreadPoolTaskScheduler() {
+            @Override
+            public void afterPropertiesSet() {
+                super.afterPropertiesSet();
+                // 풀이 부족해 배치가 줄을 서면 executor.queued가 0보다 커진다.
+                // 주석과 테스트만으로는 운영 중에 그 순간을 알 수 없다(#348).
+                ExecutorServiceMetrics.monitor(registry, getScheduledThreadPoolExecutor(), "batch");
+            }
+        };
         scheduler.setPoolSize(POOL_SIZE);
         // 로그에서 어느 배치가 남긴 줄인지 보이게 한다. 배치는 요청 추적 id(#327)가 붙지 않는
         // 경로라 스레드 이름이 유일한 단서다.
