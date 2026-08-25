@@ -278,12 +278,13 @@ public class CareDiaryServiceImpl implements CareDiaryService {
     private void publishPublicImagesAndChangeVisibility(String diaryId) {
         String token = UUID.randomUUID().toString();
         LocalDateTime staleBefore = LocalDateTime.now().minus(PUBLISH_LOCK_TIMEOUT);
+        List<String> supersededPublicKeys = new ArrayList<>();
         AtomicReference<List<PublicImageCopy>> copiesHolder = new AtomicReference<>();
         runInTransaction(() -> {
             boolean reclaimed = acquirePublishingSlot(diaryId, token, staleBefore);
             List<Map<String, Object>> currentImages = careDiaryMapper.findImagesForPublish(diaryId);
             List<PublicImageCopy> copies = preparePublicImageCopies(currentImages, reclaimed,
-                    "사진을 공개하지 못했어요. 잠시 후 다시 시도해 주세요.");
+                    supersededPublicKeys, "사진을 공개하지 못했어요. 잠시 후 다시 시도해 주세요.");
             reserveMissingPublicImageKeys(copies);
             copiesHolder.set(copies);
         });
@@ -298,6 +299,11 @@ public class CareDiaryServiceImpl implements CareDiaryService {
                     throw BusinessException.notFound("공개 여부를 바꿀 일기를 찾을 수 없습니다.");
                 }
             });
+            // 우리 시도가 커밋된 뒤에만, 회수 과정에서 밀려난 예전 키의 실제 객체를 정리한다.
+            // 이전 시도가 사실 아직 살아서 같은 경로에 객체를 다시 만들 수도 있는 잔여
+            // 위험까지 없애려면, 이 정리와는 별개로 버킷 lifecycle 정책 같은 최종 안전망을
+            // 두는 편이 안전하다.
+            supersededPublicKeys.forEach(this::unpublishQuietly);
         } catch (RuntimeException e) {
             publishedPublicKeys.forEach(this::unpublishQuietly);
             cancelPublishing(diaryId, token, copies);
@@ -491,12 +497,13 @@ public class CareDiaryServiceImpl implements CareDiaryService {
         }
         String token = UUID.randomUUID().toString();
         LocalDateTime staleBefore = LocalDateTime.now().minus(PUBLISH_LOCK_TIMEOUT);
+        List<String> supersededPublicKeys = new ArrayList<>();
         AtomicReference<List<PublicImageCopy>> copiesHolder = new AtomicReference<>();
         runInTransaction(() -> {
             boolean reclaimed = acquireRestoreSlot(diaryId, token, staleBefore);
             List<Map<String, Object>> currentImages = careDiaryMapper.findImagesForPublish(diaryId);
             List<PublicImageCopy> copies = preparePublicImageCopies(currentImages, reclaimed,
-                    "게시물 사진을 복원하지 못했습니다. 잠시 후 다시 시도해 주세요.");
+                    supersededPublicKeys, "게시물 사진을 복원하지 못했습니다. 잠시 후 다시 시도해 주세요.");
             reserveMissingPublicImageKeys(copies);
             copiesHolder.set(copies);
         });
@@ -507,12 +514,22 @@ public class CareDiaryServiceImpl implements CareDiaryService {
             publishPublicCopies(copies, publishedPublicKeys,
                     "게시물 사진을 복원하지 못했습니다. 잠시 후 다시 시도해 주세요.");
             runInTransaction(() -> {
+                // 이 트랜잭션이 시작되기 전에 토큰을 다른 요청에게 가로채였다면(5분 넘게 걸린
+                // S3 복사 도중 회수당한 경우) 여기서 실패시켜 restoreByReport와
+                // resolvePendingReports까지 통째로 롤백한다 — 그러지 않으면 이미 소유권을
+                // 잃은 요청이 신고 처리를 그대로 커밋해버릴 수 있다(리뷰로 발견).
+                if (careDiaryMapper.releasePublishToken(diaryId, token) != 1) {
+                    throw BusinessException.conflict(
+                            "다른 관리자가 이미 이 게시물을 복원하고 있어요. 잠시 후 다시 시도해 주세요.");
+                }
                 if (careDiaryMapper.restoreByReport(diaryId) != 1) {
                     throw BusinessException.conflict("게시물을 복원할 수 없습니다.");
                 }
                 resolvePendingReports(diaryId, resolution, adminNote, adminId);
-                careDiaryMapper.releasePublishToken(diaryId, token);
             });
+            // publishPublicImagesAndChangeVisibility와 같은 이유로, 커밋이 끝난 뒤에만 회수
+            // 과정에서 밀려난 예전 키를 정리한다.
+            supersededPublicKeys.forEach(this::unpublishQuietly);
         } catch (RuntimeException e) {
             publishedPublicKeys.forEach(this::unpublishQuietly);
             releaseAndClearReservedPublicImageKeys(diaryId, token, copies);
@@ -524,16 +541,25 @@ public class CareDiaryServiceImpl implements CareDiaryService {
      * @param forceRegenerate 이미지에 이미 남은 공개 키가 있어도 무시하고 전부 새로 발급한다.
      *                        죽은 작업을 회수했을 때만 true로 준다 — 그 키가 실제로 S3에
      *                        복사됐는지 이 시점에는 알 수 없기 때문이다.
+     * @param supersededPublicKeys forceRegenerate로 밀려난 기존 공개 키를 여기 담아 돌려준다.
+     *                              이전 시도가 이미 S3에 복사해뒀을 수 있는데 DB 참조는 이번
+     *                              호출로 사라지므로, 호출부가 우리 시도의 성공을 확인한
+     *                              뒤에만 이 키들의 실제 객체를 정리해야 한다(리뷰로 발견).
      */
     private List<PublicImageCopy> preparePublicImageCopies(
-            List<Map<String, Object>> images, boolean forceRegenerate, String conflictMessage) {
+            List<Map<String, Object>> images, boolean forceRegenerate,
+            List<String> supersededPublicKeys, String conflictMessage) {
         List<PublicImageCopy> copies = new ArrayList<>();
         for (Map<String, Object> image : images) {
             String imageId = text(image, "imageId");
             String imageUrl = text(image, "imageUrl");
-            String publicKey = forceRegenerate ? null : text(image, "publicImageKey");
+            String existingKey = text(image, "publicImageKey");
+            String publicKey = forceRegenerate ? null : existingKey;
             boolean reserved = false;
             if (publicKey == null) {
+                if (forceRegenerate && existingKey != null) {
+                    supersededPublicKeys.add(existingKey);
+                }
                 publicKey = fileStorage.createPublicKey(imageUrl);
                 if (publicKey == null) {
                     throw BusinessException.conflict(conflictMessage);

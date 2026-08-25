@@ -550,6 +550,10 @@ class CareDiaryServiceImplTest {
         // 예전 키를 그대로 썼다면 이 값이 아니라 "public/crashed-attempt-key.png"였을 것이다.
         verify(careDiaryMapper).updatePublicImageKey("img-1", "public/a.png");
         verify(fileStorage).publish("diary/a.png", "public/a.png");
+        // [P2] 회수 과정에서 DB 참조를 잃은 예전 키는, 우리 시도가 성공적으로 끝난 뒤 실제
+        // 객체까지 정리해야 한다 — 그러지 않으면 이전 시도가 이미 복사해둔 객체가 아무도
+        // 참조하지 않는 채로 버킷에 영구히 남는다(리뷰로 발견).
+        verify(fileStorage).unpublish("public/crashed-attempt-key.png");
     }
 
     @Test
@@ -1005,6 +1009,31 @@ class CareDiaryServiceImplTest {
         verify(careDiaryMapper).reclaimStalePublishToken(eq("diary-1"), anyString(), any());
         verify(careDiaryMapper).updatePublicImageKey("image-1", "public/restored.png");
         verify(fileStorage).publish("diary/original.png", "public/restored.png");
+        verify(fileStorage).unpublish("public/crashed-restore-key.png");
+    }
+
+    // [P1] 이미지 예약(reserveMissingPublicImageKeys)까지 마친 뒤, S3 복사가 오래 걸리는
+    // 사이에 다른 관리자가 releasePublishToken을 앞질러 토큰을 가로챘다면(=우리가 소유권을
+    // 잃었다면) 최종 트랜잭션에서 이를 감지해 restoreByReport/resolvePendingReports까지
+    // 전부 롤백해야 한다. releasePublishToken의 반환값을 확인하지 않으면 이미 소유권을 잃은
+    // 요청이 신고 처리를 그대로 커밋해버릴 수 있었다(리뷰로 발견).
+    @Test
+    @DisplayName("최종 커밋 전 토큰을 가로채이면 복원과 신고 처리를 모두 롤백한다")
+    void should_rollbackRestoreAndReportResolution_when_tokenStolenBeforeFinalCommit() {
+        CareDiaryServiceImpl service = service();
+        when(careDiaryMapper.findAdminReportById("report-1")).thenReturn(adminReportRow("PENDING", null));
+        when(careDiaryMapper.findImagesForPublish("diary-1")).thenReturn(List.of(map(
+                "imageId", "image-1", "imageUrl", "diary/original.png", "publicImageKey", null)));
+        when(careDiaryMapper.releasePublishToken(eq("diary-1"), anyString())).thenReturn(0);
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.resolveAdminReport(
+                        "admin-1", "report-1", resolutionRequest("RESTORE", "오탐")));
+
+        assertEquals(409, exception.getStatus().value());
+        verify(careDiaryMapper, never()).restoreByReport(anyString());
+        verify(careDiaryMapper, never()).resolvePendingReportsByDiary(
+                anyString(), anyString(), any(), anyString());
     }
 
     // [P2] 다른 관리자가 이미 같은 일기의 복원 작업을 위해 publish_token을 쥐고 있으면, 새
