@@ -156,8 +156,7 @@ public class S3FileStorage implements FileStorage {
             return null;
         }
         String source = normalize(key);
-        String extension = source.contains(".") ? source.substring(source.lastIndexOf('.')) : "";
-        String publicKey = publicPrefix + "/" + UUID.randomUUID() + extension;
+        String publicKey = publicPrefix + "/" + UUID.randomUUID() + extractExtension(source);
         try {
             s3.copyObject(CopyObjectRequest.builder()
                     .sourceBucket(bucket)
@@ -169,6 +168,44 @@ public class S3FileStorage implements FileStorage {
         } catch (SdkException e) {
             log.error("[FILE_PUBLISH_FAILED] 공개 사본 복사 실패 - key: {}", key, e);
             return null;
+        }
+    }
+
+    @Override
+    public String createPublicKey(String key) {
+        if (!StringUtils.hasText(publicBaseUrl)) {
+            log.warn("[FILE_PUBLISH_DISABLED] public base URL is empty, public copy cannot be reserved");
+            return null;
+        }
+        String source = normalize(key);
+        return publicPrefix + "/" + UUID.randomUUID() + extractExtension(source);
+    }
+
+    /** 마지막 '/' 이후 구간에서만 확장자를 찾는다. 디렉터리 이름에 점이 있어도 안전하다. */
+    private static String extractExtension(String path) {
+        int lastSlash = path.lastIndexOf('/');
+        int lastDot = path.lastIndexOf('.');
+        return lastDot > lastSlash ? path.substring(lastDot) : "";
+    }
+
+    @Override
+    public boolean publish(String key, String publicKey) {
+        if (!StringUtils.hasText(publicBaseUrl) || !StringUtils.hasText(publicKey)) {
+            log.warn("[FILE_PUBLISH_DISABLED] public base URL or public key is empty");
+            return false;
+        }
+        String source = normalize(key);
+        try {
+            s3.copyObject(CopyObjectRequest.builder()
+                    .sourceBucket(bucket)
+                    .sourceKey(source)
+                    .destinationBucket(bucket)
+                    .destinationKey(normalize(publicKey))
+                    .build());
+            return true;
+        } catch (SdkException e) {
+            log.error("[FILE_PUBLISH_FAILED] public copy failed - key: {}, publicKey: {}", key, publicKey, e);
+            return false;
         }
     }
 

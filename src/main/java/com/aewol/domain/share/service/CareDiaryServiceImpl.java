@@ -20,6 +20,7 @@ import com.aewol.domain.share.mapper.CareDiaryMapper;
 import com.aewol.domain.share.mapper.ShareMapper;
 import java.io.IOException;
 import java.sql.Timestamp;
+import java.time.Duration;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.YearMonth;
@@ -31,14 +32,19 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.multipart.MultipartFile;
 
 @Slf4j
@@ -47,6 +53,12 @@ import org.springframework.web.multipart.MultipartFile;
 public class CareDiaryServiceImpl implements CareDiaryService {
 
     private static final String PUBLIC = "PUBLIC";
+    /**
+     * publish_token을 쥔 프로세스가 완료도 취소도 못 하고 죽었을 때, 다른 요청이 그 작업을
+     * 회수(reclaim)해도 되는 시점까지의 유예 시간. S3 복사 정도가 이 안에 끝난다고 보고 잡은
+     * 값이라, 너무 짧으면 살아있는 느린 요청을 가로챌 수 있고 너무 길면 죽은 작업의 복구가 늦어진다.
+     */
+    private static final Duration PUBLISH_LOCK_TIMEOUT = Duration.ofMinutes(5);
     private static final int MAX_CONTENT_LENGTH = 500;
     private static final String UPLOAD_SUB_DIR = "diary";
     private static final Set<String> DIARY_WRITE_ROLES = Set.of("MANAGER", "ADMIN");
@@ -69,6 +81,7 @@ public class CareDiaryServiceImpl implements CareDiaryService {
     private final FileStorage fileStorage;
     private final InquiryMapper inquiryMapper;
     private final RedisRateLimiter redisRateLimiter;
+    private final PlatformTransactionManager transactionManager;
 
     @Override
     @Transactional
@@ -189,7 +202,6 @@ public class CareDiaryServiceImpl implements CareDiaryService {
      * <p>신고로 내려간 글은 작성자도 다시 공개하지 못한다. 되돌리는 것은 관리자 몫이다.
      */
     @Override
-    @Transactional
     public CareDiaryResponse changeVisibility(String memberId, String diaryId,
                                               CareDiaryVisibilityRequest request) {
         memberId = requireMemberId(memberId);
@@ -203,8 +215,10 @@ public class CareDiaryServiceImpl implements CareDiaryService {
         // 두 표기를 모두 받는다.
         boolean isPetOwner = memberId.equals(text(pet, "member_id", "memberId"));
 
-        // 사진은 한 번만 읽는다. 공개 가능 여부를 가리는 데도, 사본을 맞추는 데도
-        // 같은 목록이 필요하다.
+        // 공개 가능 여부를 가리는 데(비어있는지·이미 사본이 다 있는지)와, 비공개로 되돌릴 때
+        // 정리할 목록으로 쓴다. 공개로 바꿀 때 실제로 예약·복사할 목록은 토큰을 얻은 뒤 다시
+        // 조회한다(publishPublicImagesAndChangeVisibility) — 여기서 읽은 스냅샷을 그대로
+        // 쓰면 죽은 작업을 회수했을 때 신뢰할 수 없는 기존 공개 키를 그대로 믿게 된다.
         List<Map<String, Object>> images = careDiaryMapper.findImagesForPublish(diaryId);
 
         if (PUBLIC.equals(visibility)) {
@@ -221,52 +235,122 @@ public class CareDiaryServiceImpl implements CareDiaryService {
             if (images.isEmpty()) {
                 throw new BusinessException("사진이 있는 일기만 공개할 수 있어요. 사진을 추가한 뒤 다시 시도해 주세요.");
             }
+            if (PUBLIC.equals(text(row, "visibility")) && hasPublicCopies(images)) {
+                return getDetail(memberId, diaryId);
+            }
         } else if (!isAuthor && !isPetOwner) {
             throw BusinessException.forbidden("작성자 또는 대표 보호자만 일기를 비공개로 바꿀 수 있습니다.");
         }
 
         if (PUBLIC.equals(visibility)) {
-            // 사본을 못 만들었는데 PUBLIC이면 피드에 빈 칸이 생긴다. 사본이 준비된 뒤에만
-            // 공개로 바꾼다. 실패하면 예외로 트랜잭션이 롤백된다.
-            publishPublicImagesOrThrow(images);
+            publishPublicImagesAndChangeVisibility(diaryId);
+            return getDetail(memberId, diaryId);
         }
-        if (careDiaryMapper.updateVisibility(diaryId, visibility) != 1) {
-            throw BusinessException.notFound("공개 여부를 바꿀 일기를 찾을 수 없습니다.");
-        }
-        if (!PUBLIC.equals(visibility)) {
-            syncPublicImages(images, false);
-        }
+
+        runInTransaction(() -> {
+            if (careDiaryMapper.updateVisibility(diaryId, visibility) != 1) {
+                throw BusinessException.notFound("공개 여부를 바꿀 일기를 찾을 수 없습니다.");
+            }
+            unpublishPublicImagesAfterCommit(images);
+        });
         return getDetail(memberId, diaryId);
     }
 
     /**
-     * 공개 전환에 맞춰 사진 사본을 맞춘다.
+     * 사본을 모두 만든 뒤에만 호출부가 PUBLIC으로 바꾼다. 하나라도 실패하면 공개하지 않는다.
      *
-     * <p>비공개로 되돌리면 CDN 사본을 지운다. 원본은 손대지 않는다. 사본 삭제가 실패해도
-     * 예외를 던지지 않는다 — 노출을 멈추는 쪽이 먼저다.
+     * <p>PRIVATE/PUBLIC(부분 공개) → PUBLISHING 전이는 이 일기 전용으로 새로 발급한
+     * {@code publish_token}을 조건으로 건다. visibility 값만으로 CAS를 걸면 "PUBLISHING에서
+     * PUBLISHING으로"처럼 값이 안 바뀌는 재전이는 여러 요청을 동시에 통과시켜 버린다 —
+     * 토큰은 매번 새로 발급되므로 그 문제가 없고, 그래서 완료/취소도 항상 이 토큰을
+     * 조건으로 건다(진 쪽 또는 가로채인 쪽의 완료·취소는 조건 불일치로 아무 것도 하지
+     * 않는다). 프로세스가 죽어 완료도 취소도 못 하고 PUBLISHING에 멈춰도,
+     * {@link #PUBLISH_LOCK_TIMEOUT}이 지나면 다음 요청이 새 토큰으로 회수(reclaim)한다.
      *
-     * <p>공개로 올릴 때는 {@link #publishPublicImagesOrThrow}를 쓴다. 사본 없이 PUBLIC이 되면
-     * 피드에 빈 칸이 생긴다.
+     * <p>이미지 목록은 토큰을 실제로 얻은 뒤 다시 조회한다({@link #acquirePublishingSlot}).
+     * 처음 조회와 이 재조회 사이에 마지막 사진이 지워질 수 있으므로, 재조회 결과가
+     * 비었으면 이 트랜잭션(토큰 획득 포함)을 통째로 롤백시킨다 — 그러지 않으면 사진 없는
+     * 일기가 PUBLIC으로 전환될 수 있다(리뷰로 발견).
+     *
+     * <p>죽은 작업을 회수한 경우에는 그 이미지에 남은 공개 키를 신뢰하지 않고
+     * {@code forceRegenerate}로 전부 새 키를 발급한다 — 이전 시도가 DB에 키만 예약해두고
+     * S3 복사 전에 죽었을 수도 있고, 사실은 아직 살아서 그 키로 복사 중일 수도 있기
+     * 때문이다. 회수 트랜잭션이 커밋된 시점에 DB는 이미 그 예전 키를 잊었으므로, 이후
+     * 단계(S3 복사·최종 전환)가 성공하든 실패하든 상관없이 곧바로 실제 객체를 정리한다 —
+     * 성공했을 때만 정리하면 실패 경로에서 정리가 누락돼 고아 객체가 남는다(리뷰로 발견).
      */
-    private void syncPublicImages(List<Map<String, Object>> images, boolean publishing) {
-        if (publishing) {
-            publishPublicImagesOrThrow(images);
-            return;
-        }
-        for (Map<String, Object> image : images) {
-            String imageId = text(image, "imageId");
-            String publicKey = text(image, "publicImageKey");
-            if (publicKey != null) {
-                fileStorage.unpublish(publicKey);
-                careDiaryMapper.updatePublicImageKey(imageId, null);
+    private void publishPublicImagesAndChangeVisibility(String diaryId) {
+        String token = UUID.randomUUID().toString();
+        LocalDateTime staleBefore = LocalDateTime.now().minus(PUBLISH_LOCK_TIMEOUT);
+        List<String> supersededPublicKeys = new ArrayList<>();
+        AtomicReference<List<PublicImageCopy>> copiesHolder = new AtomicReference<>();
+        runInTransaction(() -> {
+            boolean reclaimed = acquirePublishingSlot(diaryId, token, staleBefore);
+            List<Map<String, Object>> currentImages = careDiaryMapper.findImagesForPublish(diaryId);
+            if (currentImages.isEmpty()) {
+                throw new BusinessException("사진이 있는 일기만 공개할 수 있어요. 사진을 추가한 뒤 다시 시도해 주세요.");
             }
+            List<PublicImageCopy> copies = preparePublicImageCopies(currentImages, reclaimed,
+                    supersededPublicKeys, "사진을 공개하지 못했어요. 잠시 후 다시 시도해 주세요.");
+            reserveMissingPublicImageKeys(copies);
+            copiesHolder.set(copies);
+        });
+        // 이 시점에 회수 트랜잭션은 이미 커밋됐다 — 밀려난 예전 키는 이후 단계의 성패와
+        // 무관하게 지금 정리해도 안전하다. 이전 시도가 사실 아직 살아서 같은 경로에 객체를
+        // 다시 만들 수도 있는 잔여 위험까지 없애려면, 이 정리와는 별개로 버킷 lifecycle
+        // 정책 같은 최종 안전망을 두는 편이 안전하다.
+        supersededPublicKeys.forEach(this::unpublishQuietly);
+        List<PublicImageCopy> copies = copiesHolder.get();
+
+        List<String> publishedPublicKeys = new ArrayList<>();
+        try {
+            publishPublicCopies(copies, publishedPublicKeys,
+                    "사진을 공개하지 못했어요. 잠시 후 다시 시도해 주세요.");
+            runInTransaction(() -> {
+                if (careDiaryMapper.completePublishing(diaryId, token) != 1) {
+                    throw BusinessException.notFound("공개 여부를 바꿀 일기를 찾을 수 없습니다.");
+                }
+            });
+        } catch (RuntimeException e) {
+            publishedPublicKeys.forEach(this::unpublishQuietly);
+            cancelPublishing(diaryId, token, copies);
+            throw e;
         }
     }
 
-    /** 사본을 모두 만든 뒤에만 호출부가 PUBLIC으로 바꾼다. 하나라도 실패하면 공개하지 않는다. */
-    private void publishPublicImagesOrThrow(List<Map<String, Object>> images) {
-        publishMissingPublicCopiesOrThrow(
-                images, "사진을 공개하지 못했어요. 잠시 후 다시 시도해 주세요.");
+    /**
+     * 정상 진입을 먼저 시도하고, 안 되면(=이미 누군가 진행 중) 죽은 작업 회수를 시도한다.
+     * 둘 다 실패하면(=다른 요청이 살아서 진행 중) 예외를 던진다.
+     *
+     * @return 죽은 작업을 회수했으면 true. 이때 호출부는 이미지의 기존 공개 키를 신뢰하면 안 된다.
+     */
+    private boolean acquirePublishingSlot(String diaryId, String token, LocalDateTime staleBefore) {
+        if (careDiaryMapper.enterPublishingFresh(diaryId, token) == 1) {
+            return false;
+        }
+        if (careDiaryMapper.reclaimStalePublishing(diaryId, token, staleBefore) == 1) {
+            return true;
+        }
+        throw BusinessException.conflict("다른 요청이 이미 처리 중이에요. 잠시 후 다시 시도해 주세요.");
+    }
+
+    /** {@link #acquirePublishingSlot}과 같은 이유로 관리자 복원 작업의 이미지 키 소유권을 건다. */
+    private boolean acquireRestoreSlot(String diaryId, String token, LocalDateTime staleBefore) {
+        if (careDiaryMapper.acquirePublishTokenFresh(diaryId, token) == 1) {
+            return false;
+        }
+        if (careDiaryMapper.reclaimStalePublishToken(diaryId, token, staleBefore) == 1) {
+            return true;
+        }
+        throw BusinessException.conflict("다른 관리자가 이미 이 게시물을 복원하고 있어요. 잠시 후 다시 시도해 주세요.");
+    }
+
+    private boolean hasPublicCopies(List<Map<String, Object>> images) {
+        return images.stream()
+                .allMatch(image -> {
+                    String publicKey = text(image, "publicImageKey");
+                    return publicKey != null && !publicKey.isBlank();
+                });
     }
 
     /**
@@ -318,7 +402,7 @@ public class CareDiaryServiceImpl implements CareDiaryService {
             if (hidden) {
                 // 피드에서 빼는 것만으로는 부족하다. CDN 주소를 이미 아는 사람에게는 사진이
                 // 계속 보인다. 오탐이면 원본이 남아 있으니 사본을 다시 만들면 된다.
-                syncPublicImages(careDiaryMapper.findImagesForPublish(diaryId), false);
+                unpublishPublicImagesAfterCommit(careDiaryMapper.findImagesForPublish(diaryId));
             }
         }
         String inquiryNumber = createReportInquiry(memberId, diaryId, request.getReason(), reportId);
@@ -358,10 +442,10 @@ public class CareDiaryServiceImpl implements CareDiaryService {
     }
 
     @Override
-    @Transactional
     public AdminDiaryReportDetailResponse resolveAdminReport(
             String adminId, String reportId, AdminDiaryReportResolutionRequest request) {
         adminId = requireMemberId(adminId);
+        String resolvedBy = adminId;
         Map<String, Object> report = findAdminReport(reportId);
         if (!"PENDING".equals(text(report, "status"))) {
             throw BusinessException.conflict("이미 처리된 신고입니다.");
@@ -369,23 +453,16 @@ public class CareDiaryServiceImpl implements CareDiaryService {
 
         String diaryId = text(report, "diaryId");
         String resolution = request.getResolution();
+        String adminNote = normalizeAdminNote(request.getAdminNote());
         if ("RESTORE".equals(resolution)) {
             if (value(report, "deletedAt") != null) {
                 throw BusinessException.conflict("이미 삭제된 게시물은 복원할 수 없습니다.");
             }
-            restorePublicImages(careDiaryMapper.findImagesForPublish(diaryId));
-            if (careDiaryMapper.restoreByReport(diaryId) != 1) {
-                throw BusinessException.conflict("게시물을 복원할 수 없습니다.");
-            }
+            restoreReportedDiary(diaryId, resolution, adminNote, resolvedBy);
+            return toAdminReportDetail(findAdminReport(reportId));
         }
 
-        String adminNote = normalizeAdminNote(request.getAdminNote());
-        if (careDiaryMapper.resolvePendingReportsByDiary(
-                diaryId, resolution, adminNote, adminId) == 0) {
-            throw BusinessException.conflict("처리할 신고가 없습니다.");
-        }
-        String inquiryAnswer = adminNote != null ? adminNote : "신고가 처리되었습니다.";
-        inquiryMapper.answerWaitingLinkedToDiary(diaryId, inquiryAnswer);
+        runInTransaction(() -> resolvePendingReports(diaryId, resolution, adminNote, resolvedBy));
         return toAdminReportDetail(findAdminReport(reportId));
     }
 
@@ -412,38 +489,202 @@ public class CareDiaryServiceImpl implements CareDiaryService {
         return adminNote.trim();
     }
 
-    private void restorePublicImages(List<Map<String, Object>> images) {
-        if (images.isEmpty()) {
+    /**
+     * 신고로 내려간 사진의 공개 사본을 복원한다. visibility는 건드리지 않으므로(신고 숨김은
+     * hidden_by_report_at만 쓴다) PUBLISHING 상태를 거치지 않지만, 이미지 키 예약 작업 자체는
+     * {@link #publishPublicImagesAndChangeVisibility}와 똑같이 publish_token으로 소유권을
+     * 건다 — 두 관리자가 같은 신고를 동시에 처리하려 들 때, 나중에 실패한 쪽이 먼저 성공한
+     * 쪽이 방금 만든 키를 지워버리는 걸 막기 위함이다. 죽은 작업 회수 시 기존 키를 신뢰하지
+     * 않는 것도 같은 이유다(둘 다 리뷰로 발견).
+     */
+    private void restoreReportedDiary(
+            String diaryId, String resolution, String adminNote, String adminId) {
+        if (careDiaryMapper.findImagesForPublish(diaryId).isEmpty()) {
             throw BusinessException.conflict("복원할 게시물 사진을 찾을 수 없습니다.");
         }
-        publishMissingPublicCopiesOrThrow(
-                images, "게시물 사진을 복원하지 못했습니다. 잠시 후 다시 시도해 주세요.");
+        String token = UUID.randomUUID().toString();
+        LocalDateTime staleBefore = LocalDateTime.now().minus(PUBLISH_LOCK_TIMEOUT);
+        List<String> supersededPublicKeys = new ArrayList<>();
+        AtomicReference<List<PublicImageCopy>> copiesHolder = new AtomicReference<>();
+        runInTransaction(() -> {
+            boolean reclaimed = acquireRestoreSlot(diaryId, token, staleBefore);
+            List<Map<String, Object>> currentImages = careDiaryMapper.findImagesForPublish(diaryId);
+            // 최초 조회와 이 재조회 사이에 사진이 전부 지워졌을 수 있다. 토큰 획득까지
+            // 포함해 이 트랜잭션을 통째로 롤백시킨다(리뷰로 발견).
+            if (currentImages.isEmpty()) {
+                throw BusinessException.conflict("복원할 게시물 사진을 찾을 수 없습니다.");
+            }
+            List<PublicImageCopy> copies = preparePublicImageCopies(currentImages, reclaimed,
+                    supersededPublicKeys, "게시물 사진을 복원하지 못했습니다. 잠시 후 다시 시도해 주세요.");
+            reserveMissingPublicImageKeys(copies);
+            copiesHolder.set(copies);
+        });
+        // publishPublicImagesAndChangeVisibility와 같은 이유로, 회수 트랜잭션이 커밋된
+        // 시점에 곧바로 밀려난 예전 키를 정리한다 — 이후 단계의 성패를 기다리지 않는다.
+        supersededPublicKeys.forEach(this::unpublishQuietly);
+        List<PublicImageCopy> copies = copiesHolder.get();
+
+        List<String> publishedPublicKeys = new ArrayList<>();
+        try {
+            publishPublicCopies(copies, publishedPublicKeys,
+                    "게시물 사진을 복원하지 못했습니다. 잠시 후 다시 시도해 주세요.");
+            runInTransaction(() -> {
+                // 이 트랜잭션이 시작되기 전에 토큰을 다른 요청에게 가로채였다면(5분 넘게 걸린
+                // S3 복사 도중 회수당한 경우) 여기서 실패시켜 restoreByReport와
+                // resolvePendingReports까지 통째로 롤백한다 — 그러지 않으면 이미 소유권을
+                // 잃은 요청이 신고 처리를 그대로 커밋해버릴 수 있다(리뷰로 발견).
+                if (careDiaryMapper.releasePublishToken(diaryId, token) != 1) {
+                    throw BusinessException.conflict(
+                            "다른 관리자가 이미 이 게시물을 복원하고 있어요. 잠시 후 다시 시도해 주세요.");
+                }
+                if (careDiaryMapper.restoreByReport(diaryId) != 1) {
+                    throw BusinessException.conflict("게시물을 복원할 수 없습니다.");
+                }
+                resolvePendingReports(diaryId, resolution, adminNote, adminId);
+            });
+        } catch (RuntimeException e) {
+            publishedPublicKeys.forEach(this::unpublishQuietly);
+            releaseAndClearReservedPublicImageKeys(diaryId, token, copies);
+            throw e;
+        }
     }
 
     /**
-     * 없는 공개 사본만 만들고, 만든 키를 추적한다. 중간 실패나 이후 DB 롤백 때
-     * 이미 만든 사본을 지우지 않으면 공개 URL을 가진 고아 파일이 남는다.
+     * @param forceRegenerate 이미지에 이미 남은 공개 키가 있어도 무시하고 전부 새로 발급한다.
+     *                        죽은 작업을 회수했을 때만 true로 준다 — 그 키가 실제로 S3에
+     *                        복사됐는지 이 시점에는 알 수 없기 때문이다.
+     * @param supersededPublicKeys forceRegenerate로 밀려난 기존 공개 키를 여기 담아 돌려준다.
+     *                              이전 시도가 이미 S3에 복사해뒀을 수 있는데 DB 참조는 이번
+     *                              호출로 사라지므로, 호출부가 우리 시도의 성공을 확인한
+     *                              뒤에만 이 키들의 실제 객체를 정리해야 한다(리뷰로 발견).
      */
-    private void publishMissingPublicCopiesOrThrow(
-            List<Map<String, Object>> images, String conflictMessage) {
-        List<String> createdKeys = new ArrayList<>();
-        try {
-            for (Map<String, Object> image : images) {
-                if (text(image, "publicImageKey") != null) {
-                    continue;
+    private List<PublicImageCopy> preparePublicImageCopies(
+            List<Map<String, Object>> images, boolean forceRegenerate,
+            List<String> supersededPublicKeys, String conflictMessage) {
+        List<PublicImageCopy> copies = new ArrayList<>();
+        for (Map<String, Object> image : images) {
+            String imageId = text(image, "imageId");
+            String imageUrl = text(image, "imageUrl");
+            String existingKey = text(image, "publicImageKey");
+            String publicKey = forceRegenerate ? null : existingKey;
+            boolean reserved = false;
+            if (publicKey == null) {
+                if (forceRegenerate && existingKey != null) {
+                    supersededPublicKeys.add(existingKey);
                 }
-                String created = fileStorage.publish(text(image, "imageUrl"));
-                if (created == null) {
+                publicKey = fileStorage.createPublicKey(imageUrl);
+                if (publicKey == null) {
                     throw BusinessException.conflict(conflictMessage);
                 }
-                createdKeys.add(created);
-                careDiaryMapper.updatePublicImageKey(text(image, "imageId"), created);
+                reserved = true;
             }
-            arrangeRollbackPublicCleanup(createdKeys);
-        } catch (RuntimeException e) {
-            createdKeys.forEach(this::unpublishQuietly);
-            throw e;
+            copies.add(new PublicImageCopy(imageId, imageUrl, publicKey, reserved));
         }
+        return copies;
+    }
+
+    private void reserveMissingPublicImageKeys(List<PublicImageCopy> copies) {
+        for (PublicImageCopy copy : copies) {
+            if (copy.reserved()) {
+                updatePublicImageKeyOrThrow(copy.imageId(), copy.publicKey());
+            }
+        }
+    }
+
+    /** 이미 공개 사본이 있던(reserved=false) 이미지는 건너뛴다. 새로 예약한 것만 S3에 복사하면 된다. */
+    private void publishPublicCopies(
+            List<PublicImageCopy> copies, List<String> publishedPublicKeys, String conflictMessage) {
+        for (PublicImageCopy copy : copies) {
+            if (!copy.reserved()) {
+                continue;
+            }
+            if (!fileStorage.publish(copy.imageUrl(), copy.publicKey())) {
+                throw BusinessException.conflict(conflictMessage);
+            }
+            publishedPublicKeys.add(copy.publicKey());
+        }
+    }
+
+    private void updatePublicImageKeyOrThrow(String imageId, String publicKey) {
+        if (careDiaryMapper.updatePublicImageKey(imageId, publicKey) != 1) {
+            throw BusinessException.conflict("공개 사진 정보를 반영할 수 없습니다. 다시 조회한 뒤 시도해 주세요.");
+        }
+    }
+
+    /**
+     * PUBLISHING을 PRIVATE로 되돌린다. {@code cancelPublishing} 매퍼 쿼리는 지금 이 토큰을
+     * 쥐고 있을 때만(1행) 반영되므로, 그 결과를 보고 나서만 예약한 이미지 키를 지운다 —
+     * 이미 다른 요청에게 토큰을 가로채였다면(0행) 그 요청의 키를 건드리면 안 되기 때문이다.
+     */
+    private void cancelPublishing(String diaryId, String token, List<PublicImageCopy> copies) {
+        try {
+            runInTransaction(() -> {
+                if (careDiaryMapper.cancelPublishing(diaryId, token) == 1) {
+                    clearReservedPublicImageKeysInTransaction(copies);
+                }
+            });
+        } catch (RuntimeException cleanupFailure) {
+            log.warn("[CARE_DIARY_PUBLISH_CANCEL_FAILED] publish cancel failed - diaryId: {}", diaryId, cleanupFailure);
+        }
+    }
+
+    /** 관리자 복원 실패 시 정리. cancelPublishing과 같은 이유로 토큰 해제가 성공했을 때만 키를 지운다. */
+    private void releaseAndClearReservedPublicImageKeys(
+            String diaryId, String token, List<PublicImageCopy> copies) {
+        try {
+            runInTransaction(() -> {
+                if (careDiaryMapper.releasePublishToken(diaryId, token) == 1) {
+                    clearReservedPublicImageKeysInTransaction(copies);
+                }
+            });
+        } catch (RuntimeException cleanupFailure) {
+            log.warn("[CARE_DIARY_PUBLIC_KEY_CLEAR_FAILED] reserved public key cleanup failed", cleanupFailure);
+        }
+    }
+
+    private void clearReservedPublicImageKeysInTransaction(List<PublicImageCopy> copies) {
+        for (PublicImageCopy copy : copies) {
+            if (copy.reserved()) {
+                careDiaryMapper.updatePublicImageKey(copy.imageId(), null);
+            }
+        }
+    }
+
+    private void unpublishPublicImagesAfterCommit(List<Map<String, Object>> images) {
+        List<String> publicKeys = new ArrayList<>();
+        for (Map<String, Object> image : images) {
+            String imageId = text(image, "imageId");
+            String publicKey = text(image, "publicImageKey");
+            if (publicKey != null) {
+                updatePublicImageKeyOrThrow(imageId, null);
+                publicKeys.add(publicKey);
+            }
+        }
+        arrangeCommittedPublicCleanup(publicKeys);
+    }
+
+    private void resolvePendingReports(
+            String diaryId, String resolution, String adminNote, String adminId) {
+        if (careDiaryMapper.resolvePendingReportsByDiary(
+                diaryId, resolution, adminNote, adminId) == 0) {
+            throw BusinessException.conflict("처리할 신고가 없습니다.");
+        }
+        String inquiryAnswer = adminNote != null ? adminNote : "신고가 처리되었습니다.";
+        inquiryMapper.answerWaitingLinkedToDiary(diaryId, inquiryAnswer);
+    }
+
+    /**
+     * 항상 새 트랜잭션을 연다. REQUIRED(기본값)를 쓰면 이미 {@code @Transactional} 메서드
+     * 안에서 호출됐을 때 이 분리가 조용히 무력화되어 S3 호출 동안 커넥션을 계속 물게 된다.
+     */
+    private void runInTransaction(Runnable task) {
+        TransactionTemplate template = new TransactionTemplate(transactionManager);
+        template.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+        template.executeWithoutResult(status -> task.run());
+    }
+
+    private record PublicImageCopy(
+            String imageId, String imageUrl, String publicKey, boolean reserved) {
     }
 
     private AdminDiaryReportListItemResponse toAdminReportListItem(Map<String, Object> row) {
@@ -633,21 +874,6 @@ public class CareDiaryServiceImpl implements CareDiaryService {
             @Override
             public void afterCompletion(int status) {
                 if (status != STATUS_COMMITTED) deleteQuietly(key);
-            }
-        });
-    }
-
-    /** DB가 롤백되면 방금 만든 공개 사본은 참조가 없으므로 지운다. */
-    private void arrangeRollbackPublicCleanup(List<String> publicKeys) {
-        if (publicKeys.isEmpty() || !TransactionSynchronizationManager.isSynchronizationActive()) {
-            return;
-        }
-        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
-            @Override
-            public void afterCompletion(int status) {
-                if (status != STATUS_COMMITTED) {
-                    publicKeys.forEach(CareDiaryServiceImpl.this::unpublishQuietly);
-                }
             }
         });
     }

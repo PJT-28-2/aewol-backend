@@ -99,14 +99,104 @@
         WHERE image_id = #{imageId}
     </update>
 
+    <!--
+        비공개 전환처럼 상태와 무관하게 강제로 값을 미는 경로다. 진행 중이던 공개
+        작업이 있었다면 publish_token도 같이 비워, 그 작업이 나중에 (완료든 취소든)
+        같은 토큰으로 반영을 시도해도 조건 불일치로 아무 것도 하지 않게 만든다.
+    -->
     <update id="updateVisibility">
         UPDATE care_diary
-           SET visibility = #{visibility}
+           SET visibility = #{visibility},
+               publish_token = NULL,
+               publishing_started_at = NULL
         WHERE diary_id = #{diaryId}
           AND deleted_at IS NULL
-          <if test="visibility == 'PUBLIC'">
+          <if test="visibility == 'PUBLIC' or visibility == 'PUBLISHING'">
           AND hidden_by_report_at IS NULL
           </if>
+    </update>
+
+    <!--
+        진행 중인 작업이 전혀 없을 때만(publish_token IS NULL) 통과한다. 죽은 작업 회수는
+        별도 쿼리(reclaimStalePublishing)로 완전히 분리했다 — 한 쿼리로 묶으면 호출부가
+        "이번에 정상 진입했는지, 죽은 작업을 회수했는지" 구분할 수 없어서, 회수한 경우에도
+        이미지에 남은 기존 공개 키를 그대로 믿어버리는 문제가 있었다(리뷰로 발견).
+    -->
+    <update id="enterPublishingFresh">
+        UPDATE care_diary
+           SET visibility = 'PUBLISHING',
+               publish_token = #{token},
+               publishing_started_at = NOW()
+        WHERE diary_id = #{diaryId}
+          AND deleted_at IS NULL
+          AND hidden_by_report_at IS NULL
+          AND visibility IN ('PRIVATE', 'PUBLIC')
+          AND publish_token IS NULL
+    </update>
+
+    <!--
+        publishing_started_at이 오래됐을 때만(=이전 작업이 완료도 취소도 못 하고 멈췄다고
+        본다) 새 토큰으로 가져온다. visibility는 이미 PUBLISHING이므로 건드리지 않는다.
+        호출부는 이 쿼리가 1행을 반영했으면 이미지의 기존 공개 키를 신뢰하지 말고 전부
+        새로 발급해야 한다.
+    -->
+    <update id="reclaimStalePublishing">
+        UPDATE care_diary
+           SET publish_token = #{token},
+               publishing_started_at = NOW()
+        WHERE diary_id = #{diaryId}
+          AND deleted_at IS NULL
+          AND visibility = 'PUBLISHING'
+          AND publishing_started_at &lt; #{staleBefore}
+    </update>
+
+    <update id="acquirePublishTokenFresh">
+        UPDATE care_diary
+           SET publish_token = #{token},
+               publishing_started_at = NOW()
+        WHERE diary_id = #{diaryId}
+          AND deleted_at IS NULL
+          AND publish_token IS NULL
+    </update>
+
+    <update id="reclaimStalePublishToken">
+        UPDATE care_diary
+           SET publish_token = #{token},
+               publishing_started_at = NOW()
+        WHERE diary_id = #{diaryId}
+          AND deleted_at IS NULL
+          AND publish_token IS NOT NULL
+          AND publishing_started_at &lt; #{staleBefore}
+    </update>
+
+    <update id="completePublishing">
+        UPDATE care_diary
+           SET visibility = 'PUBLIC',
+               publish_token = NULL,
+               publishing_started_at = NULL
+        WHERE diary_id = #{diaryId}
+          AND deleted_at IS NULL
+          AND visibility = 'PUBLISHING'
+          AND publish_token = #{token}
+    </update>
+
+    <update id="cancelPublishing">
+        UPDATE care_diary
+           SET visibility = 'PRIVATE',
+               publish_token = NULL,
+               publishing_started_at = NULL
+        WHERE diary_id = #{diaryId}
+          AND deleted_at IS NULL
+          AND visibility = 'PUBLISHING'
+          AND publish_token = #{token}
+    </update>
+
+    <update id="releasePublishToken">
+        UPDATE care_diary
+           SET publish_token = NULL,
+               publishing_started_at = NULL
+        WHERE diary_id = #{diaryId}
+          AND publish_token = #{token}
     </update>
 
     <!--
