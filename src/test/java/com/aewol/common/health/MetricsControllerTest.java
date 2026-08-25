@@ -32,8 +32,8 @@ class MetricsControllerTest {
     void should_disableEndpoint_when_tokenNotConfigured() {
         MetricsController controller = new MetricsController(registry(), "");
 
-        assertEquals(HttpStatus.NOT_FOUND, controller.scrape(null).getStatusCode());
-        assertEquals(HttpStatus.NOT_FOUND, controller.scrape("아무값").getStatusCode());
+        assertEquals(HttpStatus.NOT_FOUND, controller.scrape(null, null).getStatusCode());
+        assertEquals(HttpStatus.NOT_FOUND, controller.scrape("아무값", null).getStatusCode());
     }
 
     @Test
@@ -41,13 +41,24 @@ class MetricsControllerTest {
     void should_requireMatchingToken() {
         MetricsController controller = new MetricsController(registry(), "secret");
 
-        assertEquals(HttpStatus.NOT_FOUND, controller.scrape(null).getStatusCode());
-        assertEquals(HttpStatus.NOT_FOUND, controller.scrape("wrong").getStatusCode());
+        assertEquals(HttpStatus.NOT_FOUND, controller.scrape(null, null).getStatusCode());
+        assertEquals(HttpStatus.NOT_FOUND, controller.scrape("wrong", null).getStatusCode());
         // 길이가 다른 값, 접두사가 같은 값 모두 막힌다.
-        assertEquals(HttpStatus.NOT_FOUND, controller.scrape("secre").getStatusCode());
-        assertEquals(HttpStatus.NOT_FOUND, controller.scrape("secret2").getStatusCode());
+        assertEquals(HttpStatus.NOT_FOUND, controller.scrape("secre", null).getStatusCode());
+        assertEquals(HttpStatus.NOT_FOUND, controller.scrape("secret2", null).getStatusCode());
 
-        ResponseEntity<String> ok = controller.scrape("secret");
+        ResponseEntity<String> ok = controller.scrape("secret", null);
+        assertEquals(HttpStatus.OK, ok.getStatusCode());
+        assertTrue(ok.getBody().contains("test_counter"));
+    }
+
+    @Test
+    @DisplayName("운영 Prometheus의 Bearer 토큰도 받는다")
+    void should_acceptBearerToken() {
+        MetricsController controller = new MetricsController(registry(), "secret");
+
+        assertEquals(HttpStatus.NOT_FOUND, controller.scrape(null, "Bearer wrong").getStatusCode());
+        ResponseEntity<String> ok = controller.scrape(null, "Bearer secret");
         assertEquals(HttpStatus.OK, ok.getStatusCode());
         assertTrue(ok.getBody().contains("test_counter"));
     }
@@ -58,7 +69,7 @@ class MetricsControllerTest {
     void should_hideExistence_when_tokenWrong() {
         MetricsController controller = new MetricsController(registry(), "secret");
 
-        assertEquals(controller.scrape(null).getStatusCode(),
-                controller.scrape("wrong").getStatusCode());
+        assertEquals(controller.scrape(null, null).getStatusCode(),
+                controller.scrape("wrong", null).getStatusCode());
     }
 }

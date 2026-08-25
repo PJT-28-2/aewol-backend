@@ -1,0 +1,16 @@
+# 운영 EC2에서 앱 컨테이너를 수집한다.
+#
+# 토큰은 설정 파일이 아니라 credentials_file로 넘긴다. deploy.sh가
+# .env.prod의 METRICS_TOKEN을 monitoring/metrics_token 으로 풀어 둔다.
+# 호스트 포트는 127.0.0.1만 열려 있고, 인터넷으로는 나가지 않는다.
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: aewol-backend
+    metrics_path: /api/metrics
+    authorization:
+      credentials_file: /etc/prometheus/metrics_token
+    static_configs:
+      - targets: ["app:8080"]

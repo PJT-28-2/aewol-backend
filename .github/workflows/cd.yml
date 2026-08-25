@@ -121,7 +121,9 @@ jobs:
           # 이 번들을 보내지 않으면 이미지만 새것이고 compose는 옛날 것인 상태가 생긴다.
           tar czf bundle.tgz \
             docker-compose.prod.yml \
-            scripts/deploy.sh scripts/fetch-env.sh scripts/backup-db.sh
+            scripts/deploy.sh scripts/fetch-env.sh scripts/backup-db.sh \
+            monitoring/prometheus.prod.yml \
+            monitoring/grafana
           BYTES=$(wc -c < bundle.tgz)
           # SSM SendCommand의 요청 크기 제한에 걸리면 원인을 알기 어려운 에러가 난다.
           # 번들에 큰 파일이 들어오면 여기서 먼저 잡는다.
