@@ -20,6 +20,7 @@ import com.aewol.domain.share.mapper.CareDiaryMapper;
 import com.aewol.domain.share.mapper.ShareMapper;
 import java.io.IOException;
 import java.sql.Timestamp;
+import java.time.Duration;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.YearMonth;
@@ -31,6 +32,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -50,8 +52,12 @@ import org.springframework.web.multipart.MultipartFile;
 public class CareDiaryServiceImpl implements CareDiaryService {
 
     private static final String PUBLIC = "PUBLIC";
-    private static final String PRIVATE = "PRIVATE";
-    private static final String PUBLISHING = "PUBLISHING";
+    /**
+     * publish_token을 쥔 프로세스가 완료도 취소도 못 하고 죽었을 때, 다른 요청이 그 작업을
+     * 회수(reclaim)해도 되는 시점까지의 유예 시간. S3 복사 정도가 이 안에 끝난다고 보고 잡은
+     * 값이라, 너무 짧으면 살아있는 느린 요청을 가로챌 수 있고 너무 길면 죽은 작업의 복구가 늦어진다.
+     */
+    private static final Duration PUBLISH_LOCK_TIMEOUT = Duration.ofMinutes(5);
     private static final int MAX_CONTENT_LENGTH = 500;
     private static final String UPLOAD_SUB_DIR = "diary";
     private static final Set<String> DIARY_WRITE_ROLES = Set.of("MANAGER", "ADMIN");
@@ -234,7 +240,7 @@ public class CareDiaryServiceImpl implements CareDiaryService {
         }
 
         if (PUBLIC.equals(visibility)) {
-            publishPublicImagesAndChangeVisibility(diaryId, text(row, "visibility"), images);
+            publishPublicImagesAndChangeVisibility(diaryId, images);
             return getDetail(memberId, diaryId);
         }
 
@@ -250,23 +256,26 @@ public class CareDiaryServiceImpl implements CareDiaryService {
     /**
      * 사본을 모두 만든 뒤에만 호출부가 PUBLIC으로 바꾼다. 하나라도 실패하면 공개하지 않는다.
      *
-     * <p>PRIVATE/PUBLIC(부분 공개) → PUBLISHING 전이는 {@code fromVisibility}를 조건으로 하는
-     * CAS로 건다. 같은 일기에 대한 중복 요청(더블클릭, 재시도)이 동시에 들어오면 둘 다 같은
-     * 사본 키를 예약(reserve)하려 들 수 있는데, CAS에서 진 요청은 이 트랜잭션 전체가
-     * 롤백되어 예약도 함께 취소되므로 이긴 요청이 만든 키를 건드리지 않는다. 즉 이 전이에서
-     * 진 요청은 자신이 PUBLISHING을 소유한 적이 없으므로 별도 취소(cancelPublishing) 없이
-     * 그대로 예외를 전달한다.
+     * <p>PRIVATE/PUBLIC(부분 공개) → PUBLISHING 전이는 이 일기 전용으로 새로 발급한
+     * {@code publish_token}을 조건으로 건다({@link #enterPublishing}). visibility 값만으로
+     * CAS를 걸면 "PUBLISHING에서 PUBLISHING으로"처럼 값이 안 바뀌는 재전이는 여러 요청을
+     * 동시에 통과시켜 버린다 — 토큰은 매번 새로 발급되므로 그 문제가 없고, 그래서 완료/취소도
+     * 항상 이 토큰을 조건으로 건다(진 쪽 또는 가로채인 쪽의 완료·취소는 조건 불일치로
+     * 아무 것도 하지 않는다). 프로세스가 죽어 완료도 취소도 못 하고 PUBLISHING에 멈춰도,
+     * {@link #PUBLISH_LOCK_TIMEOUT}이 지나면 다음 요청이 새 토큰으로 이어받는다.
      */
     private void publishPublicImagesAndChangeVisibility(
-            String diaryId, String fromVisibility, List<Map<String, Object>> images) {
+            String diaryId, List<Map<String, Object>> images) {
         List<PublicImageCopy> copies = preparePublicImageCopies(
                 images, "사진을 공개하지 못했어요. 잠시 후 다시 시도해 주세요.");
+        String token = UUID.randomUUID().toString();
+        LocalDateTime staleBefore = LocalDateTime.now().minus(PUBLISH_LOCK_TIMEOUT);
         runInTransaction(() -> {
-            reserveMissingPublicImageKeys(copies);
-            if (careDiaryMapper.updateVisibilityIfCurrent(diaryId, fromVisibility, PUBLISHING) != 1) {
+            if (careDiaryMapper.enterPublishing(diaryId, token, staleBefore) != 1) {
                 throw BusinessException.conflict(
                         "다른 요청이 이미 처리 중이에요. 잠시 후 다시 시도해 주세요.");
             }
+            reserveMissingPublicImageKeys(copies);
         });
 
         List<String> publishedPublicKeys = new ArrayList<>();
@@ -274,13 +283,13 @@ public class CareDiaryServiceImpl implements CareDiaryService {
             publishPublicCopies(copies, publishedPublicKeys,
                     "사진을 공개하지 못했어요. 잠시 후 다시 시도해 주세요.");
             runInTransaction(() -> {
-                if (careDiaryMapper.updateVisibilityIfCurrent(diaryId, PUBLISHING, PUBLIC) != 1) {
+                if (careDiaryMapper.completePublishing(diaryId, token) != 1) {
                     throw BusinessException.notFound("공개 여부를 바꿀 일기를 찾을 수 없습니다.");
                 }
             });
         } catch (RuntimeException e) {
             publishedPublicKeys.forEach(this::unpublishQuietly);
-            cancelPublishing(diaryId, copies);
+            cancelPublishing(diaryId, token, copies);
             throw e;
         }
     }
@@ -429,6 +438,13 @@ public class CareDiaryServiceImpl implements CareDiaryService {
         return adminNote.trim();
     }
 
+    /**
+     * 신고로 내려간 사진의 공개 사본을 복원한다. visibility는 건드리지 않으므로(신고 숨김은
+     * hidden_by_report_at만 쓴다) PUBLISHING 상태를 거치지 않지만, 이미지 키 예약 작업 자체는
+     * {@link #publishPublicImagesAndChangeVisibility}와 똑같이 publish_token으로 소유권을
+     * 건다. 두 관리자가 같은 신고를 동시에 처리하려 들 때, 나중에 실패한 쪽이 먼저 성공한
+     * 쪽이 방금 만든 키를 지워버리는 걸 막기 위함이다(리뷰로 발견).
+     */
     private void restoreReportedDiary(
             String diaryId, String resolution, String adminNote, String adminId) {
         List<Map<String, Object>> images = careDiaryMapper.findImagesForPublish(diaryId);
@@ -437,9 +453,18 @@ public class CareDiaryServiceImpl implements CareDiaryService {
         }
         List<PublicImageCopy> copies = preparePublicImageCopies(
                 images, "게시물 사진을 복원하지 못했습니다. 잠시 후 다시 시도해 주세요.");
+        String token = UUID.randomUUID().toString();
+        LocalDateTime staleBefore = LocalDateTime.now().minus(PUBLISH_LOCK_TIMEOUT);
+        runInTransaction(() -> {
+            if (careDiaryMapper.acquirePublishToken(diaryId, token, staleBefore) != 1) {
+                throw BusinessException.conflict(
+                        "다른 관리자가 이미 이 게시물을 복원하고 있어요. 잠시 후 다시 시도해 주세요.");
+            }
+            reserveMissingPublicImageKeys(copies);
+        });
+
         List<String> publishedPublicKeys = new ArrayList<>();
         try {
-            runInTransaction(() -> reserveMissingPublicImageKeys(copies));
             publishPublicCopies(copies, publishedPublicKeys,
                     "게시물 사진을 복원하지 못했습니다. 잠시 후 다시 시도해 주세요.");
             runInTransaction(() -> {
@@ -447,10 +472,11 @@ public class CareDiaryServiceImpl implements CareDiaryService {
                     throw BusinessException.conflict("게시물을 복원할 수 없습니다.");
                 }
                 resolvePendingReports(diaryId, resolution, adminNote, adminId);
+                careDiaryMapper.releasePublishToken(diaryId, token);
             });
         } catch (RuntimeException e) {
             publishedPublicKeys.forEach(this::unpublishQuietly);
-            clearReservedPublicImageKeys(copies);
+            releaseAndClearReservedPublicImageKeys(diaryId, token, copies);
             throw e;
         }
     }
@@ -503,20 +529,32 @@ public class CareDiaryServiceImpl implements CareDiaryService {
         }
     }
 
-    private void cancelPublishing(String diaryId, List<PublicImageCopy> copies) {
+    /**
+     * PUBLISHING을 PRIVATE로 되돌린다. {@code cancelPublishing} 매퍼 쿼리는 지금 이 토큰을
+     * 쥐고 있을 때만(1행) 반영되므로, 그 결과를 보고 나서만 예약한 이미지 키를 지운다 —
+     * 이미 다른 요청에게 토큰을 가로채였다면(0행) 그 요청의 키를 건드리면 안 되기 때문이다.
+     */
+    private void cancelPublishing(String diaryId, String token, List<PublicImageCopy> copies) {
         try {
             runInTransaction(() -> {
-                clearReservedPublicImageKeysInTransaction(copies);
-                careDiaryMapper.updateVisibilityIfCurrent(diaryId, PUBLISHING, PRIVATE);
+                if (careDiaryMapper.cancelPublishing(diaryId, token) == 1) {
+                    clearReservedPublicImageKeysInTransaction(copies);
+                }
             });
         } catch (RuntimeException cleanupFailure) {
             log.warn("[CARE_DIARY_PUBLISH_CANCEL_FAILED] publish cancel failed - diaryId: {}", diaryId, cleanupFailure);
         }
     }
 
-    private void clearReservedPublicImageKeys(List<PublicImageCopy> copies) {
+    /** 관리자 복원 실패 시 정리. cancelPublishing과 같은 이유로 토큰 해제가 성공했을 때만 키를 지운다. */
+    private void releaseAndClearReservedPublicImageKeys(
+            String diaryId, String token, List<PublicImageCopy> copies) {
         try {
-            runInTransaction(() -> clearReservedPublicImageKeysInTransaction(copies));
+            runInTransaction(() -> {
+                if (careDiaryMapper.releasePublishToken(diaryId, token) == 1) {
+                    clearReservedPublicImageKeysInTransaction(copies);
+                }
+            });
         } catch (RuntimeException cleanupFailure) {
             log.warn("[CARE_DIARY_PUBLIC_KEY_CLEAR_FAILED] reserved public key cleanup failed", cleanupFailure);
         }

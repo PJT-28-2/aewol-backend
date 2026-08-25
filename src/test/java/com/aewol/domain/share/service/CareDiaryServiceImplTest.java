@@ -63,10 +63,11 @@ class CareDiaryServiceImplTest {
         });
         lenient().when(fileStorage.publish(anyString(), anyString())).thenReturn(true);
         lenient().when(careDiaryMapper.updatePublicImageKey(anyString(), nullable(String.class))).thenReturn(1);
-        lenient().when(careDiaryMapper.updateVisibilityIfCurrent(anyString(), eq("PRIVATE"), eq("PUBLISHING"))).thenReturn(1);
-        lenient().when(careDiaryMapper.updateVisibilityIfCurrent(anyString(), eq("PUBLIC"), eq("PUBLISHING"))).thenReturn(1);
-        lenient().when(careDiaryMapper.updateVisibilityIfCurrent(anyString(), eq("PUBLISHING"), eq("PUBLIC"))).thenReturn(1);
-        lenient().when(careDiaryMapper.updateVisibilityIfCurrent(anyString(), eq("PUBLISHING"), eq("PRIVATE"))).thenReturn(1);
+        lenient().when(careDiaryMapper.enterPublishing(anyString(), anyString(), any())).thenReturn(1);
+        lenient().when(careDiaryMapper.acquirePublishToken(anyString(), anyString(), any())).thenReturn(1);
+        lenient().when(careDiaryMapper.completePublishing(anyString(), anyString())).thenReturn(1);
+        lenient().when(careDiaryMapper.cancelPublishing(anyString(), anyString())).thenReturn(1);
+        lenient().when(careDiaryMapper.releasePublishToken(anyString(), anyString())).thenReturn(1);
     }
 
     @AfterEach
@@ -447,9 +448,56 @@ class CareDiaryServiceImplTest {
         assertEquals("PUBLIC", result.getVisibility());
         verify(careDiaryMapper).updatePublicImageKey("img-1", "public/a.png");
         var inOrder = inOrder(careDiaryMapper, fileStorage);
-        inOrder.verify(careDiaryMapper).updateVisibilityIfCurrent("diary-1", "PRIVATE", "PUBLISHING");
+        inOrder.verify(careDiaryMapper).enterPublishing(eq("diary-1"), anyString(), any());
         inOrder.verify(fileStorage).publish("diary/a.png", "public/a.png");
-        inOrder.verify(careDiaryMapper).updateVisibilityIfCurrent("diary-1", "PUBLISHING", "PUBLIC");
+        inOrder.verify(careDiaryMapper).completePublishing(eq("diary-1"), anyString());
+    }
+
+    // enterPublishing과 completePublishing이 같은 토큰을 쓰는지는 값 그 자체보다 "값이 안 바뀌면
+    // CAS가 소유자를 못 가린다"는 리뷰 지적의 핵심이다 — 매번 새로 발급한 토큰이 완료까지
+    // 그대로 이어져야 다른 시도의 완료/취소가 이 토큰과 우연히도 일치하지 않는다.
+    @Test
+    @DisplayName("공개 진입과 완료가 같은 publish_token을 사용한다")
+    void should_useSamePublishToken_forEnterAndComplete() {
+        CareDiaryServiceImpl service = service();
+        givenPetOwnedBy("pet-1", "owner-1");
+        when(careDiaryMapper.findById("diary-1"))
+                .thenReturn(diaryRow("diary-1", "pet-1", "owner-1", "2026-08-10", "산책"),
+                        publicDiaryRow("owner-1"));
+        when(careDiaryMapper.findImagesByDiaryIds(List.of("diary-1"))).thenReturn(List.of(
+                map("diaryId", "diary-1", "imageUrl", "diary/a.png")));
+        when(careDiaryMapper.findImagesForPublish("diary-1")).thenReturn(List.of(
+                map("imageId", "img-1", "imageUrl", "diary/a.png")));
+
+        service.changeVisibility("owner-1", "diary-1", visibilityRequest("PUBLIC"));
+
+        ArgumentCaptor<String> enterToken = ArgumentCaptor.forClass(String.class);
+        verify(careDiaryMapper).enterPublishing(eq("diary-1"), enterToken.capture(), any());
+        verify(careDiaryMapper).completePublishing("diary-1", enterToken.getValue());
+    }
+
+    // [P1] 다른 요청이 이미 이 일기의 publish_token을 쥐고 있으면(=진행 중) 새 요청은 이미지
+    // 키를 하나도 건드리지 않고 즉시 conflict로 물러난다. 예전 CAS는 값이 안 바뀌는 재전이를
+    // 걸러내지 못해 이 경우에도 통과시켰다(리뷰로 발견).
+    @Test
+    @DisplayName("다른 작업이 publish_token을 쥐고 있으면 새 공개 요청은 이미지에 손대지 않고 거절된다")
+    void should_rejectWithoutTouchingImages_when_anotherPublishTokenIsHeld() {
+        CareDiaryServiceImpl service = service();
+        givenPetOwnedBy("pet-1", "owner-1");
+        when(careDiaryMapper.findById("diary-1"))
+                .thenReturn(diaryRow("diary-1", "pet-1", "owner-1", "2026-08-10", "산책"));
+        when(careDiaryMapper.findImagesForPublish("diary-1")).thenReturn(List.of(
+                map("imageId", "img-1", "imageUrl", "diary/a.png")));
+        when(careDiaryMapper.enterPublishing(eq("diary-1"), anyString(), any())).thenReturn(0);
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.changeVisibility("owner-1", "diary-1", visibilityRequest("PUBLIC")));
+
+        assertEquals(409, exception.getStatus().value());
+        verify(careDiaryMapper, never()).updatePublicImageKey(anyString(), anyString());
+        verify(fileStorage, never()).publish(anyString(), anyString());
+        verify(careDiaryMapper, never()).completePublishing(anyString(), anyString());
+        verify(careDiaryMapper, never()).cancelPublishing(anyString(), anyString());
     }
 
     @Test
@@ -471,7 +519,7 @@ class CareDiaryServiceImplTest {
         verify(fileStorage, never()).publish(anyString(), anyString());
         verify(careDiaryMapper, never()).updatePublicImageKey(anyString(), nullable(String.class));
         verify(careDiaryMapper, never()).updateVisibility(eq("diary-1"), anyString());
-        verify(careDiaryMapper, never()).updateVisibilityIfCurrent(anyString(), anyString(), anyString());
+        verify(careDiaryMapper, never()).enterPublishing(anyString(), anyString(), any());
     }
 
     @Test
@@ -510,9 +558,9 @@ class CareDiaryServiceImplTest {
                 () -> service.changeVisibility("owner-1", "diary-1", visibilityRequest("PUBLIC")));
 
         assertEquals(409, exception.getStatus().value());
-        verify(careDiaryMapper).updateVisibilityIfCurrent("diary-1", "PRIVATE", "PUBLISHING");
-        verify(careDiaryMapper).updateVisibilityIfCurrent("diary-1", "PUBLISHING", "PRIVATE");
-        verify(careDiaryMapper, never()).updateVisibilityIfCurrent("diary-1", "PUBLISHING", "PUBLIC");
+        verify(careDiaryMapper).enterPublishing(eq("diary-1"), anyString(), any());
+        verify(careDiaryMapper).cancelPublishing(eq("diary-1"), anyString());
+        verify(careDiaryMapper, never()).completePublishing(anyString(), anyString());
     }
 
     @Test
@@ -531,8 +579,8 @@ class CareDiaryServiceImplTest {
 
         assertEquals(409, exception.getStatus().value());
         verify(fileStorage, never()).publish(anyString(), anyString());
-        verify(careDiaryMapper, never()).updateVisibilityIfCurrent(eq("diary-1"), anyString(), eq("PUBLISHING"));
-        verify(careDiaryMapper, never()).updateVisibilityIfCurrent("diary-1", "PUBLISHING", "PUBLIC");
+        verify(careDiaryMapper, never()).completePublishing(anyString(), anyString());
+        verify(careDiaryMapper, never()).cancelPublishing(anyString(), anyString());
     }
 
     @Test
@@ -553,9 +601,9 @@ class CareDiaryServiceImplTest {
         assertEquals(409, exception.getStatus().value());
         verify(fileStorage).unpublish("public/a.png");
         verify(fileStorage, never()).unpublish("public/b.png");
-        verify(careDiaryMapper).updateVisibilityIfCurrent("diary-1", "PRIVATE", "PUBLISHING");
-        verify(careDiaryMapper).updateVisibilityIfCurrent("diary-1", "PUBLISHING", "PRIVATE");
-        verify(careDiaryMapper, never()).updateVisibilityIfCurrent("diary-1", "PUBLISHING", "PUBLIC");
+        verify(careDiaryMapper).enterPublishing(eq("diary-1"), anyString(), any());
+        verify(careDiaryMapper).cancelPublishing(eq("diary-1"), anyString());
+        verify(careDiaryMapper, never()).completePublishing(anyString(), anyString());
     }
 
     @Test
@@ -568,7 +616,7 @@ class CareDiaryServiceImplTest {
         when(careDiaryMapper.findImagesForPublish("diary-1")).thenReturn(List.of(
                 map("imageId", "img-1", "imageUrl", "diary/a.png"),
                 map("imageId", "img-2", "imageUrl", "diary/b.png")));
-        when(careDiaryMapper.updateVisibilityIfCurrent("diary-1", "PUBLISHING", "PUBLIC")).thenReturn(0);
+        when(careDiaryMapper.completePublishing(eq("diary-1"), anyString())).thenReturn(0);
 
         BusinessException exception = assertThrows(BusinessException.class,
                 () -> service.changeVisibility("owner-1", "diary-1", visibilityRequest("PUBLIC")));
@@ -576,7 +624,8 @@ class CareDiaryServiceImplTest {
         assertEquals(404, exception.getStatus().value());
         verify(fileStorage).publish("diary/a.png", "public/a.png");
         verify(fileStorage).publish("diary/b.png", "public/b.png");
-        verify(careDiaryMapper).updateVisibilityIfCurrent("diary-1", "PUBLISHING", "PUBLIC");
+        verify(careDiaryMapper).completePublishing(eq("diary-1"), anyString());
+        verify(careDiaryMapper).cancelPublishing(eq("diary-1"), anyString());
         verify(fileStorage).unpublish("public/a.png");
         verify(fileStorage).unpublish("public/b.png");
     }
@@ -772,8 +821,8 @@ class CareDiaryServiceImplTest {
 
         service.changeVisibility("member-2", "diary-1", visibilityRequest("PUBLIC"));
 
-        verify(careDiaryMapper).updateVisibilityIfCurrent("diary-1", "PRIVATE", "PUBLISHING");
-        verify(careDiaryMapper).updateVisibilityIfCurrent("diary-1", "PUBLISHING", "PUBLIC");
+        verify(careDiaryMapper).enterPublishing(eq("diary-1"), anyString(), any());
+        verify(careDiaryMapper).completePublishing(eq("diary-1"), anyString());
     }
 
     // 대표 보호자가 남이 쓴 글을 마음대로 공개하면 "내가 쓴 글인데 내 통제 밖에서
@@ -899,6 +948,30 @@ class CareDiaryServiceImplTest {
         verify(fileStorage).publish("diary/original.png", "public/restored.png");
         verify(careDiaryMapper).restoreByReport("diary-1");
         verify(inquiryMapper).answerWaitingLinkedToDiary("diary-1", "오탐");
+        verify(careDiaryMapper).releasePublishToken(eq("diary-1"), anyString());
+    }
+
+    // [P2] 다른 관리자가 이미 같은 일기의 복원 작업을 위해 publish_token을 쥐고 있으면, 새
+    // 요청은 이미지 키를 하나도 건드리지 않고 즉시 conflict로 물러난다. 예전에는 이 가드가
+    // 없어 늦게 실패한 쪽이 먼저 성공한 쪽의 키를 지울 수 있었다(리뷰로 발견).
+    @Test
+    @DisplayName("다른 관리자가 복원 작업 중이면 새 복원 요청은 이미지에 손대지 않고 거절된다")
+    void should_rejectWithoutTouchingImages_when_anotherAdminHoldsRestoreToken() {
+        CareDiaryServiceImpl service = service();
+        when(careDiaryMapper.findAdminReportById("report-1")).thenReturn(adminReportRow("PENDING", null));
+        when(careDiaryMapper.findImagesForPublish("diary-1")).thenReturn(List.of(map(
+                "imageId", "image-1", "imageUrl", "diary/original.png", "publicImageKey", null)));
+        when(careDiaryMapper.acquirePublishToken(eq("diary-1"), anyString(), any())).thenReturn(0);
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.resolveAdminReport(
+                        "admin-1", "report-1", resolutionRequest("RESTORE", "오탐")));
+
+        assertEquals(409, exception.getStatus().value());
+        verify(careDiaryMapper, never()).updatePublicImageKey(anyString(), anyString());
+        verify(fileStorage, never()).publish(anyString(), anyString());
+        verify(careDiaryMapper, never()).restoreByReport(anyString());
+        verify(careDiaryMapper, never()).releasePublishToken(anyString(), anyString());
     }
 
     @Test

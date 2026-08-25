@@ -99,9 +99,16 @@
         WHERE image_id = #{imageId}
     </update>
 
+    <!--
+        비공개 전환처럼 상태와 무관하게 강제로 값을 미는 경로다. 진행 중이던 공개
+        작업이 있었다면 publish_token도 같이 비워, 그 작업이 나중에 (완료든 취소든)
+        같은 토큰으로 반영을 시도해도 조건 불일치로 아무 것도 하지 않게 만든다.
+    -->
     <update id="updateVisibility">
         UPDATE care_diary
-           SET visibility = #{visibility}
+           SET visibility = #{visibility},
+               publish_token = NULL,
+               publishing_started_at = NULL
         WHERE diary_id = #{diaryId}
           AND deleted_at IS NULL
           <if test="visibility == 'PUBLIC' or visibility == 'PUBLISHING'">
@@ -109,15 +116,63 @@
           </if>
     </update>
 
-    <update id="updateVisibilityIfCurrent">
+    <!--
+        PRIVATE/PUBLIC(부분 공개) 상태에서 진행 중인 작업이 없을 때만, 또는 이전 작업이
+        publishing_started_at 기준으로 죽은 것으로 보일 때만 새 토큰으로 PUBLISHING을 가져온다.
+        같은 값(PUBLISHING)으로의 재전이도 이 조건으로 걸러지므로, "값이 안 바뀌면 CAS가
+        누구든 통과시킨다"는 문제가 생기지 않는다 — 토큰이 실제 소유자를 구분해준다.
+    -->
+    <update id="enterPublishing">
         UPDATE care_diary
-           SET visibility = #{visibility}
+           SET visibility = 'PUBLISHING',
+               publish_token = #{token},
+               publishing_started_at = NOW()
         WHERE diary_id = #{diaryId}
-          AND visibility = #{currentVisibility}
           AND deleted_at IS NULL
-          <if test="visibility == 'PUBLIC' or visibility == 'PUBLISHING'">
           AND hidden_by_report_at IS NULL
-          </if>
+          AND (
+                (visibility IN ('PRIVATE', 'PUBLIC') AND publish_token IS NULL)
+                OR (visibility = 'PUBLISHING' AND publishing_started_at &lt; #{staleBefore})
+              )
+    </update>
+
+    <update id="acquirePublishToken">
+        UPDATE care_diary
+           SET publish_token = #{token},
+               publishing_started_at = NOW()
+        WHERE diary_id = #{diaryId}
+          AND deleted_at IS NULL
+          AND (publish_token IS NULL OR publishing_started_at &lt; #{staleBefore})
+    </update>
+
+    <update id="completePublishing">
+        UPDATE care_diary
+           SET visibility = 'PUBLIC',
+               publish_token = NULL,
+               publishing_started_at = NULL
+        WHERE diary_id = #{diaryId}
+          AND deleted_at IS NULL
+          AND visibility = 'PUBLISHING'
+          AND publish_token = #{token}
+    </update>
+
+    <update id="cancelPublishing">
+        UPDATE care_diary
+           SET visibility = 'PRIVATE',
+               publish_token = NULL,
+               publishing_started_at = NULL
+        WHERE diary_id = #{diaryId}
+          AND deleted_at IS NULL
+          AND visibility = 'PUBLISHING'
+          AND publish_token = #{token}
+    </update>
+
+    <update id="releasePublishToken">
+        UPDATE care_diary
+           SET publish_token = NULL,
+               publishing_started_at = NULL
+        WHERE diary_id = #{diaryId}
+          AND publish_token = #{token}
     </update>
 
     <!--
