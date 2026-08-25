@@ -33,6 +33,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -214,8 +215,10 @@ public class CareDiaryServiceImpl implements CareDiaryService {
         // 두 표기를 모두 받는다.
         boolean isPetOwner = memberId.equals(text(pet, "member_id", "memberId"));
 
-        // 사진은 한 번만 읽는다. 공개 가능 여부를 가리는 데도, 사본을 맞추는 데도
-        // 같은 목록이 필요하다.
+        // 공개 가능 여부를 가리는 데(비어있는지·이미 사본이 다 있는지)와, 비공개로 되돌릴 때
+        // 정리할 목록으로 쓴다. 공개로 바꿀 때 실제로 예약·복사할 목록은 토큰을 얻은 뒤 다시
+        // 조회한다(publishPublicImagesAndChangeVisibility) — 여기서 읽은 스냅샷을 그대로
+        // 쓰면 죽은 작업을 회수했을 때 신뢰할 수 없는 기존 공개 키를 그대로 믿게 된다.
         List<Map<String, Object>> images = careDiaryMapper.findImagesForPublish(diaryId);
 
         if (PUBLIC.equals(visibility)) {
@@ -240,7 +243,7 @@ public class CareDiaryServiceImpl implements CareDiaryService {
         }
 
         if (PUBLIC.equals(visibility)) {
-            publishPublicImagesAndChangeVisibility(diaryId, images);
+            publishPublicImagesAndChangeVisibility(diaryId);
             return getDetail(memberId, diaryId);
         }
 
@@ -257,26 +260,34 @@ public class CareDiaryServiceImpl implements CareDiaryService {
      * 사본을 모두 만든 뒤에만 호출부가 PUBLIC으로 바꾼다. 하나라도 실패하면 공개하지 않는다.
      *
      * <p>PRIVATE/PUBLIC(부분 공개) → PUBLISHING 전이는 이 일기 전용으로 새로 발급한
-     * {@code publish_token}을 조건으로 건다({@link #enterPublishing}). visibility 값만으로
-     * CAS를 걸면 "PUBLISHING에서 PUBLISHING으로"처럼 값이 안 바뀌는 재전이는 여러 요청을
-     * 동시에 통과시켜 버린다 — 토큰은 매번 새로 발급되므로 그 문제가 없고, 그래서 완료/취소도
-     * 항상 이 토큰을 조건으로 건다(진 쪽 또는 가로채인 쪽의 완료·취소는 조건 불일치로
-     * 아무 것도 하지 않는다). 프로세스가 죽어 완료도 취소도 못 하고 PUBLISHING에 멈춰도,
-     * {@link #PUBLISH_LOCK_TIMEOUT}이 지나면 다음 요청이 새 토큰으로 이어받는다.
+     * {@code publish_token}을 조건으로 건다. visibility 값만으로 CAS를 걸면 "PUBLISHING에서
+     * PUBLISHING으로"처럼 값이 안 바뀌는 재전이는 여러 요청을 동시에 통과시켜 버린다 —
+     * 토큰은 매번 새로 발급되므로 그 문제가 없고, 그래서 완료/취소도 항상 이 토큰을
+     * 조건으로 건다(진 쪽 또는 가로채인 쪽의 완료·취소는 조건 불일치로 아무 것도 하지
+     * 않는다). 프로세스가 죽어 완료도 취소도 못 하고 PUBLISHING에 멈춰도,
+     * {@link #PUBLISH_LOCK_TIMEOUT}이 지나면 다음 요청이 새 토큰으로 회수(reclaim)한다.
+     *
+     * <p>이미지 목록은 토큰을 실제로 얻은 뒤 다시 조회한다({@link #acquirePublishingSlot}).
+     * 죽은 작업을 회수한 경우에는 그 이미지에 남은 공개 키를 신뢰하지 않고
+     * {@code forceRegenerate}로 전부 새 키를 발급한다 — 이전 시도가 DB에 키만 예약해두고
+     * S3 복사 전에 죽었을 수도 있고, 사실은 아직 살아서 그 키로 복사 중일 수도 있기
+     * 때문이다. 새 시도가 항상 다른 키를 쓰면, 이전 시도가 나중에 무엇을 하든(느리게
+     * 성공해서 자기 키를 정리하든, 실패해서 자기 키를 지우든) 이번 시도의 결과를 건드리지
+     * 않는다.
      */
-    private void publishPublicImagesAndChangeVisibility(
-            String diaryId, List<Map<String, Object>> images) {
-        List<PublicImageCopy> copies = preparePublicImageCopies(
-                images, "사진을 공개하지 못했어요. 잠시 후 다시 시도해 주세요.");
+    private void publishPublicImagesAndChangeVisibility(String diaryId) {
         String token = UUID.randomUUID().toString();
         LocalDateTime staleBefore = LocalDateTime.now().minus(PUBLISH_LOCK_TIMEOUT);
+        AtomicReference<List<PublicImageCopy>> copiesHolder = new AtomicReference<>();
         runInTransaction(() -> {
-            if (careDiaryMapper.enterPublishing(diaryId, token, staleBefore) != 1) {
-                throw BusinessException.conflict(
-                        "다른 요청이 이미 처리 중이에요. 잠시 후 다시 시도해 주세요.");
-            }
+            boolean reclaimed = acquirePublishingSlot(diaryId, token, staleBefore);
+            List<Map<String, Object>> currentImages = careDiaryMapper.findImagesForPublish(diaryId);
+            List<PublicImageCopy> copies = preparePublicImageCopies(currentImages, reclaimed,
+                    "사진을 공개하지 못했어요. 잠시 후 다시 시도해 주세요.");
             reserveMissingPublicImageKeys(copies);
+            copiesHolder.set(copies);
         });
+        List<PublicImageCopy> copies = copiesHolder.get();
 
         List<String> publishedPublicKeys = new ArrayList<>();
         try {
@@ -292,6 +303,33 @@ public class CareDiaryServiceImpl implements CareDiaryService {
             cancelPublishing(diaryId, token, copies);
             throw e;
         }
+    }
+
+    /**
+     * 정상 진입을 먼저 시도하고, 안 되면(=이미 누군가 진행 중) 죽은 작업 회수를 시도한다.
+     * 둘 다 실패하면(=다른 요청이 살아서 진행 중) 예외를 던진다.
+     *
+     * @return 죽은 작업을 회수했으면 true. 이때 호출부는 이미지의 기존 공개 키를 신뢰하면 안 된다.
+     */
+    private boolean acquirePublishingSlot(String diaryId, String token, LocalDateTime staleBefore) {
+        if (careDiaryMapper.enterPublishingFresh(diaryId, token) == 1) {
+            return false;
+        }
+        if (careDiaryMapper.reclaimStalePublishing(diaryId, token, staleBefore) == 1) {
+            return true;
+        }
+        throw BusinessException.conflict("다른 요청이 이미 처리 중이에요. 잠시 후 다시 시도해 주세요.");
+    }
+
+    /** {@link #acquirePublishingSlot}과 같은 이유로 관리자 복원 작업의 이미지 키 소유권을 건다. */
+    private boolean acquireRestoreSlot(String diaryId, String token, LocalDateTime staleBefore) {
+        if (careDiaryMapper.acquirePublishTokenFresh(diaryId, token) == 1) {
+            return false;
+        }
+        if (careDiaryMapper.reclaimStalePublishToken(diaryId, token, staleBefore) == 1) {
+            return true;
+        }
+        throw BusinessException.conflict("다른 관리자가 이미 이 게시물을 복원하고 있어요. 잠시 후 다시 시도해 주세요.");
     }
 
     private boolean hasPublicCopies(List<Map<String, Object>> images) {
@@ -442,26 +480,27 @@ public class CareDiaryServiceImpl implements CareDiaryService {
      * 신고로 내려간 사진의 공개 사본을 복원한다. visibility는 건드리지 않으므로(신고 숨김은
      * hidden_by_report_at만 쓴다) PUBLISHING 상태를 거치지 않지만, 이미지 키 예약 작업 자체는
      * {@link #publishPublicImagesAndChangeVisibility}와 똑같이 publish_token으로 소유권을
-     * 건다. 두 관리자가 같은 신고를 동시에 처리하려 들 때, 나중에 실패한 쪽이 먼저 성공한
-     * 쪽이 방금 만든 키를 지워버리는 걸 막기 위함이다(리뷰로 발견).
+     * 건다 — 두 관리자가 같은 신고를 동시에 처리하려 들 때, 나중에 실패한 쪽이 먼저 성공한
+     * 쪽이 방금 만든 키를 지워버리는 걸 막기 위함이다. 죽은 작업 회수 시 기존 키를 신뢰하지
+     * 않는 것도 같은 이유다(둘 다 리뷰로 발견).
      */
     private void restoreReportedDiary(
             String diaryId, String resolution, String adminNote, String adminId) {
-        List<Map<String, Object>> images = careDiaryMapper.findImagesForPublish(diaryId);
-        if (images.isEmpty()) {
+        if (careDiaryMapper.findImagesForPublish(diaryId).isEmpty()) {
             throw BusinessException.conflict("복원할 게시물 사진을 찾을 수 없습니다.");
         }
-        List<PublicImageCopy> copies = preparePublicImageCopies(
-                images, "게시물 사진을 복원하지 못했습니다. 잠시 후 다시 시도해 주세요.");
         String token = UUID.randomUUID().toString();
         LocalDateTime staleBefore = LocalDateTime.now().minus(PUBLISH_LOCK_TIMEOUT);
+        AtomicReference<List<PublicImageCopy>> copiesHolder = new AtomicReference<>();
         runInTransaction(() -> {
-            if (careDiaryMapper.acquirePublishToken(diaryId, token, staleBefore) != 1) {
-                throw BusinessException.conflict(
-                        "다른 관리자가 이미 이 게시물을 복원하고 있어요. 잠시 후 다시 시도해 주세요.");
-            }
+            boolean reclaimed = acquireRestoreSlot(diaryId, token, staleBefore);
+            List<Map<String, Object>> currentImages = careDiaryMapper.findImagesForPublish(diaryId);
+            List<PublicImageCopy> copies = preparePublicImageCopies(currentImages, reclaimed,
+                    "게시물 사진을 복원하지 못했습니다. 잠시 후 다시 시도해 주세요.");
             reserveMissingPublicImageKeys(copies);
+            copiesHolder.set(copies);
         });
+        List<PublicImageCopy> copies = copiesHolder.get();
 
         List<String> publishedPublicKeys = new ArrayList<>();
         try {
@@ -481,13 +520,18 @@ public class CareDiaryServiceImpl implements CareDiaryService {
         }
     }
 
+    /**
+     * @param forceRegenerate 이미지에 이미 남은 공개 키가 있어도 무시하고 전부 새로 발급한다.
+     *                        죽은 작업을 회수했을 때만 true로 준다 — 그 키가 실제로 S3에
+     *                        복사됐는지 이 시점에는 알 수 없기 때문이다.
+     */
     private List<PublicImageCopy> preparePublicImageCopies(
-            List<Map<String, Object>> images, String conflictMessage) {
+            List<Map<String, Object>> images, boolean forceRegenerate, String conflictMessage) {
         List<PublicImageCopy> copies = new ArrayList<>();
         for (Map<String, Object> image : images) {
             String imageId = text(image, "imageId");
             String imageUrl = text(image, "imageUrl");
-            String publicKey = text(image, "publicImageKey");
+            String publicKey = forceRegenerate ? null : text(image, "publicImageKey");
             boolean reserved = false;
             if (publicKey == null) {
                 publicKey = fileStorage.createPublicKey(imageUrl);

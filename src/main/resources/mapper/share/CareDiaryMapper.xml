@@ -117,12 +117,12 @@
     </update>
 
     <!--
-        PRIVATE/PUBLIC(부분 공개) 상태에서 진행 중인 작업이 없을 때만, 또는 이전 작업이
-        publishing_started_at 기준으로 죽은 것으로 보일 때만 새 토큰으로 PUBLISHING을 가져온다.
-        같은 값(PUBLISHING)으로의 재전이도 이 조건으로 걸러지므로, "값이 안 바뀌면 CAS가
-        누구든 통과시킨다"는 문제가 생기지 않는다 — 토큰이 실제 소유자를 구분해준다.
+        진행 중인 작업이 전혀 없을 때만(publish_token IS NULL) 통과한다. 죽은 작업 회수는
+        별도 쿼리(reclaimStalePublishing)로 완전히 분리했다 — 한 쿼리로 묶으면 호출부가
+        "이번에 정상 진입했는지, 죽은 작업을 회수했는지" 구분할 수 없어서, 회수한 경우에도
+        이미지에 남은 기존 공개 키를 그대로 믿어버리는 문제가 있었다(리뷰로 발견).
     -->
-    <update id="enterPublishing">
+    <update id="enterPublishingFresh">
         UPDATE care_diary
            SET visibility = 'PUBLISHING',
                publish_token = #{token},
@@ -130,19 +130,43 @@
         WHERE diary_id = #{diaryId}
           AND deleted_at IS NULL
           AND hidden_by_report_at IS NULL
-          AND (
-                (visibility IN ('PRIVATE', 'PUBLIC') AND publish_token IS NULL)
-                OR (visibility = 'PUBLISHING' AND publishing_started_at &lt; #{staleBefore})
-              )
+          AND visibility IN ('PRIVATE', 'PUBLIC')
+          AND publish_token IS NULL
     </update>
 
-    <update id="acquirePublishToken">
+    <!--
+        publishing_started_at이 오래됐을 때만(=이전 작업이 완료도 취소도 못 하고 멈췄다고
+        본다) 새 토큰으로 가져온다. visibility는 이미 PUBLISHING이므로 건드리지 않는다.
+        호출부는 이 쿼리가 1행을 반영했으면 이미지의 기존 공개 키를 신뢰하지 말고 전부
+        새로 발급해야 한다.
+    -->
+    <update id="reclaimStalePublishing">
         UPDATE care_diary
            SET publish_token = #{token},
                publishing_started_at = NOW()
         WHERE diary_id = #{diaryId}
           AND deleted_at IS NULL
-          AND (publish_token IS NULL OR publishing_started_at &lt; #{staleBefore})
+          AND visibility = 'PUBLISHING'
+          AND publishing_started_at &lt; #{staleBefore}
+    </update>
+
+    <update id="acquirePublishTokenFresh">
+        UPDATE care_diary
+           SET publish_token = #{token},
+               publishing_started_at = NOW()
+        WHERE diary_id = #{diaryId}
+          AND deleted_at IS NULL
+          AND publish_token IS NULL
+    </update>
+
+    <update id="reclaimStalePublishToken">
+        UPDATE care_diary
+           SET publish_token = #{token},
+               publishing_started_at = NOW()
+        WHERE diary_id = #{diaryId}
+          AND deleted_at IS NULL
+          AND publish_token IS NOT NULL
+          AND publishing_started_at &lt; #{staleBefore}
     </update>
 
     <update id="completePublishing">

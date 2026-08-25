@@ -63,8 +63,8 @@ class CareDiaryServiceImplTest {
         });
         lenient().when(fileStorage.publish(anyString(), anyString())).thenReturn(true);
         lenient().when(careDiaryMapper.updatePublicImageKey(anyString(), nullable(String.class))).thenReturn(1);
-        lenient().when(careDiaryMapper.enterPublishing(anyString(), anyString(), any())).thenReturn(1);
-        lenient().when(careDiaryMapper.acquirePublishToken(anyString(), anyString(), any())).thenReturn(1);
+        lenient().when(careDiaryMapper.enterPublishingFresh(anyString(), anyString())).thenReturn(1);
+        lenient().when(careDiaryMapper.acquirePublishTokenFresh(anyString(), anyString())).thenReturn(1);
         lenient().when(careDiaryMapper.completePublishing(anyString(), anyString())).thenReturn(1);
         lenient().when(careDiaryMapper.cancelPublishing(anyString(), anyString())).thenReturn(1);
         lenient().when(careDiaryMapper.releasePublishToken(anyString(), anyString())).thenReturn(1);
@@ -448,7 +448,7 @@ class CareDiaryServiceImplTest {
         assertEquals("PUBLIC", result.getVisibility());
         verify(careDiaryMapper).updatePublicImageKey("img-1", "public/a.png");
         var inOrder = inOrder(careDiaryMapper, fileStorage);
-        inOrder.verify(careDiaryMapper).enterPublishing(eq("diary-1"), anyString(), any());
+        inOrder.verify(careDiaryMapper).enterPublishingFresh(eq("diary-1"), anyString());
         inOrder.verify(fileStorage).publish("diary/a.png", "public/a.png");
         inOrder.verify(careDiaryMapper).completePublishing(eq("diary-1"), anyString());
     }
@@ -472,7 +472,7 @@ class CareDiaryServiceImplTest {
         service.changeVisibility("owner-1", "diary-1", visibilityRequest("PUBLIC"));
 
         ArgumentCaptor<String> enterToken = ArgumentCaptor.forClass(String.class);
-        verify(careDiaryMapper).enterPublishing(eq("diary-1"), enterToken.capture(), any());
+        verify(careDiaryMapper).enterPublishingFresh(eq("diary-1"), enterToken.capture());
         verify(careDiaryMapper).completePublishing("diary-1", enterToken.getValue());
     }
 
@@ -488,7 +488,7 @@ class CareDiaryServiceImplTest {
                 .thenReturn(diaryRow("diary-1", "pet-1", "owner-1", "2026-08-10", "산책"));
         when(careDiaryMapper.findImagesForPublish("diary-1")).thenReturn(List.of(
                 map("imageId", "img-1", "imageUrl", "diary/a.png")));
-        when(careDiaryMapper.enterPublishing(eq("diary-1"), anyString(), any())).thenReturn(0);
+        when(careDiaryMapper.enterPublishingFresh(eq("diary-1"), anyString())).thenReturn(0);
 
         BusinessException exception = assertThrows(BusinessException.class,
                 () -> service.changeVisibility("owner-1", "diary-1", visibilityRequest("PUBLIC")));
@@ -519,7 +519,37 @@ class CareDiaryServiceImplTest {
         verify(fileStorage, never()).publish(anyString(), anyString());
         verify(careDiaryMapper, never()).updatePublicImageKey(anyString(), nullable(String.class));
         verify(careDiaryMapper, never()).updateVisibility(eq("diary-1"), anyString());
-        verify(careDiaryMapper, never()).enterPublishing(anyString(), anyString(), any());
+        verify(careDiaryMapper, never()).enterPublishingFresh(anyString(), anyString());
+    }
+
+    // [P1] 죽은 작업을 회수(reclaim)했을 때 이미지에 남은 기존 공개 키를 그대로 믿으면 두 가지가
+    // 깨진다: (1) 그 키가 DB에만 예약되고 S3 복사 전에 죽었다면 사본 없이 PUBLIC이 확정되고,
+    // (2) 사실 그 예전 시도가 아직 살아서 같은 키로 복사 중이었다면 예전 시도가 나중에 자기
+    // 키를 정리하며 이번 결과를 지워버릴 수 있다. 회수한 경우 항상 새 키를 발급해 다시
+    // 복사하면 예전 시도가 무엇을 하고 있었든 서로 다른 키를 쓰게 되어 둘 다 해결된다.
+    @Test
+    @DisplayName("죽은 작업을 회수하면 기존 공개 키를 믿지 않고 새 키로 다시 복사한다")
+    void should_regenerateAndRecopy_whenReclaimingStalePublishing() {
+        CareDiaryServiceImpl service = service();
+        givenPetOwnedBy("pet-1", "owner-1");
+        when(careDiaryMapper.findById("diary-1"))
+                .thenReturn(diaryRow("diary-1", "pet-1", "owner-1", "2026-08-10", "산책"),
+                        publicDiaryRow("owner-1"));
+        when(careDiaryMapper.findImagesByDiaryIds(List.of("diary-1"))).thenReturn(List.of(
+                map("diaryId", "diary-1", "imageUrl", "diary/a.png")));
+        // 죽은 이전 시도가 DB에 예약만 해두고 실제로 S3에 복사됐는지는 알 수 없는 키다.
+        when(careDiaryMapper.findImagesForPublish("diary-1")).thenReturn(List.of(
+                map("imageId", "img-1", "imageUrl", "diary/a.png",
+                        "publicImageKey", "public/crashed-attempt-key.png")));
+        when(careDiaryMapper.enterPublishingFresh(eq("diary-1"), anyString())).thenReturn(0);
+        when(careDiaryMapper.reclaimStalePublishing(eq("diary-1"), anyString(), any())).thenReturn(1);
+
+        service.changeVisibility("owner-1", "diary-1", visibilityRequest("PUBLIC"));
+
+        verify(careDiaryMapper).reclaimStalePublishing(eq("diary-1"), anyString(), any());
+        // 예전 키를 그대로 썼다면 이 값이 아니라 "public/crashed-attempt-key.png"였을 것이다.
+        verify(careDiaryMapper).updatePublicImageKey("img-1", "public/a.png");
+        verify(fileStorage).publish("diary/a.png", "public/a.png");
     }
 
     @Test
@@ -558,7 +588,7 @@ class CareDiaryServiceImplTest {
                 () -> service.changeVisibility("owner-1", "diary-1", visibilityRequest("PUBLIC")));
 
         assertEquals(409, exception.getStatus().value());
-        verify(careDiaryMapper).enterPublishing(eq("diary-1"), anyString(), any());
+        verify(careDiaryMapper).enterPublishingFresh(eq("diary-1"), anyString());
         verify(careDiaryMapper).cancelPublishing(eq("diary-1"), anyString());
         verify(careDiaryMapper, never()).completePublishing(anyString(), anyString());
     }
@@ -601,7 +631,7 @@ class CareDiaryServiceImplTest {
         assertEquals(409, exception.getStatus().value());
         verify(fileStorage).unpublish("public/a.png");
         verify(fileStorage, never()).unpublish("public/b.png");
-        verify(careDiaryMapper).enterPublishing(eq("diary-1"), anyString(), any());
+        verify(careDiaryMapper).enterPublishingFresh(eq("diary-1"), anyString());
         verify(careDiaryMapper).cancelPublishing(eq("diary-1"), anyString());
         verify(careDiaryMapper, never()).completePublishing(anyString(), anyString());
     }
@@ -821,7 +851,7 @@ class CareDiaryServiceImplTest {
 
         service.changeVisibility("member-2", "diary-1", visibilityRequest("PUBLIC"));
 
-        verify(careDiaryMapper).enterPublishing(eq("diary-1"), anyString(), any());
+        verify(careDiaryMapper).enterPublishingFresh(eq("diary-1"), anyString());
         verify(careDiaryMapper).completePublishing(eq("diary-1"), anyString());
     }
 
@@ -951,6 +981,32 @@ class CareDiaryServiceImplTest {
         verify(careDiaryMapper).releasePublishToken(eq("diary-1"), anyString());
     }
 
+    // [P1] 복원 경로도 changeVisibility(PUBLIC)과 같은 이유로, 죽은 복원 작업을 회수했을 때
+    // 기존 공개 키를 믿지 않고 새로 발급해 다시 복사해야 한다.
+    @Test
+    @DisplayName("죽은 복원 작업을 회수하면 기존 공개 키를 믿지 않고 새 키로 다시 복사한다")
+    void should_regenerateAndRecopy_whenReclaimingStaleRestoreToken() {
+        CareDiaryServiceImpl service = service();
+        Map<String, Object> pending = adminReportRow("PENDING", null);
+        Map<String, Object> resolved = adminReportRow("RESOLVED", "RESTORE");
+        when(careDiaryMapper.findAdminReportById("report-1")).thenReturn(pending, resolved);
+        when(careDiaryMapper.findImagesForPublish("diary-1")).thenReturn(List.of(map(
+                "imageId", "image-1", "imageUrl", "diary/original.png",
+                "publicImageKey", "public/crashed-restore-key.png")));
+        when(careDiaryMapper.acquirePublishTokenFresh(eq("diary-1"), anyString())).thenReturn(0);
+        when(careDiaryMapper.reclaimStalePublishToken(eq("diary-1"), anyString(), any())).thenReturn(1);
+        when(fileStorage.createPublicKey("diary/original.png")).thenReturn("public/restored.png");
+        when(careDiaryMapper.restoreByReport("diary-1")).thenReturn(1);
+        when(careDiaryMapper.resolvePendingReportsByDiary(
+                "diary-1", "RESTORE", "오탐", "admin-1")).thenReturn(2);
+
+        service.resolveAdminReport("admin-1", "report-1", resolutionRequest("RESTORE", " 오탐 "));
+
+        verify(careDiaryMapper).reclaimStalePublishToken(eq("diary-1"), anyString(), any());
+        verify(careDiaryMapper).updatePublicImageKey("image-1", "public/restored.png");
+        verify(fileStorage).publish("diary/original.png", "public/restored.png");
+    }
+
     // [P2] 다른 관리자가 이미 같은 일기의 복원 작업을 위해 publish_token을 쥐고 있으면, 새
     // 요청은 이미지 키를 하나도 건드리지 않고 즉시 conflict로 물러난다. 예전에는 이 가드가
     // 없어 늦게 실패한 쪽이 먼저 성공한 쪽의 키를 지울 수 있었다(리뷰로 발견).
@@ -961,7 +1017,7 @@ class CareDiaryServiceImplTest {
         when(careDiaryMapper.findAdminReportById("report-1")).thenReturn(adminReportRow("PENDING", null));
         when(careDiaryMapper.findImagesForPublish("diary-1")).thenReturn(List.of(map(
                 "imageId", "image-1", "imageUrl", "diary/original.png", "publicImageKey", null)));
-        when(careDiaryMapper.acquirePublishToken(eq("diary-1"), anyString(), any())).thenReturn(0);
+        when(careDiaryMapper.acquirePublishTokenFresh(eq("diary-1"), anyString())).thenReturn(0);
 
         BusinessException exception = assertThrows(BusinessException.class,
                 () -> service.resolveAdminReport(
