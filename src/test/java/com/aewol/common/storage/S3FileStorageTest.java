@@ -99,4 +99,23 @@ class S3FileStorageTest {
 
         verifyNoInteractions(presigner);
     }
+
+    @Test
+    @DisplayName("공개 CDN 주소가 있으면 공개 서빙이 켜져 있다")
+    void should_enablePublicServing_when_baseUrlPresent() {
+        assertTrue(storage.isPublicServingEnabled());
+    }
+
+    @Test
+    @DisplayName("공개 CDN 주소가 없으면 사본을 예약하지 않는다")
+    void should_skipPublish_when_baseUrlMissing() {
+        FileSignature signature =
+                new FileSignature("test-secret-key-for-file-signature-256bit", 3600, 600);
+        S3FileStorage disabled = new S3FileStorage(s3, presigner, BUCKET, "public", "", signature);
+
+        assertFalse(disabled.isPublicServingEnabled());
+        assertNull(disabled.createPublicKey("diary/a.png"));
+        assertFalse(disabled.publish("diary/a.png", "public/a.png"));
+        verifyNoInteractions(s3);
+    }
 }

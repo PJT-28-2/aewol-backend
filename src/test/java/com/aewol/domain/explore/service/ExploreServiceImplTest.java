@@ -38,7 +38,7 @@ class ExploreServiceImplTest {
         return new ExploreServiceImpl(exploreMapper, fileStorage);
     }
 
-    /** 공개 사본이 있는 이미지 행. 피드는 사본 없는 글을 빼므로 대부분의 테스트에 필요하다. */
+    /** 공개 사본이 있는 이미지 행. 사본이 없으면 서비스가 서명 URL로 떨어진다. */
     private static Map<String, Object> imageRow(String diaryId) {
         return Map.of("diaryId", diaryId, "imageUrl", "diary/" + diaryId + ".png",
                 "publicImageKey", "public/" + diaryId + ".png");

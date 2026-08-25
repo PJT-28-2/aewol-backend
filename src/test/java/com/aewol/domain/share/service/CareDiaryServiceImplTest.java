@@ -62,6 +62,7 @@ class CareDiaryServiceImplTest {
             return "public/" + key.substring(key.lastIndexOf('/') + 1);
         });
         lenient().when(fileStorage.publish(anyString(), anyString())).thenReturn(true);
+        lenient().when(fileStorage.isPublicServingEnabled()).thenReturn(true);
         lenient().when(careDiaryMapper.updatePublicImageKey(anyString(), nullable(String.class))).thenReturn(1);
         lenient().when(careDiaryMapper.enterPublishingFresh(anyString(), anyString())).thenReturn(1);
         lenient().when(careDiaryMapper.acquirePublishTokenFresh(anyString(), anyString())).thenReturn(1);
@@ -625,7 +626,7 @@ class CareDiaryServiceImplTest {
         verify(fileStorage, never()).delete("diary/a.png");
     }
 
-    // 사본 없이 PUBLIC이면 피드에 빈 칸이 생긴다. 전환 자체를 막는다.
+    // 복사 실패를 공개로 바꿔 버리면 피드에 빈 칸이 생긴다. 전환 자체를 막는다.
     @Test
     @DisplayName("공개 사본 생성이 실패하면 공개로 바꾸지 않는다")
     void should_keepPrivate_when_publishReturnsNull() {
@@ -644,6 +645,54 @@ class CareDiaryServiceImplTest {
         verify(careDiaryMapper).enterPublishingFresh(eq("diary-1"), anyString());
         verify(careDiaryMapper).cancelPublishing(eq("diary-1"), anyString());
         verify(careDiaryMapper, never()).completePublishing(anyString(), anyString());
+    }
+
+    @Test
+    @DisplayName("공개 CDN이 꺼져 있으면 사본 없이 공개로 바꾼다")
+    void should_publishWithoutCopy_when_publicServingDisabled() {
+        CareDiaryServiceImpl service = service();
+        givenPetOwnedBy("pet-1", "owner-1");
+        when(fileStorage.isPublicServingEnabled()).thenReturn(false);
+        when(careDiaryMapper.findById("diary-1"))
+                .thenReturn(diaryRow("diary-1", "pet-1", "owner-1", "2026-08-10", "산책"),
+                        publicDiaryRow("owner-1"));
+        when(careDiaryMapper.findImagesByDiaryIds(List.of("diary-1"))).thenReturn(List.of(
+                map("diaryId", "diary-1", "imageUrl", "diary/a.png")));
+        when(careDiaryMapper.findImagesForPublish("diary-1")).thenReturn(List.of(
+                map("imageId", "img-1", "imageUrl", "diary/a.png")));
+
+        CareDiaryResponse result = service.changeVisibility(
+                "owner-1", "diary-1", visibilityRequest("PUBLIC"));
+
+        assertEquals("PUBLIC", result.getVisibility());
+        verify(fileStorage, never()).createPublicKey(anyString());
+        verify(fileStorage, never()).publish(anyString(), anyString());
+        verify(careDiaryMapper, never()).updatePublicImageKey(anyString(), anyString());
+        var inOrder = inOrder(careDiaryMapper);
+        inOrder.verify(careDiaryMapper).enterPublishingFresh(eq("diary-1"), anyString());
+        inOrder.verify(careDiaryMapper).completePublishing(eq("diary-1"), anyString());
+    }
+
+    @Test
+    @DisplayName("공개 CDN이 꺼져 있고 이미 PUBLIC이면 공개 작업을 다시 하지 않는다")
+    void should_skipPublishWorkflow_when_alreadyPublicAndCdnDisabled() {
+        CareDiaryServiceImpl service = service();
+        givenPetOwnedBy("pet-1", "owner-1");
+        when(fileStorage.isPublicServingEnabled()).thenReturn(false);
+        when(careDiaryMapper.findById("diary-1"))
+                .thenReturn(publicDiaryRow("owner-1"), publicDiaryRow("owner-1"));
+        when(careDiaryMapper.findImagesForPublish("diary-1")).thenReturn(List.of(
+                map("imageId", "img-1", "imageUrl", "diary/a.png")));
+        when(careDiaryMapper.findImagesByDiaryIds(List.of("diary-1"))).thenReturn(List.of(
+                map("diaryId", "diary-1", "imageUrl", "diary/a.png")));
+
+        CareDiaryResponse result = service.changeVisibility(
+                "owner-1", "diary-1", visibilityRequest("PUBLIC"));
+
+        assertEquals("PUBLIC", result.getVisibility());
+        verify(careDiaryMapper, never()).enterPublishingFresh(anyString(), anyString());
+        verify(careDiaryMapper, never()).completePublishing(anyString(), anyString());
+        verify(fileStorage, never()).createPublicKey(anyString());
     }
 
     @Test
@@ -1031,6 +1080,31 @@ class CareDiaryServiceImplTest {
         verify(fileStorage).publish("diary/original.png", "public/restored.png");
         verify(careDiaryMapper).restoreByReport("diary-1");
         verify(inquiryMapper).answerWaitingLinkedToDiary("diary-1", "오탐");
+        verify(careDiaryMapper).releasePublishToken(eq("diary-1"), anyString());
+    }
+
+    @Test
+    @DisplayName("공개 CDN이 꺼져 있으면 사본 없이 신고 게시물을 복원한다")
+    void should_restoreWithoutCopy_when_publicServingDisabled() {
+        CareDiaryServiceImpl service = service();
+        Map<String, Object> pending = adminReportRow("PENDING", null);
+        Map<String, Object> resolved = adminReportRow("RESOLVED", "RESTORE");
+        when(fileStorage.isPublicServingEnabled()).thenReturn(false);
+        when(careDiaryMapper.findAdminReportById("report-1")).thenReturn(pending, resolved);
+        when(careDiaryMapper.findImagesForPublish("diary-1")).thenReturn(List.of(map(
+                "imageId", "image-1", "imageUrl", "diary/original.png", "publicImageKey", null)));
+        when(careDiaryMapper.restoreByReport("diary-1")).thenReturn(1);
+        when(careDiaryMapper.resolvePendingReportsByDiary(
+                "diary-1", "RESTORE", "오탐", "admin-1")).thenReturn(2);
+
+        var result = service.resolveAdminReport(
+                "admin-1", "report-1", resolutionRequest("RESTORE", " 오탐 "));
+
+        assertEquals("RESOLVED", result.getStatus());
+        verify(fileStorage, never()).createPublicKey(anyString());
+        verify(fileStorage, never()).publish(anyString(), anyString());
+        verify(careDiaryMapper, never()).updatePublicImageKey(anyString(), anyString());
+        verify(careDiaryMapper).restoreByReport("diary-1");
         verify(careDiaryMapper).releasePublishToken(eq("diary-1"), anyString());
     }
 
