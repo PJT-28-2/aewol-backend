@@ -550,10 +550,59 @@ class CareDiaryServiceImplTest {
         // 예전 키를 그대로 썼다면 이 값이 아니라 "public/crashed-attempt-key.png"였을 것이다.
         verify(careDiaryMapper).updatePublicImageKey("img-1", "public/a.png");
         verify(fileStorage).publish("diary/a.png", "public/a.png");
-        // [P2] 회수 과정에서 DB 참조를 잃은 예전 키는, 우리 시도가 성공적으로 끝난 뒤 실제
-        // 객체까지 정리해야 한다 — 그러지 않으면 이전 시도가 이미 복사해둔 객체가 아무도
-        // 참조하지 않는 채로 버킷에 영구히 남는다(리뷰로 발견).
+        // [P2] 회수 과정에서 DB 참조를 잃은 예전 키는 실제 객체까지 정리해야 한다 — 그러지
+        // 않으면 이전 시도가 이미 복사해둔 객체가 아무도 참조하지 않는 채로 버킷에 영구히
+        // 남는다(리뷰로 발견).
         verify(fileStorage).unpublish("public/crashed-attempt-key.png");
+    }
+
+    // [P1] 회수 트랜잭션이 커밋되는 순간 예전 키는 이미 DB에서 사라진다. 그 뒤 S3 복사나
+    // 최종 전환이 실패해 우리 시도가 결국 실패로 끝나더라도, 예전 키는 여전히 신뢰할 수도
+    // 복원할 수도 없으므로 실패 경로에서도 정리해야 한다 — 성공했을 때만 정리하면 실패
+    // 경로에서 고아 객체가 남는다(리뷰로 발견).
+    @Test
+    @DisplayName("회수 후 새 복사가 실패해도 밀려난 기존 공개 객체는 정리한다")
+    void should_cleanUpSupersededKey_evenWhenReclaimedAttemptFails() {
+        CareDiaryServiceImpl service = service();
+        givenPetOwnedBy("pet-1", "owner-1");
+        when(careDiaryMapper.findById("diary-1"))
+                .thenReturn(diaryRow("diary-1", "pet-1", "owner-1", "2026-08-10", "산책"));
+        when(careDiaryMapper.findImagesForPublish("diary-1")).thenReturn(List.of(
+                map("imageId", "img-1", "imageUrl", "diary/a.png",
+                        "publicImageKey", "public/crashed-attempt-key.png")));
+        when(careDiaryMapper.enterPublishingFresh(eq("diary-1"), anyString())).thenReturn(0);
+        when(careDiaryMapper.reclaimStalePublishing(eq("diary-1"), anyString(), any())).thenReturn(1);
+        when(fileStorage.publish("diary/a.png", "public/a.png")).thenReturn(false);
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.changeVisibility("owner-1", "diary-1", visibilityRequest("PUBLIC")));
+
+        assertEquals(409, exception.getStatus().value());
+        verify(fileStorage).unpublish("public/crashed-attempt-key.png");
+    }
+
+    // [P2] 최초 조회(changeVisibility 진입 시점)와 토큰 획득 후 재조회 사이에 마지막 사진이
+    // 지워질 수 있다. 재조회 결과가 비었는데도 그대로 진행하면 사진 없는 일기가 PUBLIC으로
+    // 전환된다(리뷰로 발견). 재조회 결과를 검증해 이 트랜잭션(토큰 획득 포함)을 롤백해야 한다.
+    @Test
+    @DisplayName("토큰 획득 후 사진이 사라지면 공개로 전환하지 않는다")
+    void should_rejectPublish_when_imagesDisappearAfterAcquiringToken() {
+        CareDiaryServiceImpl service = service();
+        givenPetOwnedBy("pet-1", "owner-1");
+        when(careDiaryMapper.findById("diary-1"))
+                .thenReturn(diaryRow("diary-1", "pet-1", "owner-1", "2026-08-10", "산책"));
+        // 최초 조회(진입 검증용)에는 사진이 있지만, 토큰 획득 후 재조회에는 없다.
+        when(careDiaryMapper.findImagesForPublish("diary-1"))
+                .thenReturn(List.of(map("imageId", "img-1", "imageUrl", "diary/a.png")))
+                .thenReturn(List.of());
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.changeVisibility("owner-1", "diary-1", visibilityRequest("PUBLIC")));
+
+        assertEquals(400, exception.getStatus().value());
+        verify(careDiaryMapper, never()).updatePublicImageKey(anyString(), anyString());
+        verify(fileStorage, never()).publish(anyString(), anyString());
+        verify(careDiaryMapper, never()).completePublishing(anyString(), anyString());
     }
 
     @Test
@@ -1010,6 +1059,51 @@ class CareDiaryServiceImplTest {
         verify(careDiaryMapper).updatePublicImageKey("image-1", "public/restored.png");
         verify(fileStorage).publish("diary/original.png", "public/restored.png");
         verify(fileStorage).unpublish("public/crashed-restore-key.png");
+    }
+
+    // [P1] 복원 경로도 changeVisibility(PUBLIC)과 같은 이유로, 회수 후 새 복사가 실패해도
+    // 밀려난 기존 공개 객체는 정리해야 한다.
+    @Test
+    @DisplayName("복원 회수 후 새 복사가 실패해도 밀려난 기존 공개 객체는 정리한다")
+    void should_cleanUpSupersededKey_evenWhenReclaimedRestoreAttemptFails() {
+        CareDiaryServiceImpl service = service();
+        when(careDiaryMapper.findAdminReportById("report-1")).thenReturn(adminReportRow("PENDING", null));
+        when(careDiaryMapper.findImagesForPublish("diary-1")).thenReturn(List.of(map(
+                "imageId", "image-1", "imageUrl", "diary/original.png",
+                "publicImageKey", "public/crashed-restore-key.png")));
+        when(careDiaryMapper.acquirePublishTokenFresh(eq("diary-1"), anyString())).thenReturn(0);
+        when(careDiaryMapper.reclaimStalePublishToken(eq("diary-1"), anyString(), any())).thenReturn(1);
+        when(fileStorage.publish("diary/original.png", "public/original.png")).thenReturn(false);
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.resolveAdminReport(
+                        "admin-1", "report-1", resolutionRequest("RESTORE", "오탐")));
+
+        assertEquals(409, exception.getStatus().value());
+        verify(fileStorage).unpublish("public/crashed-restore-key.png");
+    }
+
+    // [P2] 최초 조회와 토큰 획득 후 재조회 사이에 마지막 사진이 지워지면, 복원 결과가 사진
+    // 없는 게시물이 될 수 있다(리뷰로 발견).
+    @Test
+    @DisplayName("토큰 획득 후 사진이 사라지면 복원하지 않는다")
+    void should_rejectRestore_when_imagesDisappearAfterAcquiringToken() {
+        CareDiaryServiceImpl service = service();
+        when(careDiaryMapper.findAdminReportById("report-1")).thenReturn(adminReportRow("PENDING", null));
+        // 최초 조회(진입 검증용)에는 사진이 있지만, 토큰 획득 후 재조회에는 없다.
+        when(careDiaryMapper.findImagesForPublish("diary-1"))
+                .thenReturn(List.of(map(
+                        "imageId", "image-1", "imageUrl", "diary/original.png", "publicImageKey", null)))
+                .thenReturn(List.of());
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.resolveAdminReport(
+                        "admin-1", "report-1", resolutionRequest("RESTORE", "오탐")));
+
+        assertEquals(409, exception.getStatus().value());
+        verify(careDiaryMapper, never()).updatePublicImageKey(anyString(), anyString());
+        verify(fileStorage, never()).publish(anyString(), anyString());
+        verify(careDiaryMapper, never()).restoreByReport(anyString());
     }
 
     // [P1] 이미지 예약(reserveMissingPublicImageKeys)까지 마친 뒤, S3 복사가 오래 걸리는

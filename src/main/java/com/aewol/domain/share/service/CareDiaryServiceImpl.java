@@ -268,12 +268,16 @@ public class CareDiaryServiceImpl implements CareDiaryService {
      * {@link #PUBLISH_LOCK_TIMEOUT}이 지나면 다음 요청이 새 토큰으로 회수(reclaim)한다.
      *
      * <p>이미지 목록은 토큰을 실제로 얻은 뒤 다시 조회한다({@link #acquirePublishingSlot}).
-     * 죽은 작업을 회수한 경우에는 그 이미지에 남은 공개 키를 신뢰하지 않고
+     * 처음 조회와 이 재조회 사이에 마지막 사진이 지워질 수 있으므로, 재조회 결과가
+     * 비었으면 이 트랜잭션(토큰 획득 포함)을 통째로 롤백시킨다 — 그러지 않으면 사진 없는
+     * 일기가 PUBLIC으로 전환될 수 있다(리뷰로 발견).
+     *
+     * <p>죽은 작업을 회수한 경우에는 그 이미지에 남은 공개 키를 신뢰하지 않고
      * {@code forceRegenerate}로 전부 새 키를 발급한다 — 이전 시도가 DB에 키만 예약해두고
      * S3 복사 전에 죽었을 수도 있고, 사실은 아직 살아서 그 키로 복사 중일 수도 있기
-     * 때문이다. 새 시도가 항상 다른 키를 쓰면, 이전 시도가 나중에 무엇을 하든(느리게
-     * 성공해서 자기 키를 정리하든, 실패해서 자기 키를 지우든) 이번 시도의 결과를 건드리지
-     * 않는다.
+     * 때문이다. 회수 트랜잭션이 커밋된 시점에 DB는 이미 그 예전 키를 잊었으므로, 이후
+     * 단계(S3 복사·최종 전환)가 성공하든 실패하든 상관없이 곧바로 실제 객체를 정리한다 —
+     * 성공했을 때만 정리하면 실패 경로에서 정리가 누락돼 고아 객체가 남는다(리뷰로 발견).
      */
     private void publishPublicImagesAndChangeVisibility(String diaryId) {
         String token = UUID.randomUUID().toString();
@@ -283,11 +287,19 @@ public class CareDiaryServiceImpl implements CareDiaryService {
         runInTransaction(() -> {
             boolean reclaimed = acquirePublishingSlot(diaryId, token, staleBefore);
             List<Map<String, Object>> currentImages = careDiaryMapper.findImagesForPublish(diaryId);
+            if (currentImages.isEmpty()) {
+                throw new BusinessException("사진이 있는 일기만 공개할 수 있어요. 사진을 추가한 뒤 다시 시도해 주세요.");
+            }
             List<PublicImageCopy> copies = preparePublicImageCopies(currentImages, reclaimed,
                     supersededPublicKeys, "사진을 공개하지 못했어요. 잠시 후 다시 시도해 주세요.");
             reserveMissingPublicImageKeys(copies);
             copiesHolder.set(copies);
         });
+        // 이 시점에 회수 트랜잭션은 이미 커밋됐다 — 밀려난 예전 키는 이후 단계의 성패와
+        // 무관하게 지금 정리해도 안전하다. 이전 시도가 사실 아직 살아서 같은 경로에 객체를
+        // 다시 만들 수도 있는 잔여 위험까지 없애려면, 이 정리와는 별개로 버킷 lifecycle
+        // 정책 같은 최종 안전망을 두는 편이 안전하다.
+        supersededPublicKeys.forEach(this::unpublishQuietly);
         List<PublicImageCopy> copies = copiesHolder.get();
 
         List<String> publishedPublicKeys = new ArrayList<>();
@@ -299,11 +311,6 @@ public class CareDiaryServiceImpl implements CareDiaryService {
                     throw BusinessException.notFound("공개 여부를 바꿀 일기를 찾을 수 없습니다.");
                 }
             });
-            // 우리 시도가 커밋된 뒤에만, 회수 과정에서 밀려난 예전 키의 실제 객체를 정리한다.
-            // 이전 시도가 사실 아직 살아서 같은 경로에 객체를 다시 만들 수도 있는 잔여
-            // 위험까지 없애려면, 이 정리와는 별개로 버킷 lifecycle 정책 같은 최종 안전망을
-            // 두는 편이 안전하다.
-            supersededPublicKeys.forEach(this::unpublishQuietly);
         } catch (RuntimeException e) {
             publishedPublicKeys.forEach(this::unpublishQuietly);
             cancelPublishing(diaryId, token, copies);
@@ -502,11 +509,19 @@ public class CareDiaryServiceImpl implements CareDiaryService {
         runInTransaction(() -> {
             boolean reclaimed = acquireRestoreSlot(diaryId, token, staleBefore);
             List<Map<String, Object>> currentImages = careDiaryMapper.findImagesForPublish(diaryId);
+            // 최초 조회와 이 재조회 사이에 사진이 전부 지워졌을 수 있다. 토큰 획득까지
+            // 포함해 이 트랜잭션을 통째로 롤백시킨다(리뷰로 발견).
+            if (currentImages.isEmpty()) {
+                throw BusinessException.conflict("복원할 게시물 사진을 찾을 수 없습니다.");
+            }
             List<PublicImageCopy> copies = preparePublicImageCopies(currentImages, reclaimed,
                     supersededPublicKeys, "게시물 사진을 복원하지 못했습니다. 잠시 후 다시 시도해 주세요.");
             reserveMissingPublicImageKeys(copies);
             copiesHolder.set(copies);
         });
+        // publishPublicImagesAndChangeVisibility와 같은 이유로, 회수 트랜잭션이 커밋된
+        // 시점에 곧바로 밀려난 예전 키를 정리한다 — 이후 단계의 성패를 기다리지 않는다.
+        supersededPublicKeys.forEach(this::unpublishQuietly);
         List<PublicImageCopy> copies = copiesHolder.get();
 
         List<String> publishedPublicKeys = new ArrayList<>();
@@ -527,9 +542,6 @@ public class CareDiaryServiceImpl implements CareDiaryService {
                 }
                 resolvePendingReports(diaryId, resolution, adminNote, adminId);
             });
-            // publishPublicImagesAndChangeVisibility와 같은 이유로, 커밋이 끝난 뒤에만 회수
-            // 과정에서 밀려난 예전 키를 정리한다.
-            supersededPublicKeys.forEach(this::unpublishQuietly);
         } catch (RuntimeException e) {
             publishedPublicKeys.forEach(this::unpublishQuietly);
             releaseAndClearReservedPublicImageKeys(diaryId, token, copies);
