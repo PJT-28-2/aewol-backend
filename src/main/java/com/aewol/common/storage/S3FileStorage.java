@@ -83,11 +83,11 @@ public class S3FileStorage implements FileStorage {
             log.info("S3 파일 저장소 사용 - bucket: {}, region: {}, 공개 서빙: {}",
                     bucket, region, publicBaseUrl);
         } else {
-            // 조용히 꺼진 채로 배포되면 탐색 피드가 이유 없이 비어 보인다. 원인을 바로
-            // 짚을 수 있게 경고로 남긴다.
+            // CDN이 없어도 멍스타그램은 서명 URL로 보여 준다. 만료 없는 주소를 쓰려면
+            // S3_PUBLIC_BASE_URL을 넣으면 된다.
             log.warn("S3 파일 저장소 사용 - bucket: {}, region: {}. "
-                    + "[PUBLIC_SERVING_DISABLED] S3_PUBLIC_BASE_URL이 비어 있어 공개 사본을 만들지 않는다. "
-                    + "멍스타그램 탐색 피드가 비어 보인다면 이 설정과 버킷 공개 prefix 정책을 확인할 것.",
+                    + "[PUBLIC_SERVING_DISABLED] S3_PUBLIC_BASE_URL이 비어 있어 공개 CDN 사본을 만들지 않는다. "
+                    + "멍스타그램은 서명 URL로 사진을 보여 준다.",
                     bucket, region);
         }
     }
@@ -231,6 +231,11 @@ public class S3FileStorage implements FileStorage {
             return null;
         }
         return publicBaseUrl + "/" + normalize(publicKey);
+    }
+
+    @Override
+    public boolean isPublicServingEnabled() {
+        return StringUtils.hasText(publicBaseUrl);
     }
 
     @Override

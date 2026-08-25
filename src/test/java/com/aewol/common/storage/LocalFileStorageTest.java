@@ -125,4 +125,12 @@ class LocalFileStorageTest {
         assertNull(storage.signedUrl(null));
         assertNull(storage.signedUrl(""));
     }
+
+    @Test
+    @DisplayName("로컬은 CDN이 없어도 공개 서빙이 켜져 있다")
+    void should_enablePublicServing() {
+        assertTrue(storage.isPublicServingEnabled());
+        assertEquals("diary/a.png", storage.createPublicKey("diary/a.png"));
+        assertTrue(storage.publish("diary/a.png", "diary/a.png"));
+    }
 }

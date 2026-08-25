@@ -235,7 +235,10 @@ public class CareDiaryServiceImpl implements CareDiaryService {
             if (images.isEmpty()) {
                 throw new BusinessException("사진이 있는 일기만 공개할 수 있어요. 사진을 추가한 뒤 다시 시도해 주세요.");
             }
-            if (PUBLIC.equals(text(row, "visibility")) && hasPublicCopies(images)) {
+            // 이미 공개고 사본도 있으면 다시 복사할 필요가 없다. CDN이 꺼져 있으면
+            // 사본 없이 서명 URL로 보여 주므로, 이미 PUBLIC이면 그대로 둔다.
+            if (PUBLIC.equals(text(row, "visibility"))
+                    && (hasPublicCopies(images) || !fileStorage.isPublicServingEnabled())) {
                 return getDetail(memberId, diaryId);
             }
         } else if (!isAuthor && !isPetOwner) {
@@ -278,8 +281,16 @@ public class CareDiaryServiceImpl implements CareDiaryService {
      * 때문이다. 회수 트랜잭션이 커밋된 시점에 DB는 이미 그 예전 키를 잊었으므로, 이후
      * 단계(S3 복사·최종 전환)가 성공하든 실패하든 상관없이 곧바로 실제 객체를 정리한다 —
      * 성공했을 때만 정리하면 실패 경로에서 정리가 누락돼 고아 객체가 남는다(리뷰로 발견).
+     *
+     * <p>공개 CDN이 꺼져 있으면 사본 없이 PUBLIC으로 바꾼다. 이때
+     * {@link FileStorage#createPublicKey}가 {@code null}인 것은 설정 누락이지 복사 실패가
+     * 아니다. 실패로 취급하면 운영에서 멍스타그램 공개가 전부 막힌다.
      */
     private void publishPublicImagesAndChangeVisibility(String diaryId) {
+        if (!fileStorage.isPublicServingEnabled()) {
+            completePublishingWithoutCopies(diaryId);
+            return;
+        }
         String token = UUID.randomUUID().toString();
         LocalDateTime staleBefore = LocalDateTime.now().minus(PUBLISH_LOCK_TIMEOUT);
         List<String> supersededPublicKeys = new ArrayList<>();
@@ -316,6 +327,28 @@ public class CareDiaryServiceImpl implements CareDiaryService {
             cancelPublishing(diaryId, token, copies);
             throw e;
         }
+    }
+
+    /**
+     * CDN이 꺼져 있으면 사본 예약·복사 없이 PUBLISHING → PUBLIC만 밟는다.
+     * 조회 쪽은 원본 서명 URL로 보여 준다.
+     */
+    private void completePublishingWithoutCopies(String diaryId) {
+        log.warn("[FILE_PUBLISH_DISABLED] 공개 CDN이 꺼져 있어 사본 없이 공개한다. "
+                + "멍스타그램은 서명 URL로 사진을 보여 준다.");
+        String token = UUID.randomUUID().toString();
+        LocalDateTime staleBefore = LocalDateTime.now().minus(PUBLISH_LOCK_TIMEOUT);
+        runInTransaction(() -> {
+            acquirePublishingSlot(diaryId, token, staleBefore);
+            List<Map<String, Object>> currentImages = careDiaryMapper.findImagesForPublish(diaryId);
+            if (currentImages.isEmpty()) {
+                throw new BusinessException(
+                        "사진이 있는 일기만 공개할 수 있어요. 사진을 추가한 뒤 다시 시도해 주세요.");
+            }
+            if (careDiaryMapper.completePublishing(diaryId, token) != 1) {
+                throw BusinessException.notFound("공개 여부를 바꿀 일기를 찾을 수 없습니다.");
+            }
+        });
     }
 
     /**
@@ -502,6 +535,10 @@ public class CareDiaryServiceImpl implements CareDiaryService {
         if (careDiaryMapper.findImagesForPublish(diaryId).isEmpty()) {
             throw BusinessException.conflict("복원할 게시물 사진을 찾을 수 없습니다.");
         }
+        if (!fileStorage.isPublicServingEnabled()) {
+            restoreReportedDiaryWithoutCopies(diaryId, resolution, adminNote, adminId);
+            return;
+        }
         String token = UUID.randomUUID().toString();
         LocalDateTime staleBefore = LocalDateTime.now().minus(PUBLISH_LOCK_TIMEOUT);
         List<String> supersededPublicKeys = new ArrayList<>();
@@ -547,6 +584,29 @@ public class CareDiaryServiceImpl implements CareDiaryService {
             releaseAndClearReservedPublicImageKeys(diaryId, token, copies);
             throw e;
         }
+    }
+
+    /** CDN이 꺼져 있으면 사본 없이 신고 숨김만 해제한다. */
+    private void restoreReportedDiaryWithoutCopies(
+            String diaryId, String resolution, String adminNote, String adminId) {
+        log.warn("[FILE_PUBLISH_DISABLED] 공개 CDN이 꺼져 있어 사본 없이 게시물을 복원한다.");
+        String token = UUID.randomUUID().toString();
+        LocalDateTime staleBefore = LocalDateTime.now().minus(PUBLISH_LOCK_TIMEOUT);
+        runInTransaction(() -> {
+            acquireRestoreSlot(diaryId, token, staleBefore);
+            List<Map<String, Object>> currentImages = careDiaryMapper.findImagesForPublish(diaryId);
+            if (currentImages.isEmpty()) {
+                throw BusinessException.conflict("복원할 게시물 사진을 찾을 수 없습니다.");
+            }
+            if (careDiaryMapper.releasePublishToken(diaryId, token) != 1) {
+                throw BusinessException.conflict(
+                        "다른 관리자가 이미 이 게시물을 복원하고 있어요. 잠시 후 다시 시도해 주세요.");
+            }
+            if (careDiaryMapper.restoreByReport(diaryId) != 1) {
+                throw BusinessException.conflict("게시물을 복원할 수 없습니다.");
+            }
+            resolvePendingReports(diaryId, resolution, adminNote, adminId);
+        });
     }
 
     /**

@@ -97,6 +97,12 @@ public class LocalFileStorage implements FileStorage {
         return publicKey == null ? null : signedUrl(publicKey);
     }
 
+    /** 로컬은 사본 없이 원본 키를 공개 키로 쓰므로 공개 전환을 막지 않는다. */
+    @Override
+    public boolean isPublicServingEnabled() {
+        return true;
+    }
+
     @Override
     public InputStream read(String key) {
         Path target = resolve(normalize(key));

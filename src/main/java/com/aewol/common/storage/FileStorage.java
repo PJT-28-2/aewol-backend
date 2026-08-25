@@ -78,6 +78,15 @@ public interface FileStorage {
     }
 
     /**
+     * 만료 없는 공개 CDN 사본을 실제로 만들 수 있는지.
+     *
+     * <p>운영에서 {@code S3_PUBLIC_BASE_URL}이 비어 있으면 {@code false}다. 이때 공개
+     * 전환을 막으면 멍스타그램이 통째로 비게 되므로, 호출부는 사본 없이 공개하고
+     * 조회 시 서명 URL로 보여 주면 된다. 진짜 복사 실패와 구분하기 위한 값이다.
+     */
+    boolean isPublicServingEnabled();
+
+    /**
      * 공개 사본을 지운다.
      *
      * <p>{@link #delete(String)}과 같은 계약이다. 예외를 던지지 않는다. 비공개로 되돌리는
