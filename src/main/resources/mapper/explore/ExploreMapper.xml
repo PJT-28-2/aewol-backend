@@ -18,15 +18,16 @@
     </sql>
 
     <!--
-        공개 사본이 없는 글은 그리드에 빈 칸이 된다. 페이지를 자른 뒤에 걸러내면
+        사진이 없는 글은 그리드에 빈 칸이 된다. 페이지를 자른 뒤에 걸러내면
         첫 장이 비고 nextCursor만 남는 경우가 생긴다. 조회 단계에서 빼 둔다.
+
+        공개 CDN 사본(public_image_key)이 없어도 원본은 있다. 그때는 서비스가
+        서명 URL로 보여 주므로, 사본 유무로 글을 빼면 멍스타그램이 통째로 빈다.
     -->
-    <sql id="hasPublicImage">
+    <sql id="hasDiaryImage">
         EXISTS (
             SELECT 1 FROM care_diary_image i
             WHERE i.diary_id = d.diary_id
-              AND i.public_image_key IS NOT NULL
-              AND i.public_image_key != ''
         )
     </sql>
 
@@ -48,7 +49,7 @@
         FROM care_diary d
         JOIN pet p ON p.pet_id = d.pet_id
         WHERE <include refid="publicOnly"/>
-          AND <include refid="hasPublicImage"/>
+          AND <include refid="hasDiaryImage"/>
         <include refid="cursorCondition"/>
         ORDER BY d.created_at DESC, d.diary_id DESC
         LIMIT #{limit}
@@ -65,7 +66,7 @@
         JOIN pet p ON p.pet_id = d.pet_id
         WHERE <include refid="publicOnly"/>
           AND d.pet_id = #{petId}
-          AND <include refid="hasPublicImage"/>
+          AND <include refid="hasDiaryImage"/>
         <include refid="cursorCondition"/>
         ORDER BY d.created_at DESC, d.diary_id DESC
         LIMIT #{limit}
@@ -83,7 +84,7 @@
         JOIN pet p ON p.pet_id = d.pet_id
         WHERE <include refid="publicOnly"/>
           AND d.diary_id = #{diaryId}
-          AND <include refid="hasPublicImage"/>
+          AND <include refid="hasDiaryImage"/>
     </select>
 
     <!-- 게시물 수도 공개분만 센다. 비공개 개수가 드러나면 그 자체가 정보다. -->
@@ -99,7 +100,7 @@
                   FROM care_diary d
                  WHERE d.pet_id = p.pet_id
                    AND <include refid="publicOnly"/>
-                   AND <include refid="hasPublicImage"/>) AS postCount
+                   AND <include refid="hasDiaryImage"/>) AS postCount
         FROM pet p
         WHERE p.pet_id = #{petId}
           AND p.is_active = 1
