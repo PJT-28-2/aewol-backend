@@ -160,6 +160,22 @@ class AuthServiceImplInactiveMemberTest {
     }
 
     @Test
+    void kakaoIdentityAtTwentyNineDaysIsRecoverable() {
+        stubKakaoUserInfo("member@example.com", "홍길동");
+        when(memberMapper.findActiveKakaoByProviderId("kakao-id")).thenReturn(null);
+        when(memberMapper.findActiveByEmail("member@example.com")).thenReturn(null);
+        when(memberMapper.findInactiveKakaoByProviderIdForUpdate("kakao-id"))
+                .thenReturn(recoverableInactiveKakaoMember());
+        when(memberMapper.restoreKakaoMember(7L)).thenReturn(1);
+        stubTokenGeneration("7");
+
+        KakaoOAuthResponse response = service.kakaoLogin("authorization-code");
+
+        assertEquals(KakaoAuthStatus.ACCOUNT_RESTORED, response.getAuthStatus());
+        verify(memberMapper).restoreKakaoMember(7L);
+    }
+
+    @Test
     void kakaoIdentityPastThirtyDaysRemainsBlocked() {
         stubKakaoUserInfo("member@example.com", "홍길동");
         when(memberMapper.findActiveKakaoByProviderId("kakao-id")).thenReturn(null);
@@ -228,6 +244,23 @@ class AuthServiceImplInactiveMemberTest {
         verify(jwtUtil, never()).generateRefreshToken(org.mockito.ArgumentMatchers.anyString());
         verify(authCredentialStore, never()).storeRefresh(
                 org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyString());
+    }
+
+    @Test
+    void purgedKakaoIdentityNoLongerMatchesInactiveMemberAndStartsNewRegistration() {
+        stubKakaoUserInfo("member@example.com", "홍길동");
+        when(memberMapper.findActiveKakaoByProviderId("kakao-id")).thenReturn(null);
+        when(memberMapper.findActiveByEmail("member@example.com")).thenReturn(null);
+        when(memberMapper.findInactiveKakaoByProviderIdForUpdate("kakao-id")).thenReturn(null);
+        when(memberMapper.existsInactiveKakaoByProviderId("kakao-id")).thenReturn(false);
+        when(kakaoRegistrationStore.create(org.mockito.ArgumentMatchers.any()))
+                .thenReturn("new-registration-token");
+
+        KakaoOAuthResponse response = service.kakaoLogin("authorization-code");
+
+        assertEquals(KakaoAuthStatus.ADDITIONAL_INFO_REQUIRED, response.getAuthStatus());
+        assertEquals("new-registration-token", response.getRegistrationToken());
+        verify(memberMapper, never()).restoreKakaoMember(org.mockito.ArgumentMatchers.anyLong());
     }
 
     @Test

@@ -294,6 +294,29 @@ class KakaoSignupServiceImplTest {
     }
 
     @Test
+    void purgedKakaoIdentityCompletesSignupWithNewMemberId() {
+        long purgedMemberId = 6L;
+        long newMemberId = 7L;
+        KakaoRegistrationStore.Claim claim = claim(session("01012345678"));
+        when(registrationStore.claim(REGISTRATION_TOKEN)).thenReturn(claim);
+        stubNoDuplicateMember();
+        doAnswer(invocation -> {
+            ((Map<String, Object>) invocation.getArgument(0)).put("memberId", newMemberId);
+            return null;
+        }).when(memberMapper).insert(any());
+        when(jwtUtil.generateAccessToken("7", "USER")).thenReturn("access-token");
+        when(jwtUtil.generateRefreshToken("7")).thenReturn("refresh-token");
+
+        service.complete(completeRequest(false));
+
+        verify(memberMapper).insert(argThat(member ->
+                "kakao-id".equals(member.get("providerId"))));
+        verify(walletMapper).insert(argThat(wallet ->
+                Long.valueOf(newMemberId).equals(wallet.get("memberId"))
+                        && !Long.valueOf(purgedMemberId).equals(wallet.get("memberId"))));
+    }
+
+    @Test
     void unverifiedPhoneRejectsBeforeAnySignupSideEffectAndRestoresClaim() {
         KakaoRegistrationStore.Claim claim = claim(session(null));
         when(registrationStore.claim(REGISTRATION_TOKEN)).thenReturn(claim);
