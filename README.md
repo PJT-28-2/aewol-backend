@@ -35,15 +35,19 @@
 ## 시스템 구성
 
 ```text
-AeWol Frontend
-  └─ REST API / WebSocket
-       └─ Nginx
-            └─ Spring MVC + Embedded Tomcat
-                 ├─ MySQL / MyBatis / Flyway
-                 ├─ Redis
-                 ├─ Spring Batch
-                 └─ 외부 API 및 AWS S3
+Browser / Mobile Web
+  └─ HTTPS
+       └─ CloudFront
+            ├─ 정적 파일 ──▶ AWS S3
+            └─ /api/* ──HTTP──▶ EC2:8080
+                                  └─ Spring MVC + Embedded Tomcat
+                                       ├─ MySQL / MyBatis / Flyway
+                                       ├─ Redis
+                                       ├─ Spring Batch
+                                       └─ 외부 API 및 AWS S3
 ```
+
+운영에는 Nginx나 ALB를 두지 않습니다. 백엔드에 STOMP/SockJS 설정은 있지만 `/ws`는 운영 CloudFront에 연결하지 않으며, 현재 프론트 연결부와 서버 알림 발행부가 없어 실시간 알림 기능으로 사용하지 않습니다.
 
 ## 프로젝트 구조
 
@@ -143,8 +147,7 @@ API는 공통적으로 `ApiResponse<T>` 형식을 사용합니다.
 }
 ```
 
-<!-- TODO: 실제 운영 중인 Swagger/OpenAPI 주소를 확인한 뒤 링크를 추가하세요. -->
-<!-- - API 문서: https://example.com/swagger-ui/ -->
+Swagger UI는 local/dev 환경의 `/swagger-ui/index.html`에서 제공되며, prod 환경에서는 비활성화됩니다.
 
 ## 브랜치와 PR
 
