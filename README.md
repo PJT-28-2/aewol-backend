@@ -1,317 +1,172 @@
-# 애월 (AeWol) — 반려동물 전자지갑 서비스 Backend
+# 애월 (AeWol) Backend
 
-## 프로젝트 소개
+> 반려동물 전용 전자지갑 애월의 API 및 배치 서버
 
-애월(AeWol)은 반려동물 전용 전자지갑 서비스입니다. 반려동물의 의료비, 보험, 정기결제, 공동 양육 비용 등을 한 곳에서 관리할 수 있으며, 짜투리 금액 기부, 지자체 지원사업 매칭, 응급 병원 검색 등 반려동물 생활 전반을 지원합니다.
+[서비스 바로가기](https://www.aewol.store) · [전체 프로젝트 소개](https://github.com/PJT-28-2) · [Frontend](https://github.com/PJT-28-2/aewol-frontend)
 
-KB IT's Your Life 7기 팀 이파리 28-2팀 종합실무 프로젝트입니다.
+## 소개
 
----
+애월 백엔드는 인증, 반려동물, 지갑, 거래, 보험과 공동 양육 기능을 제공하는 Java 17 기반 API 서버입니다. Spring Boot가 아닌 Spring MVC 5.3과 Embedded Tomcat 9으로 구성되어 있으며, MyBatis와 MySQL을 사용합니다.
 
 ## 기술 스택
 
-| 구분 | 기술 | 비고 |
-|------|------|------|
-| Language | Java 17 | LTS |
-| Framework | Spring 5.3.x | Spring MVC, Spring Security 5.8.x |
-| ORM | MyBatis 3.5+ | XML Mapper |
-| Auth | JWT (jjwt 0.12.x) + Redis RTR | Access 30분 / Refresh 7일 |
-| Batch | Spring Batch 4.3.x | 정기 작업 스케줄링 |
-| Server | Embedded Tomcat 9 | Fat JAR |
-| DB | MySQL 8.0 | InnoDB, utf8mb4 |
-| Cache | Redis 7 | 토큰 저장, Rate Limit |
-| Build | Gradle (Kotlin DSL) | fatJar 태스크 |
+| 구분 | 기술 |
+| --- | --- |
+| Language | Java 17 |
+| Framework | Spring MVC 5.3, Spring Security 5.8, Spring Batch 4.3 |
+| Server | Embedded Tomcat 9 |
+| Persistence | MyBatis 3.5, MySQL 8, Flyway 9 |
+| Cache / Auth | Redis 7, JWT Refresh Token Rotation |
+| Storage | AWS S3 |
+| Build / Test | Gradle Kotlin DSL, JUnit 5, Mockito |
+| Monitoring | Micrometer, Prometheus, Grafana |
+| AI / External | RapidOCR, Gemini, OpenAI, Kakao, CODEF, TossPayments |
 
----
+## 주요 도메인
+
+- 이메일·카카오 인증과 JWT 재발급
+- 회원과 반려동물·증명서 관리
+- 지갑 충전·출금, QR 결제와 거래 내역
+- 자동 지출 분류, 대시보드와 정기결제
+- 보험 시뮬레이션, 영수증 OCR과 청구 보조
+- 공동 양육과 알림
+- 공동구매, 기부, 지원사업과 응급 병원 검색
+
+## 시스템 구성
+
+```text
+AeWol Frontend
+  └─ REST API / WebSocket
+       └─ Nginx
+            └─ Spring MVC + Embedded Tomcat
+                 ├─ MySQL / MyBatis / Flyway
+                 ├─ Redis
+                 ├─ Spring Batch
+                 └─ 외부 API 및 AWS S3
+```
 
 ## 프로젝트 구조
 
-```
+```text
 src/main/java/com/aewol/
-├── AewolApplication.java       # 메인 클래스 (임베디드 Tomcat 9)
-├── config/                     # 설정
-│   ├── AppConfig.java          # @ComponentScan + YAML 로딩 + @EnableScheduling
-│   ├── YamlPropertySourceFactory.java  # application.yml 로딩 지원
-│   ├── DataSourceConfig.java   # DataSource + MyBatis + TransactionManager
-│   ├── MailConfig.java         # JavaMailSender
-│   ├── RedisConfig.java        # Lettuce ConnectionFactory + RedisTemplate
-│   ├── SecurityConfig.java     # Spring Security 5.8.x 필터 체인
-│   ├── WebMvcConfig.java       # @EnableWebMvc + Jackson + Multipart
-│   ├── WebSocketConfig.java    # STOMP + SockJS
-│   ├── BatchConfig.java        # @EnableBatchProcessing
-│   └── RestTemplateConfig.java # RestTemplate
-├── common/
-│   ├── exception/              # GlobalExceptionHandler, BusinessException
-│   ├── response/               # ApiResponse<T>
-│   ├── filter/                 # JwtAuthenticationFilter
-│   └── util/                   # JwtUtil, FileUtil
-├── domain/
-│   ├── auth/                   # 인증 (회원가입, 로그인, 카카오 OAuth, RTR)
-│   ├── member/                 # 회원 프로필
-│   ├── pet/                    # 반려동물 CRUD + 문서 관리
-│   ├── wallet/                 # 지갑 + 버킷 관리
-│   ├── account/                # 연동 계좌 (CODEF)
-│   ├── transaction/            # 결제 + 자동 태깅
-│   ├── dashboard/              # 지출 대시보드 집계
-│   ├── recurring/              # 정기결제
-│   ├── insurance/              # 보험 시뮬레이션 + 청구 (Gemini Vision OCR)
-│   ├── share/                  # 공동 양육
-│   ├── grouppurchase/          # 공동구매
-│   ├── donation/               # 짜투리 저금통 + 기부
-│   ├── support/                # 지자체 지원사업 매칭
-│   ├── emergency/              # 응급 병원 찾기
-│   └── activity/               # 활동 로그
-├── external/
-│   ├── kakao/                  # 카카오 로그인 + 로컬 API
-│   ├── gemini/                 # Gemini Vision API (OCR)
-│   ├── codef/                  # CODEF 계좌 연동
-│   ├── naver/                  # 네이버 쇼핑 API
-│   ├── apms/                   # 반려동물 등록정보 조회
-│   ├── smtp/                   # 이메일 인증
-│   └── tosspayments/           # TossPayments
-└── batch/
-    ├── RecurringPaymentJob.java        # 오전 9시 정기결제
-    └── DonationRoundUpJob.java         # 오후 11시 잔돈 적립
+├── AewolApplication.java  # 애플리케이션 진입점
+├── batch/                 # 배치 작업
+├── common/                # 공통 응답·예외·필터·유틸리티
+├── config/                # Web, Security, DB, Redis 설정
+├── domain/                # 도메인별 Controller·Service·Mapper·DTO
+└── external/              # 외부 서비스 연동
 
 src/main/resources/
-├── application.yml             # 공통 설정
-├── application-local.yml       # 로컬 환경 설정 (DB, Redis, API 키)
-├── application-dev.yml         # 개발 서버 설정
-└── mapper/                     # MyBatis XML 매퍼 (16개 도메인)
-    ├── auth/
-    ├── member/
-    ├── pet/
-    └── ...
+├── application.yml
+├── db/migration/          # Flyway 마이그레이션
+└── mapper/                # MyBatis XML Mapper
 ```
 
----
+## 시작하기
 
-## 로컬 개발 환경 설정
-
-### 사전 요구사항
+### 요구사항
 
 - JDK 17
-- MySQL 8.0
+- MySQL 8
 - Redis 7
+- Docker 및 Docker Compose 권장
 
-### MySQL / 스키마 세팅
-
-Docker Compose + Flyway로 관리한다. 자세한 명령어 순서는 [SETUP.md](./SETUP.md) 참고.
+### 데이터베이스 준비
 
 ```bash
-docker-compose up -d
+docker compose up -d
 ./gradlew flywayMigrate
 ```
 
-### 환경변수 설정
+상세한 초기 설정은 [SETUP.md](./SETUP.md)를 참고하세요.
 
-`src/main/resources/application-local.yml`을 생성하고 아래 항목을 설정합니다.
+### 로컬 설정
+
+`src/main/resources/application-local.yml`을 만들고 로컬 DB, Redis, JWT 및 외부 API 설정을 입력합니다. 이 파일과 실제 비밀값은 Git에 커밋하지 않습니다.
 
 ```yaml
 spring:
   datasource:
-    url: jdbc:mysql://localhost:3307/aewol?useSSL=false&serverTimezone=Asia/Seoul&characterEncoding=UTF-8
+    url: jdbc:mysql://localhost:3307/aewol?serverTimezone=Asia/Seoul&characterEncoding=UTF-8
     username: aewol
-    password: aewol1234
+    password: 로컬_DB_비밀번호
   data:
     redis:
       host: localhost
       port: 6379
 
-external:
-  kakao:
-    client-id: {카카오 REST API 키}
-    redirect-uri: http://localhost:5173/callback/kakao
-  gemini:
-    api-key: {Gemini API 키}
-  codef:
-    client-id: {CODEF 클라이언트 ID}
-    client-secret: {CODEF 클라이언트 시크릿}
-  toss:
-    secret-key: {TossPayments 시크릿 키}
-  naver:
-    client-id: {네이버 클라이언트 ID}
-    client-secret: {네이버 클라이언트 시크릿}
-
 jwt:
-  secret: {JWT 시크릿 키 (256비트 이상)}
+  secret: 256비트_이상의_로컬_시크릿
   access-token-expiry: 1800000
   refresh-token-expiry: 604800000
 ```
 
-### 애플리케이션 실행
+외부 연동에 필요한 Kakao, CODEF, TossPayments, Gemini, Naver 등의 값은 사용하는 기능에 맞게 추가합니다.
+
+### 빌드 및 실행
 
 ```bash
-# Fat JAR 빌드 후 실행
 ./gradlew fatJar
-java -Dspring.profiles.active=local -jar build/libs/aewol-backend-0.0.1-SNAPSHOT-all.jar
+java -Dspring.profiles.active=local \
+  -jar build/libs/aewol-backend-0.0.1-SNAPSHOT-all.jar
 ```
 
-또는 IDE에서 `AewolApplication.java`의 main 메서드를 직접 실행합니다. 이 경우 VM 옵션에 `-Dspring.profiles.active=local`을 추가합니다.
+Spring Boot 프로젝트가 아니므로 `bootRun`이 아니라 위 Fat JAR 명령 또는 `AewolApplication`의 `main` 메서드를 사용합니다.
 
-### 한글이 깨져 보일 때
-
-MySQL은 접속할 때 클라이언트가 요청한 문자셋을 그대로 받아준다. 그래서 문자셋을
-지정하지 않은 DB 클라이언트로 붙으면 세션이 latin1로 떨어지고, 그 상태로 INSERT하면
-한글이 `?`나 `ê¹€ì• ì›`처럼 저장된다. 애플리케이션은 JDBC URL에
-`characterEncoding=UTF-8`이 있어 영향을 받지 않는다.
-
-`docker-compose.yml`의 `--init-connect`가 접속 직후 세션 문자셋을 다시 덮어써서 이를
-막는다. **다만 이것은 MySQL 서버 기동 옵션이라, 컨테이너를 다시 만들어야 적용된다.**
-예전에 만든 컨테이너를 계속 쓰고 있다면 설정이 반영되지 않은 상태다.
+## 테스트
 
 ```bash
-docker exec aewol-mysql mysql -uaewol -paewol1234 -e "SHOW VARIABLES LIKE 'init_connect'"
+./gradlew test
 ```
 
-값이 비어 있으면 컨테이너를 다시 만든다. 데이터 볼륨은 유지된다.
+새 기능에는 JUnit 5 기반 단위 테스트를 함께 작성합니다. 외부 API는 Mockito로 격리하고, MyBatis Mapper 인터페이스를 변경할 때는 대응하는 XML도 함께 확인합니다.
 
-```bash
-docker-compose up -d --force-recreate mysql
+프로젝트 발표 시점 기준으로 서비스·컨트롤러·Mapper·통합 테스트를 포함한 백엔드 테스트 1,449개가 통과했습니다.
+
+## 핵심 기술과 성능 개선
+
+- 결제 시 조건부 잔액 차감과 거래 기록을 하나의 트랜잭션으로 처리해 원자성을 보장합니다.
+- Toss 충전 요청은 서버 검증, Redis `SET NX`와 DB `UNIQUE(order_id)`로 중복 반영을 방지합니다.
+- OCR 외부 호출을 DB 트랜잭션 밖으로 분리해 커넥션 점유 시간을 최소화했습니다.
+- 공동구매 검색에 FULLTEXT ngram 인덱스, 커서 페이지네이션과 복합 인덱스를 적용해 로컬 20만 행 기준 응답 시간을 최대 475배 단축했습니다.
+- 잔돈 적립을 회원별 독립 트랜잭션으로 분리해 평균 락 보유 시간을 108.96ms에서 13.92ms로 줄이고 실패 범위를 격리했습니다.
+
+## API 응답
+
+API는 공통적으로 `ApiResponse<T>` 형식을 사용합니다.
+
+```json
+{
+  "status": 200,
+  "message": "success",
+  "result": {}
+}
 ```
 
-이미 깨진 채로 저장된 행은 이 설정으로 복구되지 않는다. 원래 바이트가 유실됐기
-때문이다. 아래로 깨진 행이 남아 있는지 확인한다.
+<!-- TODO: 실제 운영 중인 Swagger/OpenAPI 주소를 확인한 뒤 링크를 추가하세요. -->
+<!-- - API 문서: https://example.com/swagger-ui/ -->
 
-```bash
-docker exec aewol-mysql mysql -uaewol -paewol1234 aewol -e "SELECT member_id, name FROM member WHERE HEX(name) REGEXP '^([0-9A-F][0-9A-F])*(C3..|C2[89].|EFBFBD)'"
+## 브랜치와 PR
+
+```text
+main
+└── develop
+    ├── feat/#이슈번호-기능명
+    ├── fix/#이슈번호-버그명
+    └── refactor/#이슈번호-대상
 ```
 
-깨진 행의 원래 바이트는 남아 있지 않으므로, 삭제부터 하지 말고 먼저 정상 백업에서
-복원한다. 백업이 없는 회원 입력값은 사용자에게 다시 입력받아야 한다. 지원사업 데이터는
-`GOV24_API_KEY`를 설정한 뒤 아래 관리자 동기화 API로 다시 가져온다.
+기능 브랜치는 `develop`에서 만들고 완료 후 `develop`을 대상으로 PR을 생성합니다. 기능 구현과 대응 테스트는 같은 PR에 포함합니다.
 
-> **주의:** `./gradlew flywayClean`은 특정 테이블만 비우는 명령이 아니라 DB의 전체
-> 스키마와 데이터를 삭제한다. 공유·스테이징·운영 DB의 복구 절차로 절대 사용하지 않는다.
-> 로컬 일회용 DB를 통째로 초기화하려는 경우에도 필요한 데이터의 백업과 삭제 범위를
-> 먼저 확인한다.
+## 관련 문서
 
-### 지원사업 목록이 비어 있을 때
+- [로컬 환경 설정](./SETUP.md)
+- [배포 및 운영](./docs/deployment.md)
+- [프로젝트 설계](./docs/애월_프로젝트_설계문서.md)
+- [Frontend 저장소](https://github.com/PJT-28-2/aewol-frontend)
 
-정부24 지원사업 27건은 `V36__seed_gov24_support_programs.sql`에 들어 있으므로
-`./gradlew flywayMigrate`만 돌리면 채워진다. 그보다 앞선 시점에 DB를 만들었다면
-마이그레이션을 다시 돌린다.
+## 주의사항
 
-최신 데이터가 필요하면 `GOV24_API_KEY`를 설정한 뒤 동기화를 직접 실행한다. 이때
-시드로 넣은 행은 `source_service_id` 기준으로 갱신되므로 중복이 생기지 않는다.
-
-```bash
-curl -X POST http://localhost:8080/api/admin/support/sync -H "Authorization: Bearer {관리자 토큰}"
-```
-
----
-
-## 메트릭 보기
-
-지금까지는 성능 문제를 의심한 뒤에야 측정 도구를 따로 만들었다. 상시로 보이게 해 둔다.
-
-앱에 토큰을 주고 띄운다. 없으면 `/api/metrics`는 404가 된다 — 설정을 깜빡한 환경에서
-메트릭이 열려 있는 쪽보다 안 열리는 쪽이 낫다.
-
-```bash
-METRICS_TOKEN=local-scrape-secret ./gradlew run
-```
-
-Prometheus와 Grafana를 띄운다. 평소 `docker compose up`에는 딸려오지 않는다.
-
-```bash
-docker compose --profile monitoring up -d
-```
-
-- Prometheus http://localhost:9090
-- Grafana http://localhost:3000 (로컬 전용이라 로그인 없이 열린다)
-- 대시보드 `애월 운영 지표`가 처음부터 붙어 있다
-
-무엇부터 보면 되는지.
-
-| 지표 | 무엇을 알려주나 |
-| --- | --- |
-| `hikaricp_connections_pending` | 커넥션을 못 얻고 기다리는 스레드. **0보다 크면 풀이 부족하거나 무언가 커넥션을 오래 쥐고 있다** |
-| `hikaricp_connections_active` | 사용 중인 커넥션. 최대 10개(`DataSourceConfig`) |
-| `http_server_requests_seconds` | API별 소요 시간. `uri` 태그는 `/api/pets/{petId}` 같은 패턴이다 |
-| `executor_queued_tasks{name="batch"}` | 스케줄러 대기. **0보다 크면 배치가 줄을 서고 있다** |
-
-Prometheus는 JWT를 갱신할 수 없어 `X-Metrics-Token` 헤더로 스크레이핑한다
-(`monitoring/prometheus.yml`).
-
-운영 EC2에도 같은 스택을 띄울 수 있다. 보안그룹은 늘리지 않고 127.0.0.1만 연다.
-`METRICS_TOKEN`과 `GRAFANA_ADMIN_PASSWORD`를 SSM에 두면 다음 배포부터 켜진다.
-보는 방법은 `docs/deployment.md`의 운영 메트릭을 따른다.
-
-## 부하 테스트 (k6 + Prometheus + Grafana)
-
-k6가 부하를 넣고, 같은 Prometheus에 remote write 한 뒤 Grafana에서 서버 CPU·힙·API
-지연과 한 화면으로 본다. 결제·충전·OCR·캐릭터 생성은 시나리오에 넣지 않았다.
-
-```bash
-METRICS_TOKEN=local-scrape-secret ./gradlew run
-docker compose --profile monitoring up -d
-docker compose --profile monitoring --profile loadtest run --rm k6
-```
-
-Grafana http://localhost:3000 의 `애월 부하 테스트` 대시보드를 연다. 새로고침은 5초다.
-
-운영을 치려면 k6는 **노트북에서** 돌린다. 앱과 같은 EC2에서 돌리면 CPU가 섞여 측정이
-무의미하다. `ALLOW_PROD=1`이 없으면 공개 호스트는 거절한다. 절차는
-`docs/deployment.md`를 따른다.
-
-## 브랜치 전략
-
-| 브랜치 | 용도 |
-|--------|------|
-| `main` | 프로덕션 |
-| `develop` | 개발 통합 |
-| `feature/{기능명}` | 기능 개발 |
-
-PR은 `feature/{기능명}` → `develop` → `main` 순서로 병합합니다.
-
----
-
-## 주요 API 엔드포인트
-
-12개 도메인, 50개 이상의 API를 제공합니다.
-
-| 도메인 | 메서드 | 경로 | 설명 |
-|--------|--------|------|------|
-| 인증 | POST | `/api/auth/signup` | 이메일 회원가입 |
-| 인증 | POST | `/api/auth/login` | 로그인 (JWT 발급) |
-| 인증 | POST | `/api/auth/oauth/kakao` | 카카오 OAuth 로그인 |
-| 인증 | POST | `/api/auth/refresh` | 토큰 재발급 (RTR) |
-| 반려동물 | GET | `/api/pets` | 반려동물 목록 조회 |
-| 반려동물 | POST | `/api/pets` | 반려동물 등록 |
-| 반려동물 | GET | `/api/pets/{petId}` | 반려동물 상세 조회 |
-| 지갑 | GET | `/api/wallet` | 지갑 조회 (MAIN) |
-| 지갑 | POST | `/api/wallet/deposit` | 지갑 충전 |
-| 거래 | GET | `/api/transactions` | 거래 내역 조회 |
-| 거래 | POST | `/api/transactions` | 거래 등록 |
-| 대시보드 | GET | `/api/dashboard/summary` | 월별 지출 요약 |
-| 보험 | POST | `/api/insurance/simulations` | 보험 시뮬레이터 결과 계산 |
-| 보험 | GET | `/api/insurance/products` | 보험 상품 리스트 조회 |
-| 보험 | POST | `/api/insurance/claims` | 보험 청구 (OCR) |
-| 공동양육 | POST | `/api/share/invite` | 공동양육 초대 |
-| 공동양육 | GET | `/api/share/pets` | 소유·공유 반려동물 조회 |
-| 공동양육 | GET | `/api/share/{petId}/members` | 공동양육 멤버 조회 |
-| 응급병원 | GET | `/api/emergency/hospitals` | 주변 응급 병원 검색 |
-| 응급병원 | GET | `/api/emergency/hospitals/{hospitalId}` | 병원 상세 조회 |
-| 응급병원 | POST | `/api/admin/emergency/hospitals/sync` | 동물병원 공공데이터 시딩 수동 실행 (관리자, 비동기 202) |
-| 지원사업 | GET | `/api/support/matched?petId=` | 반려동물 조건별 지원사업 매칭 |
-| 기부 | GET | `/api/donation` | 저금통·캠페인·설정 통합 조회 |
-| 기부 | POST | `/api/donation` | 저금통 잔액 기부 |
-| 기부 | PUT | `/api/donation/settings` | 잔돈 적립·월말 자동 기부 설정 |
-| 정기결제 | GET | `/api/recurring` | 정기결제 목록 조회 |
-| 정기결제 | POST | `/api/recurring` | 정기결제 등록 |
-| 정기결제 | DELETE | `/api/recurring/{recurringId}` | 정기결제 해지 |
-
----
-
-## Spring Boot 미사용 안내
-
-이 프로젝트는 순수 Spring 5.3.x를 사용합니다. Spring Boot 의존성 없이 구성되어 있으며, 임베디드 Tomcat 9를 `AewolApplication.java`에서 직접 초기화합니다. `application.yml`은 Spring Boot의 자동 로드 기능을 사용하지 않고, `YamlPropertySourceFactory`를 통해 `@PropertySource`로 수동 로드합니다.
-
-따라서 `./gradlew bootRun`은 사용할 수 없으며, Fat JAR 빌드 후 `java -jar` 명령으로 실행하거나 IDE에서 main 메서드를 직접 실행해야 합니다.
-
----
-
-## 팀
-
-KB IT's Your Life 7기 | 팀 이파리 | PJT 28-2팀
+- 비밀값, 토큰, API 키와 `application-local.yml`을 커밋하지 않습니다.
+- 운영 또는 공유 DB에서 `flywayClean`을 실행하지 않습니다.
+- 이 프로젝트는 `javax.*` 기반이므로 라이브러리를 임의로 `jakarta.*`로 변경하지 않습니다.
