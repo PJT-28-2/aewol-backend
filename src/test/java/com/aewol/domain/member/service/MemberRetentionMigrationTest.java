@@ -55,14 +55,14 @@ class MemberRetentionMigrationTest {
                 .dataSource(dataSource)
                 .locations("filesystem:src/main/resources/db/migration")
                 .baselineOnMigrate(true)
-                .baselineVersion(MigrationVersion.fromVersion("52"))
-                .target(MigrationVersion.fromVersion("53"))
+                .baselineVersion(MigrationVersion.fromVersion("58"))
+                .target(MigrationVersion.fromVersion("59"))
                 .load()
                 .migrate();
     }
 
     @Test
-    void v53AddsPurgeTimestampNullablePiiAndCleanupIndex() {
+    void v59AddsPurgeTimestampNullablePiiAndCleanupIndex() {
         assertEquals("YES", nullable("email"));
         assertEquals("YES", nullable("name"));
         assertEquals("YES", nullable("zip_code"));
