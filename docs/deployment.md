@@ -54,7 +54,7 @@ docker-compose up -d          # mysql/redis/ocr만 (앱은 IDE에서 실행)
 | 앱 실행 | IDE에서 `AewolApplication` | 컨테이너 |
 | DB 주소 | `localhost:3307` | `mysql:3306` |
 | 마이그레이션 | `./gradlew flywayMigrate` | `migrate` 컨테이너 (`MigrateMain`) |
-| 파일 저장 | `./uploads` | S3 (`FileStorage` 경로), 그 외는 `/app/uploads` 볼륨 |
+| 파일 저장 | `./uploads` | S3 (`S3FileStorage`) |
 
 ## 이미지 빌드는 CI에서만 한다
 
@@ -115,7 +115,7 @@ mysql (healthy) → migrate (정상 종료) → app
 지정해 실행하면 그 태그로 되돌아간다(롤백).
 
 ```
-main push --> build (ECR push) --> [Environment 승인] --> deploy (SSM) --> 외부 헬스체크
+main push --> build (ECR push) --> production Environment --> deploy (SSM) --> 외부 헬스체크
                    |                                          |
               태그 = 커밋 SHA                 번들 전송 -> 백업 -> migrate -> app
 ```
@@ -212,7 +212,7 @@ AccessDenied가 난다.
 `Deployment branches and tags`를 `Selected branches and tags`로 바꾸고 `main`만 추가한다.
 다른 브랜치에서는 이 environment를 쓰는 잡이 실행되지 않는다.
 
-> **승인 게이트는 걸지 못했다.** Environment의 보호 규칙(Required reviewers)은 private
+> **현재 승인 게이트는 없다.** Environment의 보호 규칙(Required reviewers)은 private
 > 리포지토리에서 GitHub Pro/Team/Enterprise 기능이라, 무료 플랜에서는 설정 화면에
 > 항목 자체가 나오지 않는다. `environment: production` 선언은 그대로 두는데, 배포 이력이
 > Environments 탭에 남고 OIDC 토큰의 `sub`가 `environment:production`으로 발급되는 것은
@@ -246,7 +246,11 @@ Actions > Backend CD > Run workflow > `image_tag`에 되돌릴 태그(커밋 SHA
 | `CORS_ALLOWED_ORIGINS` | 운영 도메인 |
 | `KAKAO_REDIRECT_URI` | 운영 도메인 |
 | `MAIL_USERNAME` / `MAIL_PASSWORD` | Gmail 앱 비밀번호 |
+| `SOLAPI_API_KEY` / `SOLAPI_API_SECRET` / `SOLAPI_SENDER` | 운영 프로파일 검증기와 `fetch-env.sh`가 빈 값을 차단 |
+| `S3_BUCKET` | 운영 `S3FileStorage` 생성에 필수 |
 | `APP_IMAGE` / `OCR_IMAGE` | CD가 커밋 SHA로 채운다 |
+
+`BACKUP_BUCKET`은 애플리케이션 기동값은 아니지만, 기존 DB가 있는 환경의 배포 전 백업과 정기 백업에 필요하다. 비어 있으면 `scripts/backup-db.sh`가 실패하여 배포가 중단된다.
 
 ### 외부 콘솔에도 등록이 필요한 값
 
@@ -416,8 +420,10 @@ CDN이 읽도록 연 뒤 그 주소를 넣는다. 버킷 전체를 열면 비공
 갈라진 상태였다. 운영에서는 디스크에 쓰고 S3에서 읽게 되므로 배포를 막는 조건이었다.
 #203에서 `FileUtil`을 제거해 **쓰기·읽기가 모두 `FileStorage`를 통한다.**
 
-과거에 `/uploads/...` 형식으로 저장된 기존 행은 `normalize()`가 함께 처리하므로 데이터
-마이그레이션이 필요 없다. compose가 `uploads` 볼륨을 계속 마운트하는 것도 그 때문이다.
+과거에 `/uploads/...` 형식으로 저장된 기존 행은 `normalize()`가 S3 키 형식으로 정규화하므로
+별도 문자열 마이그레이션이 필요 없다. 현재 compose에는 `uploads` 볼륨이 남아 있지만 prod의
+`S3FileStorage`는 이 볼륨을 사용하지 않는다. 운영 데이터 의존성이 없음을 확인한 뒤 제거할 수
+있는 레거시 구성이다.
 
 ## 데이터베이스를 같은 EC2에 둔 이유
 

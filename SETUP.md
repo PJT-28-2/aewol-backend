@@ -1,6 +1,6 @@
 # 로컬 개발 DB 환경 세팅
 
-팀원 전원이 동일한 MySQL 스키마로 개발할 수 있도록 Docker Compose(로컬 MySQL/Redis) + Flyway(스키마 버전 관리) 조합을 사용한다.
+팀원 전원이 동일한 MySQL 스키마로 개발할 수 있도록 Docker Compose(로컬 MySQL/Redis/OCR) + Flyway(스키마 버전 관리) 조합을 사용한다.
 
 - DB는 각자 로컬 Docker 컨테이너로 띄운다 (공유 DB 아님).
 - 스키마 변경 이력은 `src/main/resources/db/migration`의 마이그레이션 파일로만 관리한다.
@@ -13,7 +13,7 @@ docker-compose up -d
 ./gradlew flywayMigrate
 ```
 
-- MySQL 8, Redis 7 컨테이너가 뜨고, `aewol` DB/계정이 자동 생성된다 (DB명/계정/비번: `aewol` / `aewol` / `aewol1234`).
+- MySQL 8, Redis 7, 영수증 OCR 컨테이너가 뜨고, `aewol` DB/계정이 자동 생성된다 (DB명/계정/비번: `aewol` / `aewol` / `aewol1234`). OCR 서비스는 기본적으로 `http://localhost:8000`에서 열린다.
 - 로컬에 이미 MySQL(3306)이 떠 있는 경우가 흔해 **호스트 포트는 3307로 매핑**했다 (컨테이너 내부는 3306 그대로). 값 오버라이드가 필요하면 `.env.example`을 `.env`로 복사해서 수정한다.
 - `flywayMigrate`가 `V1__init_schema.sql`부터 순서대로 적용한다.
 - **프로파일 설정 (중요):** `local` 프로파일로 실행하려면 먼저 `application-local.yml`을 만들어야 한다. `application-local.yml.example`을 복사해서 만들고 비밀값을 채운다 (git에 커밋되지 않는 파일). 이 파일이 없으면 서버가 시작 단계에서 명확한 설정 파일 오류와 함께 종료된다.
@@ -31,7 +31,7 @@ docker-compose up -d
   openssl rand -base64 32   # ACCOUNT_HASH_KEY
   ```
 
-- 개인 설정 없이 docker-compose 기본값으로 바로 띄우려면 `-Dspring.profiles.active=dev`를 사용해도 된다 (`application-dev.yml`의 기본값이 위 계정/포트와 일치).
+- 별도의 `application-local.yml` 없이 실행하려면 `-Dspring.profiles.active=dev`를 사용할 수 있다 (`application-dev.yml`의 DB/Redis 기본값이 위 계정/포트와 일치). 단, `JWT_SECRET`, `ACCOUNT_ENCRYPTION_KEY`, `ACCOUNT_HASH_KEY`처럼 기본값이 없는 필수 환경변수는 별도로 설정해야 한다.
 - 공통 `application.yml`에 더해 활성 프로파일과 같은 이름의 설정 파일 하나만 로드된다. 예를 들어 `dev`는 `application-dev.yml`, 테스트의 `test`는 `application-test.yml`을 사용한다.
 
 ## 2. 일상 개발
@@ -62,7 +62,8 @@ docker-compose up -d
 
 | 파일 | 역할 |
 |---|---|
-| `docker-compose.yml` | 로컬 MySQL 8 / Redis 7 컨테이너 정의 |
+| `docker-compose.yml` | 로컬 MySQL 8 / Redis 7 / OCR 서비스와 선택형 모니터링·부하 테스트 정의 |
+| `ocr-service/` | RapidOCR(PaddleOCR 모델) 기반 영수증 구조화 서비스 |
 | `.env.example` | docker-compose 환경변수 기본값 (복사해서 `.env`로 사용) |
 | `build.gradle.kts`의 `flyway { ... }` | Flyway 접속 정보 및 마이그레이션 위치 (`DB_URL`/`DB_USERNAME`/`DB_PASSWORD` 환경변수로 오버라이드 가능) |
 | `src/main/resources/db/migration/V1__init_schema.sql` | 최초 스키마 (기존 `src/main/resources/sql/schema.sql` 기반) |
